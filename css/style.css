@@ -128,6 +128,16 @@ body::before {
 .tool-banner { animation: fadeInUp 0.5s var(--ease-out) both; }
 
 .site-header, main, .site-footer { position: relative; z-index: 1; }
+/* The fixed navigation rail (aside#sidebar) is a CHILD of main.container, so
+   main's own layer decides whether the rail paints above page chrome — the
+   rail's own z-index: 40 is scoped inside this stacking context and cannot
+   lift it out. With main and the footer both at z-index 1, the footer (later
+   in the DOM, and a SIBLING of main) won the tie and painted over the rail:
+   its box is full-width and its background is fully transparent, so it was an
+   invisible slab that silently swallowed clicks on the bottom of the rail
+   whenever a short page brought it into view ("Menu", "Toggle theme",
+   "How to use", the account block). main must outrank the footer. */
+main.container { z-index: 2; }
 
 ::selection { background: rgba(255, 255, 255, 0.25); }
 
@@ -147,6 +157,11 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
   left: 0;
   top: 0;
   height: 100vh;
+  /* The rail owns the viewport, so the NAV has to scroll inside it — without
+     this, a short laptop screen pushed "How to use" / the account block /
+     "Log Out" past the bottom of the page with no way to reach them. */
+  max-height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -178,17 +193,91 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 .sidebar-brand strong { font-size: 16px; letter-spacing: -0.02em; color: var(--text-strong); }
 .sidebar-brand:hover .brand-mark { transform: scale(1.08); }
 .brand-mark { display: inline-block; transition: transform 0.2s var(--ease); }
-.sidebar-nav { display: flex; flex-direction: column; gap: 6px; flex: 1; }
-/* Small muted uppercase headers that group the navigation */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-height: 0;              /* required: lets the flex child actually scroll */
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  /* room for the scrollbar so labels do not jump when it appears */
+  scrollbar-gutter: stable;
+  padding-right: 2px;
+}
+/* Slim, theme-aware scrollbar for the nav list. */
+.sidebar-nav::-webkit-scrollbar { width: 8px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+}
+.sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); }
+.sidebar-nav { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+[data-theme="light"] .sidebar-nav::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.18); }
+[data-theme="light"] .sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.3); }
+/* The brand, collapser, theme toggle and account block are pinned: only the
+   nav list scrolls, so the footer controls are always on screen. */
+.sidebar-brand, .sidebar-foot { flex: 0 0 auto; }
+/* ── Collapsible navigation sections ──
+   A section is a header button plus its item list. The header keeps the old
+   muted uppercase look but is now a full-width control with a chevron that
+   rotates to show the state. Collapsing only hides the list (`hidden`), so
+   the current view is never left and nothing is re-routed. */
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nav-section + .nav-section { margin-top: 4px; }
+.nav-section:first-child .nav-group-label { margin-top: 2px; }
+.nav-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nav-group-items[hidden] { display: none; }
 .nav-group-label {
-  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px 4px 12px;
+  margin: 6px 0 2px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
   color: #6b7280;
+  font: inherit;
+  font-size: 10px;
   font-weight: 700;
-  margin: 12px 0 6px 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.2s var(--ease), background 0.2s var(--ease);
 }
-.sidebar-nav > .nav-group-label:first-child { margin-top: 2px; }
+.nav-group-label:hover { color: var(--text-strong); background: rgba(255, 255, 255, 0.05); }
+.nav-group-label:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, 0.7);
+  outline-offset: 1px;
+}
+.nav-group-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  transform: rotate(90deg);              /* expanded: arrow points down */
+  transition: transform 0.22s var(--ease);
+}
+.nav-group-chevron svg { width: 12px; height: 12px; }
+.nav-section.collapsed .nav-group-chevron { transform: rotate(0deg); }  /* collapsed: points right */
+[data-theme="light"] .nav-group-label { color: #64748b; }
+[data-theme="light"] .nav-group-label:hover { color: #0b1220; background: rgba(15, 23, 42, 0.05); }
 .sidebar-link {
   display: flex;
   align-items: center;
@@ -241,6 +330,12 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
   margin-top: 10px;
   padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
+  /* Never squeezed away by the nav above it. */
+  flex: 0 0 auto;
+  max-height: 62vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 /* Bottom profile/account widget — avatar + account status */
 .sidebar-profile {
@@ -351,6 +446,17 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
     max-width: 1240px;
     padding-left: 20px;
   }
+  /* The footer is a sibling of main, so it never inherited main's reserved
+     rail column — its left edge (brand block, legal links on narrow screens)
+     sat underneath the fixed rail. Now that the rail correctly paints above
+     page chrome, that strip would be unreachable. Reserve the same column
+     here so the two never overlap at all. `max-width` is left alone on
+     purpose: the footer's top rule should keep spanning the full viewport. */
+  .site-footer {
+    padding-left: var(--sidebar-w);
+    transition: padding-left 0.34s var(--ease);
+  }
+  body.sidebar-collapsed .site-footer { padding-left: 0; }
   body.sidebar-collapsed .sidebar-reopen {
     display: inline-flex;
     position: fixed;
@@ -920,6 +1026,42 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
 .db-sku strong { color: var(--text-strong); font-size: 13.5px; letter-spacing: 0.01em; }
 .db-name { color: var(--text); font-size: 13.5px; overflow-wrap: anywhere; }
 .db-addr { color: #94a3b8; font-size: 13px; }
+
+/* ── Long text never stretches a row ─────────────────────────────
+   A 200-character address or item description used to wrap to five lines and
+   distort the grid. Every variable-length cell is now a single ellipsised
+   line (the full text is in the element's title attribute, and the edit
+   button opens it in the form), so one long entry cannot change a row's
+   height. `min-width: 0` is what actually allows a grid child to shrink. */
+.db-name,
+.db-addr,
+.db-sku,
+.db-address-line {
+  min-width: 0;
+}
+.db-row .db-name,
+.db-row .db-addr,
+.db-row .db-sku strong {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Two-line clamp for the compact Home preview rows. */
+.db-mini-addr {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+.db-mini-name {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .db-unit { color: var(--muted); font-size: 12.5px; }
 .db-rate { color: var(--text-strong); font-variant-numeric: tabular-nums; font-size: 13.5px; }
 .db-rate-h { text-align: right; }
@@ -1516,23 +1658,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .activity-clear:hover { color: var(--text-strong); }
 
-/* Compact app-style tool selector bar (All Utilities view) */
-.tool-slot {
-  background: none;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  min-width: 76px;
-  font-family: inherit;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.tool-slot:hover { transform: translateY(-3px) scale(1.04); }
-.tool-slot:focus-visible { outline: none; }
-.tool-slot:focus-visible .tool-badge { box-shadow: var(--shadow-focus); }
+/* Circular icon badge used by the tool banners. The icon-grid selector bar
+   and its single preview card are gone — Other Utilities is now a grid of
+   the shared .tool-card component — so .tool-slot / .utilities-grid /
+   .tool-preview / .utility-preview have no rules any more. */
 .tool-badge {
   width: 48px;
   height: 48px;
@@ -1544,80 +1673,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   background: #0a0a0a;
   border: 1px solid var(--border-strong);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.tool-slot:hover .tool-badge { border-color: var(--accent-line); box-shadow: 0 0 15px rgba(255, 255, 255, 0.2); }
-.tool-slot.active .tool-badge {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), var(--glow);
-}
-.tool-slot-name { font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: -0.01em; }
-.tool-slot.active .tool-slot-name { color: var(--text-strong); }
-
-/* ── All Utilities grid: multi-column glassmorphism container ── */
-.utilities-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 16px;
-  padding: 22px;
-  background: rgba(18, 18, 18, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-lg);
-}
-.utilities-grid .tool-slot {
-  background: rgba(13, 13, 13, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 14px;
-  padding: 16px 8px 12px;
-  min-width: 0;
-  width: 100%;
-}
-.utilities-grid .tool-slot:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-.utilities-grid .tool-slot.active {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: var(--accent-line);
-}
-.utilities-grid .tool-slot-name {
-  text-align: center;
-  word-break: break-word;
-}
-[data-theme="light"] .utilities-grid {
-  background: rgba(255, 255, 255, 0.78);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-[data-theme="light"] .utilities-grid .tool-slot {
-  background: rgba(255, 255, 255, 0.65);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-[data-theme="light"] .utilities-grid .tool-slot:hover { background: #ffffff; border-color: rgba(0, 0, 0, 0.22); }
-
-/* Sleek preview card under the selector bar */
-.tool-preview { padding: 24px 26px; }
-.tool-preview-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.tool-preview h4 {
-  margin: 0 0 8px;
-  font-size: 20px;
-  color: var(--text-strong);
-  letter-spacing: -0.03em;
-  font-weight: 800;
-}
-.tool-desc { margin: 0; color: var(--muted); font-size: 14.5px; max-width: 640px; }
-.tool-cta {
-  margin-top: 16px;
-  padding-top: 4px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
 }
 .tool-free { color: var(--faint); font-size: 12.5px; }
 
@@ -2259,7 +2314,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   opacity: 0.9;
 }
 [data-theme="light"] .card { background: rgba(255, 255, 255, 0.78); border-color: rgba(0, 0, 0, 0.08); }
-[data-theme="light"] .tool-bar { background: rgba(255, 255, 255, 0.78); border-color: rgba(0, 0, 0, 0.08); }
 [data-theme="light"] .card:hover { border-color: rgba(0, 0, 0, 0.18); }
 [data-theme="light"] .site-footer { background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.04)); }
 [data-theme="light"] .card-head { border-bottom-color: rgba(0, 0, 0, 0.08); }
@@ -2293,7 +2347,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 [data-theme="light"] ::selection { background: rgba(0, 0, 0, 0.15); }
 [data-theme="light"] code { background: rgba(0, 0, 0, 0.06); }
 [data-theme="light"] .modal-overlay { background: rgba(0, 0, 0, 0.35); }
-[data-theme="light"] .tool-slot:hover .tool-badge { box-shadow: 0 0 15px rgba(0, 0, 0, 0.15); }
 [data-theme="light"] .qr-row input { background: #ffffff; }
 [data-theme="light"] .qr-row input:focus { background: #ffffff; }
 [data-theme="light"] .qr-total { background: rgba(0, 0, 0, 0.05); border-color: var(--border-strong); }
@@ -2688,8 +2741,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   .hide-sm { display: none; }
   .privacy-note { font-size: 11px; }
   .card { padding: 20px; }
-  .tool-bar { gap: 14px; padding: 14px; }
-  .tool-bar .tool-slot { min-width: 64px; }
 }
 
 /* ── Variation & Change Order PDF document (tool #07) ───── */
@@ -2847,19 +2898,6 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .brand-fields { flex: 1 1 auto; min-width: 0; }
 @media (max-width: 760px) { .brand-grid { flex-direction: column; } }
 
-.utility-preview {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  margin-top: 20px;
-}
-.utility-preview-main { flex: 1 1 320px; min-width: 0; }
-.utility-preview-main h3 { margin: 10px 0 6px; font-size: 19px; }
-.utility-preview-main p { margin: 0 0 4px; color: var(--text); }
-.utility-preview-side { text-align: right; }
-@media (max-width: 640px) { .utility-preview-side { text-align: left; } }
 
 .file-label { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 
@@ -3231,14 +3269,9 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .menu-btn .nav-icon { margin-right: 6px; }
 .btn .nav-icon { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; }
 .btn-primary .nav-icon { color: currentColor; }
-/* Banner badges + utility slot tiles: SVG fits the existing circular tile */
-.tool-badge svg,
-.tool-slot-icon svg,
-.tool-slot-icon.nav-icon svg { width: 22px; height: 22px; display: block; }
-.tool-badge[data-icon],
-.tool-slot-icon[data-icon] { color: var(--text-strong); }
-.tool-slot:hover .tool-badge svg,
-.tool-slot:hover .tool-slot-icon svg { filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.35)); }
+/* Banner badges: SVG fits the existing circular tile */
+.tool-badge svg { width: 22px; height: 22px; display: block; }
+.tool-badge[data-icon] { color: var(--text-strong); }
 /* Advice/status line icons (replaces the old emoji text prefixes) */
 .killer-ico { display: inline-flex; align-items: center; vertical-align: -3px; margin-right: 2px; }
 .killer-ico svg { width: 15px; height: 15px; display: block; }
@@ -3266,10 +3299,16 @@ body {
   background-image:
     radial-gradient(135% 100% at 50% 0%, #171b30 0%, #0c0e18 60%, #06070c 100%) !important;
 }
+/* Light mode must NOT be pinned to the dark canvas. This rule used to force
+   the identical dark gradient back on in light mode, which is why pressing
+   "Toggle theme" greyed the text out while the page stayed black. The real
+   light-canvas overrides live in the LIGHT MODE RECONCILIATION block at the
+   very end of this file, after every other rule. */
 [data-theme="light"] body {
-  background: radial-gradient(135% 100% at 50% 0%, #171b30 0%, #0c0e18 60%, #06070c 100%) !important;
+  background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
   background-image:
-    radial-gradient(135% 100% at 50% 0%, #171b30 0%, #0c0e18 60%, #06070c 100%) !important;
+    radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
+  color: #0f172a;
 }
 
 /* 2 ─ Cards & panels: translucent glass with saturated backdrop blur */
@@ -3441,3 +3480,274 @@ body {
   line-height: 1.5;
   color: #8b949e;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   ITEM DATABASE — three rate states, three looks.
+   An unreadable rate used to print as a confident "0", making a broken
+   entry indistinguishable from a legitimately zero-cost item. Now:
+     set     → the number, including a real 0
+     missing → — (never entered)
+     invalid → Invalid (present but unreadable), amber, flagged
+   The ERP Rate cell left blank by a missing/invalid rate carries the same
+   amber flag, so the gap is visible where it matters.
+   ════════════════════════════════════════════════════════════════ */
+.db-rate-missing {
+  color: #64748b;
+  font-style: italic;
+}
+.db-rate-invalid {
+  color: #f59e0b;
+  font-style: italic;
+  font-weight: 600;
+}
+.erp-rate-unset:not(:focus) {
+  background: rgba(245, 158, 11, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.5);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   LIGHT MODE RECONCILIATION — loaded last, on purpose.
+   The "Nexora dashboard theme" block above paints the dark canvas and dark
+   glass cards with !important, which no earlier [data-theme="light"] rule
+   could outrank. These overrides sit after it and carry an extra
+   [data-theme="light"] attribute, so light mode is a real, complete theme
+   rather than a half-greyed dark page.
+   Both theme toggles drive the SAME state — [data-theme="light"] on <html>,
+   mirrored to <body class="light-theme"> — so these two selectors agree.
+   ════════════════════════════════════════════════════════════════ */
+[data-theme="light"] #glow-backdrop,
+body.light-theme #glow-backdrop {
+  background:
+    radial-gradient(circle at 75% 15%, rgba(99, 102, 241, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 25% 65%, rgba(56, 189, 248, 0.16) 0%, transparent 40%),
+    radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
+}
+
+/* Every main layout wrapper stays transparent so the backdrop shows through. */
+[data-theme="light"] body,
+[data-theme="light"] #app-root,
+[data-theme="light"] .min-h-screen,
+[data-theme="light"] .main-area,
+body.light-theme,
+body.light-theme #app-root,
+body.light-theme .min-h-screen,
+body.light-theme .main-area {
+  background: transparent !important;
+  background-image: none !important;
+  color: #0f172a;
+}
+
+/* Glass cards become frosted white panes on the light canvas. */
+[data-theme="light"] .card,
+[data-theme="light"] .kpi-card,
+[data-theme="light"] .utility-card,
+[data-theme="light"] .tool-card,
+[data-theme="light"] .activity-card,
+[data-theme="light"] .activity-panel,
+[data-theme="light"] .widget-card,
+[data-theme="light"] .system-health-card,
+body.light-theme .card {
+  background: rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(15, 23, 42, 0.09) !important;
+  box-shadow: 0 8px 28px 0 rgba(15, 23, 42, 0.1), inset 0 1px 0 0 rgba(255, 255, 255, 0.7) !important;
+}
+[data-theme="light"] .card:hover,
+[data-theme="light"] .kpi-card:hover,
+[data-theme="light"] .utility-card:hover,
+[data-theme="light"] .tool-card:hover,
+[data-theme="light"] .widget-card:hover {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(99, 102, 241, 0.45) !important;
+  box-shadow: 0 12px 36px 0 rgba(15, 23, 42, 0.14), 0 0 20px rgba(99, 102, 241, 0.16) !important;
+}
+
+/* Typography: dark ink, muted slate. */
+[data-theme="light"] .kpi-value,
+[data-theme="light"] .tool-card-name,
+[data-theme="light"] .activity-head h3,
+[data-theme="light"] .card-head h2,
+[data-theme="light"] .card-head h3,
+[data-theme="light"] .tools-heading,
+[data-theme="light"] .hub-title,
+[data-theme="light"] .view-title,
+body.light-theme .card-head h2,
+body.light-theme .card-head h3 {
+  color: #0b1220 !important;
+}
+[data-theme="light"] .kpi-label,
+[data-theme="light"] .kpi-sub,
+[data-theme="light"] .tool-card-meta,
+[data-theme="light"] .tool-card-meta strong,
+[data-theme="light"] .activity-time,
+body.light-theme .kpi-label,
+body.light-theme .kpi-sub {
+  color: #64748b !important;
+}
+
+/* Percentage badges keep their semantic colour on a light pill. */
+[data-theme="light"] .kpi-delta,
+[data-theme="light"] .kpi-delta.kpi-up {
+  background: rgba(34, 197, 94, 0.14) !important;
+  color: #15803d !important;
+  border-color: rgba(34, 197, 94, 0.35) !important;
+}
+[data-theme="light"] .kpi-delta.kpi-down {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #b91c1c !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+}
+[data-theme="light"] .kpi-delta.kpi-flat {
+  background: rgba(15, 23, 42, 0.06) !important;
+  color: #475569 !important;
+  border-color: rgba(15, 23, 42, 0.14) !important;
+}
+
+/* A white CTA is invisible on a white canvas — invert it for light mode. */
+[data-theme="light"] .btn-primary,
+[data-theme="light"] .tool-launch,
+body.light-theme .btn-primary,
+body.light-theme .tool-launch {
+  background: #0b1220 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.18) !important;
+}
+[data-theme="light"] .btn-primary:hover,
+[data-theme="light"] .btn-primary:focus-visible,
+[data-theme="light"] .tool-launch:hover {
+  background: #1e293b !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 20px rgba(15, 23, 42, 0.2) !important;
+}
+
+/* Tool-card emoji badges read as light chips, not dark squares. */
+[data-theme="light"] .tool-cat-icon {
+  background: rgba(15, 23, 42, 0.05) !important;
+  border-color: rgba(15, 23, 42, 0.1) !important;
+}
+[data-theme="light"] .tool-card:hover .tool-cat-icon {
+  background: rgba(99, 102, 241, 0.14) !important;
+  border-color: rgba(99, 102, 241, 0.35) !important;
+}
+
+/* The rate flags need legible colours on white. */
+[data-theme="light"] .db-rate-invalid { color: #b45309; }
+[data-theme="light"] .db-rate-missing { color: #475569; }
+[data-theme="light"] .erp-rate-unset:not(:focus) {
+  background: rgba(245, 158, 11, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.45);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   HOME — compact master-database preview
+   Bounded by construction: five rows per list, fixed row height, single-line
+   ellipsis. More records change the text in those rows, never the layout.
+   ════════════════════════════════════════════════════════════════ */
+.home-db-card { margin-top: 18px; }
+.home-db-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.home-db-viewall {
+  background: none;
+  border: none;
+  color: #818cf8;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.home-db-viewall:hover { color: #a5b4fc; background: rgba(99, 102, 241, 0.12); }
+.home-db-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 6px;
+}
+.home-db-col { min-width: 0; }
+.home-db-colhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+.home-db-count { font-weight: 600; color: #8b949e; letter-spacing: 0; text-transform: none; }
+.home-db-list { display: flex; flex-direction: column; gap: 4px; }
+.home-db-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.home-db-row:hover { background: rgba(99, 102, 241, 0.12); border-color: rgba(99, 102, 241, 0.35); }
+.home-db-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; }
+.home-db-title { font-size: 13px; color: var(--text-strong); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.home-db-sub { font-size: 12px; color: #8b949e; }
+.home-db-meta {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  text-align: right;
+}
+.home-db-empty { margin: 0; font-size: 12.5px; line-height: 1.5; color: #8b949e; }
+@media (max-width: 900px) {
+  .home-db-grid { grid-template-columns: minmax(0, 1fr); }
+}
+[data-theme="light"] .home-db-row { background: rgba(15, 23, 42, 0.03); border-color: rgba(15, 23, 42, 0.08); }
+[data-theme="light"] .home-db-row:hover { background: rgba(99, 102, 241, 0.1); }
+[data-theme="light"] .home-db-title { color: #0b1220; }
+[data-theme="light"] .home-db-sub { color: #64748b; }
+[data-theme="light"] .home-db-viewall { color: #4f46e5; }
+
+/* ════════════════════════════════════════════════════════════════
+   CONFIRMATION DIALOG — one prompt for every destructive action
+   ════════════════════════════════════════════════════════════════ */
+.confirm-card { max-width: 430px; }
+.confirm-card p#confirm-text {
+  margin: 6px 0 20px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #a1a1aa;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.confirm-actions .btn { min-width: 104px; }
+/* The destructive option is never the one a nervous hand lands on by default
+   (focus starts on Confirm, but the colour makes the consequence obvious). */
+.btn.btn-danger {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: 0 2px 12px rgba(220, 38, 38, 0.35) !important;
+}
+.btn.btn-danger:hover {
+  background: #b91c1c !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.4) !important;
+}
+[data-theme="light"] .confirm-card p#confirm-text { color: #475569; }

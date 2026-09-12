@@ -31,6 +31,47 @@
     return Math.round((Number(v) + EPS) * 100) / 100;
   }
 
+  /* ── Numeric text handling (all money/quantity inputs) ───────────
+     The single rule for "what characters can a number be made of?".
+     Digits, at most one decimal point, optionally a leading minus. Spaces,
+     letters, currency symbols, a second dot, 'e' notation and thousands
+     separators are all stripped BEFORE the value is parsed, so a typo like
+     "100 00" becomes 10000 instead of NaN leaking into an Amount cell. */
+  function sanitizeNumericText(raw, allowNegative) {
+    let s = String(raw === null || raw === undefined ? '' : raw).replace(/,/g, '');
+    if (allowNegative) {
+      const neg = s.trim().charAt(0) === '-';
+      s = s.replace(/-/g, '');
+      s = s.replace(/[^0-9.]/g, '');
+      return (neg ? '-' : '') + s;
+    }
+    s = s.replace(/[^0-9.]/g, '');
+    const firstDot = s.indexOf('.');
+    if (firstDot !== -1) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '');
+    return s;
+  }
+
+  /* Anything -> a FINITE number, falling back to `fallback` (0 by default).
+     This is what every calculation and every export reads through, so an
+     empty or malformed field contributes 0 and never NaN. */
+  function toNum(v, fallback) {
+    const fb = fallback === undefined ? 0 : fallback;
+    if (v === null || v === undefined || v === '') return fb;
+    const cleaned = sanitizeNumericText(v, true);
+    if (cleaned === '' || cleaned === '-' || cleaned === '.') return fb;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : fb;
+  }
+
+  /* Can this text be used as a number as-is? Used to decide whether a field
+     is genuinely empty (→ blank input) rather than silently zero. */
+  function isNumericText(v) {
+    if (v === null || v === undefined || String(v).trim() === '') return false;
+    const cleaned = sanitizeNumericText(v, true);
+    if (cleaned === '' || cleaned === '-' || cleaned === '.') return false;
+    return Number.isFinite(Number(cleaned));
+  }
+
   // Guarded division — never throws on zero/NaN.
   function originalEffectiveRate(price, hours) {
     const p = Number(price) || 0;
@@ -217,9 +258,13 @@
   // Thousands-grouped plain number with up to 2 decimals (trailing zeros
   // trimmed). Used by the Quantity & Rate calculator (tool #02), where
   // amounts are currency-free: 25 × 1500 → "37,500".
+  /* A number for display. A value that is not a number at all returns an
+     em-dash, NOT '0': printing "0" for an unreadable rate made a broken
+     database entry indistinguishable from a legitimately zero-priced item.
+     A genuine 0 still formats as "0". */
   function fmtNum(v) {
     const n = Number(v);
-    if (!Number.isFinite(n)) return '0';
+    if (!Number.isFinite(n)) return '\u2014';
     const rounded = Math.round((n + EPS) * 100) / 100;
     const parts = rounded.toFixed(2).split('.');
     parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -520,6 +565,9 @@
     toHours: toHours,
     fromHours: fromHours,
     round2: round2,
+    sanitizeNumericText: sanitizeNumericText,
+    toNum: toNum,
+    isNumericText: isNumericText,
     originalEffectiveRate: originalEffectiveRate,
     requestValue: requestValue,
     requestValueForRequest: requestValueForRequest,

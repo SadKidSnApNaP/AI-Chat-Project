@@ -68,6 +68,63 @@
     :root [class*="bg-"]:not(.bg-preset):not(.bg-picker):not(.bg-row):not(.bg-presets) {
       background-color: transparent !important;
     }
+
+    /* ══ 6 ─ LIGHT MODE RECONCILIATION ═══════════════════════════════
+       Everything above is a DARK glass theme written with !important on
+       :root-prefixed selectors (specificity 0,2,0). Because this block sits
+       after css/style.css in document order it also wins every tie, so the
+       light rules in the stylesheet could never take effect — which is
+       exactly why "Toggle theme" greyed the text out while the canvas
+       stayed black. These selectors add the [data-theme="light"] attribute
+       on top of :root (specificity 0,3,0), so they outrank the dark rules
+       on their own terms. Both toggles drive the same state: data-theme on
+       <html>, mirrored to <body class="light-theme">. */
+    :root[data-theme="light"],
+    :root.light-theme {
+      --bg-gradient: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
+      --card-bg: rgba(255, 255, 255, 0.72) !important;
+      --card-border: rgba(15, 23, 42, 0.09) !important;
+      --card-glow: 0 8px 28px 0 rgba(15, 23, 42, 0.1), inset 0 1px 0 0 rgba(255, 255, 255, 0.7) !important;
+      background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
+      background-attachment: fixed !important;
+    }
+    :root[data-theme="light"] body,
+    :root[data-theme="light"] #app-root,
+    :root[data-theme="light"] .container,
+    :root[data-theme="light"] .main-area,
+    :root[data-theme="light"] .main-content,
+    :root[data-theme="light"] .min-h-screen,
+    :root[data-theme="light"] .dashboard-container,
+    body.light-theme,
+    body.light-theme #app-root,
+    body.light-theme .main-area,
+    body.light-theme .min-h-screen {
+      background: transparent !important;
+      background-color: transparent !important;
+      background-image: none !important;
+      color: #0f172a;
+    }
+    :root[data-theme="light"] .card,
+    :root[data-theme="light"] .kpi-card,
+    :root[data-theme="light"] .utility-card,
+    :root[data-theme="light"] .tool-card,
+    :root[data-theme="light"] .activity-panel,
+    :root[data-theme="light"] .activity-card,
+    :root[data-theme="light"] .widget-card,
+    :root[data-theme="light"] .system-health-card {
+      background: rgba(255, 255, 255, 0.72) !important;
+      border: 1px solid rgba(15, 23, 42, 0.09) !important;
+      box-shadow: 0 8px 28px 0 rgba(15, 23, 42, 0.1), inset 0 1px 0 0 rgba(255, 255, 255, 0.7) !important;
+    }
+    :root[data-theme="light"] .utility-card:hover,
+    :root[data-theme="light"] .kpi-card:hover,
+    :root[data-theme="light"] .tool-card:hover,
+    :root[data-theme="light"] .activity-panel:hover,
+    :root[data-theme="light"] .widget-card:hover {
+      background: rgba(255, 255, 255, 0.9) !important;
+      border-color: rgba(99, 102, 241, 0.45) !important;
+      box-shadow: 0 12px 36px 0 rgba(15, 23, 42, 0.14), 0 0 20px rgba(99, 102, 241, 0.16) !important;
+    }
   </style>
 </head>
 <body>
@@ -80,24 +137,75 @@
         <span class="brand-mark" id="brand-mark-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M9 14.5 l2.2 2.2 4 -4.4"/></svg></span>
         <strong>Nexora Engine</strong>
       </button>
-      <nav class="sidebar-nav">
-        <p class="nav-group-label">WORKSPACE</p>
-        <button type="button" class="sidebar-link" id="nav-home"><span class="nav-icon" data-icon="home" aria-hidden="true"></span><span>Home</span></button>
-        <button type="button" class="sidebar-link" id="sidebar-erp"><span class="nav-icon" data-icon="building" aria-hidden="true"></span><span>Master ERP Engine</span></button>
-        <button type="button" class="sidebar-link" id="sidebar-db"><span class="nav-icon" data-icon="database" aria-hidden="true"></span><span>Item &amp; Client Database</span></button>
+      <nav class="sidebar-nav" id="sidebar-nav">
+        <!-- Four independent sections. Each header toggles its own list and
+             remembers that choice in localStorage; collapsing only hides
+             links, it never navigates, so the view you are on stays put.
+             Labels only — every id, route and handler is unchanged. -->
+        <section class="nav-section" data-nav-section="workspace">
+          <button type="button" class="nav-group-label" data-nav-toggle="workspace" aria-expanded="true" aria-controls="nav-items-workspace">
+            <span>WORKSPACE</span>
+            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+          </button>
+          <div class="nav-group-items" id="nav-items-workspace">
+            <button type="button" class="sidebar-link" id="nav-home"><span class="nav-icon" data-icon="home" aria-hidden="true"></span><span>Home</span></button>
+          </div>
+        </section>
 
-        <p class="nav-group-label">MANAGEMENT</p>
-        <button type="button" class="sidebar-link" id="sidebar-history"><span class="nav-icon" data-icon="history" aria-hidden="true"></span><span>History &amp; Saved Documents</span></button>
-        <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>All Utilities</span></button>
+        <!-- The whole document pipeline in one place: the engine that builds a
+             document, the master data it draws from, and the company/brand
+             details that document is printed with. -->
+        <section class="nav-section" data-nav-section="erp">
+          <button type="button" class="nav-group-label" data-nav-toggle="erp" aria-expanded="true" aria-controls="nav-items-erp">
+            <span>ERP &amp; DATA</span>
+            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+          </button>
+          <div class="nav-group-items" id="nav-items-erp">
+            <button type="button" class="sidebar-link" id="sidebar-erp"><span class="nav-icon" data-icon="building" aria-hidden="true"></span><span>Master ERP Engine</span></button>
+            <button type="button" class="sidebar-link" id="sidebar-db"><span class="nav-icon" data-icon="database" aria-hidden="true"></span><span>Item &amp; Client Database</span></button>
+            <button type="button" class="sidebar-link" id="sidebar-settings-nav"><span class="nav-icon" data-icon="briefcase" aria-hidden="true"></span><span>Company Database</span></button>
+          </div>
+        </section>
 
-        <p class="nav-group-label">CONFIGURATION</p>
-        <button type="button" class="sidebar-link" id="sidebar-settings-nav"><span class="nav-icon" data-icon="briefcase" aria-hidden="true"></span><span>Company &amp; Brand Settings</span></button>
-        <button type="button" class="sidebar-link" id="sidebar-appearance"><span class="nav-icon" data-icon="palette" aria-hidden="true"></span><span>Appearance Settings</span></button>
-        <button type="button" class="sidebar-link" id="sidebar-backup"><span class="nav-icon" data-icon="archive" aria-hidden="true"></span><span>Data Backup &amp; Restore</span></button>
-        <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
+        <section class="nav-section" data-nav-section="records">
+          <button type="button" class="nav-group-label" data-nav-toggle="records" aria-expanded="true" aria-controls="nav-items-records">
+            <span>RECORDS &amp; BACKUP</span>
+            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+          </button>
+          <div class="nav-group-items" id="nav-items-records">
+            <button type="button" class="sidebar-link" id="sidebar-history"><span class="nav-icon" data-icon="history" aria-hidden="true"></span><span>Library</span></button>
+            <button type="button" class="sidebar-link" id="sidebar-backup"><span class="nav-icon" data-icon="archive" aria-hidden="true"></span><span>Backup</span></button>
+          </div>
+        </section>
+
+        <section class="nav-section" data-nav-section="more">
+          <button type="button" class="nav-group-label" data-nav-toggle="more" aria-expanded="true" aria-controls="nav-items-more">
+            <span>MORE</span>
+            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+          </button>
+          <div class="nav-group-items" id="nav-items-more">
+            <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>Other Utilities</span></button>
+            <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
+            <button type="button" class="sidebar-link" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" title="Menu — collapse the navigation" aria-label="Menu — collapse the navigation"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span><span id="sidebar-collapse-label">Menu</span></button>
+          </div>
+        </section>
+
+        <!-- Appearance Settings keeps the group it already lived in (its former
+             siblings, Backup and Premium Plans, moved into RECORDS & BACKUP
+             and MORE). Left here rather than folded into MORE so that MORE
+             holds exactly the three items it was specified to hold, and so
+             nothing was moved that was not asked to move. -->
+        <section class="nav-section" data-nav-section="configuration">
+          <button type="button" class="nav-group-label" data-nav-toggle="configuration" aria-expanded="true" aria-controls="nav-items-configuration">
+            <span>CONFIGURATION</span>
+            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+          </button>
+          <div class="nav-group-items" id="nav-items-configuration">
+            <button type="button" class="sidebar-link" id="sidebar-appearance"><span class="nav-icon" data-icon="palette" aria-hidden="true"></span><span>Appearance Settings</span></button>
+          </div>
+        </section>
       </nav>
       <div class="sidebar-foot">
-        <button type="button" class="sidebar-link sidebar-link-sm" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the navigation menu"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span><span id="sidebar-collapse-label">Collapse menu</span></button>
         <button type="button" class="sidebar-link sidebar-link-sm" id="theme-toggle" aria-label="Toggle light or dark theme"><span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Toggle theme</span></button>
         <button type="button" class="sidebar-help-btn" id="sidebar-help" aria-label="Open the How to use guide"><span class="nav-icon" data-icon="help" aria-hidden="true"></span><span>How to use</span></button>
         <div class="sidebar-profile" id="auth-guest">
@@ -378,8 +486,8 @@
             </div>
             <div class="form-grid">
               <div class="field">
-                <label for="db-item-sku">Item Key / SKU</label>
-                <input type="text" id="db-item-sku" placeholder="e.g. PIPE-25" autocomplete="off">
+                <label for="db-item-sku">Item Key / SKU <span class="row-muted">(numbers only)</span></label>
+                <input type="text" id="db-item-sku" data-int="1" inputmode="numeric" pattern="[0-9]*" list="erp-sku-list" placeholder="e.g. 1042" autocomplete="off">
               </div>
               <div class="field">
                 <label for="db-item-name">Item name &amp; description</label>
@@ -402,7 +510,7 @@
               </div>
             </div>
             <div class="actions db-form-actions">
-              <button type="button" class="btn btn-primary btn-sm" id="db-item-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
+              <button type="button" class="btn btn-primary btn-sm" id="db-item-add"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save Item</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-item-cancel" hidden>Cancel edit</button>
             </div>
             <div class="db-list-head db-grid-items" aria-hidden="true">
@@ -430,8 +538,8 @@
               <input type="text" id="db-client-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
             </div>
             <div class="field">
-              <label for="db-client-currency">Default currency</label>
-              <select id="db-client-currency">
+              <label for="db-client-currency">Default currency for this client's documents</label>
+              <select id="db-client-currency" title="Starts on your company currency (Brand &amp; Theme Settings). Picking this client in the Master ERP Engine switches the document to this currency.">
                 <option value="USD">USD ($)</option>
               <option value="EUR">EUR (€)</option>
               <option value="GBP">GBP (£)</option>
@@ -479,7 +587,7 @@
               <input type="text" id="db-client-hscode" placeholder="e.g. 8536.69" autocomplete="off">
             </div>
             <div class="actions db-form-actions">
-              <button type="button" class="btn btn-primary btn-sm" id="db-client-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add client</button>
+              <button type="button" class="btn btn-primary btn-sm" id="db-client-add"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save Client</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-client-cancel" hidden>Cancel edit</button>
             </div>
             <div class="db-list-head db-grid-clients" aria-hidden="true">
@@ -532,10 +640,36 @@
       <!-- Main hub: tools grid (left) + recent activity (right) -->
       <div class="hub-layout">
         <div class="hub-main">
-          <h3 class="tools-heading">Calculators &amp; Utilities</h3>
-          <div class="tools-grid" id="tools-grid">
-            <!-- Tool cards rendered by renderToolsGrid() -->
-          </div>
+          <!-- Compact master-data preview. Deliberately NOT a growing table:
+               it shows at most HOME_DB_LIMIT (5) most-recent rows per list in
+               a condensed card, so adding hundreds of records never changes
+               this block's height. "View all" opens the full database. -->
+          <section class="card home-db-card" aria-labelledby="home-db-title">
+            <div class="card-head home-db-head">
+              <h2 id="home-db-title">Master Database</h2>
+              <button type="button" class="home-db-viewall" id="home-db-viewall">View all <span aria-hidden="true">&rarr;</span></button>
+            </div>
+            <div class="home-db-grid">
+              <div class="home-db-col">
+                <div class="home-db-colhead">
+                  <span>Recent items</span>
+                  <span class="home-db-count" id="home-db-items-count">0</span>
+                </div>
+                <div class="home-db-list" id="home-db-items">
+                  <!-- Rendered by renderHomeDbPreview() -->
+                </div>
+              </div>
+              <div class="home-db-col">
+                <div class="home-db-colhead">
+                  <span>Recent clients</span>
+                  <span class="home-db-count" id="home-db-clients-count">0</span>
+                </div>
+                <div class="home-db-list" id="home-db-clients">
+                  <!-- Rendered by renderHomeDbPreview() -->
+                </div>
+              </div>
+            </div>
+          </section>
 
           <!-- Visual widgets: Process Map + System Health -->
           <div class="hub-widgets">
@@ -581,73 +715,17 @@
         <div class="tool-banner-inner">
           <span class="tool-badge" data-icon="tools" aria-hidden="true"></span>
           <div>
-            <h2 class="tool-name">All Utilities</h2>
-            <p class="tagline">Standalone micro-calculators — double-click any icon to open it instantly.</p>
+            <h2 class="tool-name">Other Utilities</h2>
+            <p class="tagline">Standalone micro-calculators — pick a card to launch it. Each one tracks your last use and run count.</p>
           </div>
         </div>
       </section>
-      <div class="utilities-grid" id="utility-slots" role="tablist" aria-label="Standalone calculators">
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="scope-guard">
-          <span class="tool-slot-icon" data-icon="target" aria-hidden="true"></span>
-          <span class="tool-slot-name">Scope Guard</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="qr">
-          <span class="tool-slot-icon" data-icon="ruler" aria-hidden="true"></span>
-          <span class="tool-slot-name">Qty &amp; Rate</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="boq">
-          <span class="tool-slot-icon" data-icon="doc" aria-hidden="true"></span>
-          <span class="tool-slot-name">Quotation</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="pricing">
-          <span class="tool-slot-icon" data-icon="chart" aria-hidden="true"></span>
-          <span class="tool-slot-name">Pricing</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="invoice">
-          <span class="tool-slot-icon" data-icon="invoice" aria-hidden="true"></span>
-          <span class="tool-slot-name">Invoice</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="duty">
-          <span class="tool-slot-icon" data-icon="globe" aria-hidden="true"></span>
-          <span class="tool-slot-name">Import Tax</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="variation">
-          <span class="tool-slot-icon" data-icon="list" aria-hidden="true"></span>
-          <span class="tool-slot-name">Variation</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="breakeven">
-          <span class="tool-slot-icon" data-icon="scale" aria-hidden="true"></span>
-          <span class="tool-slot-name">Breakeven</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="fx">
-          <span class="tool-slot-icon" data-icon="exchange" aria-hidden="true"></span>
-          <span class="tool-slot-name">FX &amp; Fees</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="gpa">
-          <span class="tool-slot-icon" data-icon="grad" aria-hidden="true"></span>
-          <span class="tool-slot-name">GPA Planner</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="retainer">
-          <span class="tool-slot-icon" data-icon="exchange" aria-hidden="true"></span>
-          <span class="tool-slot-name">Retainer</span>
-        </button>
-        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="delay">
-          <span class="tool-slot-icon" data-icon="clock" aria-hidden="true"></span>
-          <span class="tool-slot-name">Delay Impact</span>
-        </button>
-      </div>
-      <div class="card utility-preview" id="utility-preview">
-        <div class="utility-preview-main">
-          <span class="pill pill-accent" id="up-badge">Tool #01</span>
-          <h3 id="up-name">Project Change &amp; Scope Calculator</h3>
-          <p id="up-desc">The client asks for &ldquo;just one more thing.&rdquo; See what it really costs, watch your effective hourly rate drop in real time, and send a professional change order in seconds.</p>
-          <p class="hint" id="up-meta">Private · works offline</p>
-        </div>
-        <div class="utility-preview-side">
-          <button type="button" class="btn btn-primary" id="open-utility-btn">Open Calculator →</button>
-          <p class="hint">Tip: double-click an icon above to jump straight in.</p>
-        </div>
-      </div>
+      <!-- The same card component the Home shortcuts used (.tools-grid /
+           .tool-card), rendered for all twelve tools: emoji badge, name,
+           one-line description, last use, usage count and a Launch Tool
+           button. One delegated handler launches a card on a single click;
+           the icon grid + preview panel are gone. -->
+      <div class="tools-grid" id="utility-tools-grid" aria-label="Standalone calculators"></div>
     </div><!-- /#utilities-view -->
 
     <!-- ══ TOOL: PROJECT CHANGE & SCOPE CALCULATOR ═════════ -->
@@ -2825,6 +2903,21 @@
       <div class="drawer-foot">
         <span class="drawer-count" id="db-clients-drawer-count"></span>
         <button type="button" class="btn btn-ghost btn-sm" id="db-clients-drawer-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation dialog. Every reset / destructive action routes through
+       confirmAction() in js/app.js, so an accidental click never wipes data
+       and every prompt looks and reads the same way. -->
+  <div class="modal-overlay" id="confirm-modal" hidden>
+    <div class="card modal-card confirm-card" role="alertdialog" aria-modal="true"
+         aria-labelledby="confirm-title" aria-describedby="confirm-text">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-text"></p>
+      <div class="actions confirm-actions">
+        <button type="button" class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirm-ok">Confirm</button>
       </div>
     </div>
   </div>

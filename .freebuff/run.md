@@ -1265,6 +1265,320 @@ Behaviour: a cold visit with no fragment opens Home (matching the HTML's own
 initial state — `#home-view` is the only section without `hidden`); reloading
 keeps the current page; deep links like `#/invoice` open that view directly.
 
+## Numeric fields: one rule, one place (2026-09-12)
+
+Four separate defects shared one root cause — a numeric field could hold text
+that nothing converted, so `NaN` leaked into totals, spreads and exports.
+
+**The rule.** `Calc.sanitizeNumericText(raw, allowNegative)` returns digits,
+at most one decimal point, optionally a leading minus — spaces, letters,
+`%`, `$`, `e`, a second dot and thousands separators are removed.
+`Calc.toNum(v, fallback)` wraps it and always returns a finite number, so an
+empty or malformed field contributes 0. `Calc.isNumericText(v)` distinguishes
+"blank" from "zero". Both live in `js/calculations.js` and are exported on
+`Calc`, so app code and the pure calculators can never disagree.
+
+**Input filtering** lives in `formatAllNumericInputs()` and applies to every
+`[data-numeric="1"]` field (52 of them): a capture-phase `keydown` blocks any
+printable key that is not a digit or a single decimal point, and a
+capture-phase `input` + `paste` handler scrubs whatever still arrives
+(autofill, drop, programmatic set). Modifier keys, Backspace, Tab, arrows and
+IME composition all pass through.
+
+**Where NaN could still appear** — fixed:
+- `erpTotals()` used `num(erpState.discount/vat)`; a malformed percentage was
+  NaN. Now `num0()`.
+- `mxSheetAoa()` (Excel export) wrote `num(l.qty)` / `num(l.rate)` straight
+  into cells, so an invalid entry became a literal `NaN` cell. Now `num0()`,
+  and the money cells pass through `Calc.round2` so binary float tails
+  (`-55000.00000000001`) cannot reach the spreadsheet either.
+- `loadErp()` heals stored junk on load: `"100 00"` → 10000, `"1 0"` → 10,
+  `"NaN"`/`abc` → blank. `loadDb()` does the same for item rates and *writes
+the repair back* so the stored JSON stops carrying `null`.
+
+**`num()` strips whitespace, not just commas.** `String(v).replace(/[,\s]/g,
+'').replace(...)` — "100 00" is a typo for 10000, so `Number()` must never see
+the space and hand back NaN. A string that is ONLY whitespace still parses as
+blank (NaN), so "empty" and "zero" stay distinguishable.
+
+**`Calc.fmtNum()` no longer prints `0` for a non-finite value** — it returns
+`\u2014`. Printing "0" for an unreadable rate made a broken database entry
+indistinguishable from a genuinely zero-priced item. A real 0 still formats as
+"0".
+
+**A stored rate has three states, and they look different.** `dbRateInfo(v)`
+is the single classifier every reader uses (DB table, drawer, ERP auto-fill):
+
+| stored | state | displays | ERP Rate auto-fill |
+|---|---|---|---|
+| `0` | `set` | `0` | `0`, not flagged, Amount `Rs0` |
+| `null` / blank | `missing` | `\u2014` (`.db-rate-missing`) | blank, flagged `.erp-rate-unset` |
+| `"abc"` | `invalid` | `Invalid` (`.db-rate-invalid`, amber) | blank, flagged |
+| `"100 00"` | `set` after normalising | `10,000` | `10000` |
+
+`loadDb()` preserves that distinction rather than flattening it: blank and the
+legacy `"null"`/`"NaN"` artefacts become `null` (missing), a readable rate is
+only rewritten when it needs normalising, and an UNREADABLE value is left in
+place so the table can flag it instead of silently showing 0. The repair is
+written back once.
+
+**ERP auto-fill no longer skips 0.** `erpRateForItem()` fills every finite rate
+including 0 — a zero-cost line is a legitimate price and must not be blanked
+because it is falsy. Only `missing`/`invalid` fall back to an empty cell.
+`storedRateFromInput()` means a blank form field saves `null` ("never
+entered") while an explicit `0` saves `0`.
+
+## Client currency (2026-09-12)
+
+`#db-client-currency` shipped with USD as its first `<option>` and nothing
+selected, so every client saved without touching the dropdown silently
+claimed to invoice in dollars while the company worked in rupees.
+`companyCurrency()` normalises `brand.accountCur` (the Account currency in
+Brand & Theme Settings, tolerating "Rs"/"SLR"/"LKR (Rs.)") and
+`syncDbClientCurrency()` preselects it on boot and after each form reset. A
+hand-picked value is remembered via `dataset.userPicked` and survives resets.
+`erpSelectClient()` already applied the client's currency through
+`setToolCurrency()`; it now says so with a toast, and falls back to the
+company currency (also announced) when the client has none saved.
+
+## Light/dark theme (2026-09-12)
+
+Both toggles call one function. `applyTheme(theme)` writes `data-theme` on
+`<html>`, mirrors `body.light-theme`, updates both button labels and persists
+`cm-theme`; `themeNow()` reads that attribute and `toggleTheme()` inverts it.
+The sidebar button and the Appearance Settings switch are both wired to
+`toggleTheme` — no duplicated state.
+
+Light mode was broken by CSS ordering, not by JS. `index.html` carries an
+inline `<style id="nexora-glass-force">` (lines 15-71) AFTER
+`<link href="css/style.css">`, whose `:root`-prefixed `!important` dark glass
+rules therefore win every tie — including against the `[data-theme="light"]`
+rules in the stylesheet. It also pinned the dark gradient back on in light
+mode via an explicit `[data-theme="light"] body` rule. The light overrides
+now live at the END of that inline block with `:root[data-theme="light"]`
+(0,3,0 vs the dark rules' 0,2,0), plus a matching block at the end of
+`css/style.css` for anything the inline block does not name. Background
+presets and the custom accent colour are untouched — they are a separate
+feature.
+
+## History duplication (2026-09-12)
+
+Verified: one click on Save Draft or Export as PDF logs exactly one entry
+(measured, delta 1 per click, five attempts each); there is no autosave on
+keystroke and no duplicated event binding. `pushHistory()` still gained a
+2-second same-content guard keyed on type + tool + toolName + title + client +
+ref + total, so a handler that somehow fires twice cannot leave two rows with
+the same millisecond on the clock.
+
+## Navigation, Home and ERP fixes — 2026-09-12
+
+**1. Sidebar scrolling.** `.sidebar` is `height: 100vh` with `.sidebar-nav` as a
+flex child, and nothing scrolled — on a short laptop the help button, account
+block and Log Out sat below the fold with no way to reach them. `.sidebar` now
+clamps to `100vh; overflow: hidden`, `.sidebar-nav` gets `flex: 1 1 auto;
+min-height: 0; overflow-y: auto` (the `min-height` is what actually allows a
+flex child to scroll) and `.sidebar-foot` is `flex: 0 0 auto` with its own
+overflow cap. Measured at 1440×560: nav `scrollHeight` 624 > `clientHeight`
+134, and after scrolling, `#sidebar-plans`, How to use, Toggle theme, Login and
+Sign up are all fully in view.
+
+**2. Navigation grouping.** `WORKSPACE` (Home), then **`ERP & DATA`** (Master
+ERP Engine, Item & Client Database, Company & Brand Settings), then `MANAGEMENT`
+(History, Other Utilities), then `CONFIGURATION` (Appearance, Backup, Plans).
+
+**3. Home tool cards removed.** `#tools-grid` is gone from index.html, so
+`renderToolsGrid()` returns early and the delegated launcher never binds. The
+sidebar link and the utilities heading now read "Other Utilities".
+`TOOL_EMOJI` / `TOOLS_PRIMARY` and `renderToolsGrid`'s body remain for reuse,
+but nothing on Home renders them.
+
+**4. Home master-data preview.** `#home-db-items` / `#home-db-clients` are
+filled by `renderHomeDbPreview()`, called from `renderDb()` so the two views
+can never drift. Bounded by construction: `HOME_DB_LIMIT = 5` most-recent rows
+per list (newest `addedAt` first, insertion order as fallback), one-line rows,
+"View all →" opens the database, and clicking a row opens that record for
+editing. Verified with 12 items + 6 clients: 10 rows, every row exactly 56px,
+12.5 KB of long text clipped rather than wrapped.
+
+**5. Truncation.** `.db-row .db-name/.db-addr/.db-sku strong` are single-line
+ellipsised with the full text in `title`; `.db-mini-addr` clamps the Home
+preview to two lines; `.db-mini-name` to one. `min-width: 0` on the grid
+children is what lets them shrink. Verified at 1440×1000: 12 rows at a uniform
+54–55px with `white-space: nowrap` and `scrollWidth > clientWidth`.
+
+**6. SKU integer-only + ordering.** `#db-item-sku` carries `data-int="1"`, a
+third field kind alongside `data-numeric`; the keydown filter blocks everything
+but digits (no decimal point, no sign) and paste/input scrub to digits
+(`"AB12.3-CD"` → `"123"`). A programmatic `.value` set is deliberately NOT
+stripped, so an existing alphanumeric key (FIRE-DET) can still be edited or
+saved unchanged. `skuRank`/`compareSku` give numeric order (2 before 10),
+text order for non-numeric keys, blanks last. `dbItemsBySku()` renders the table
+in that order while each row keeps its ORIGINAL array index on `data-id`, so
+sorting the view never re-points an edit or delete. `sortErpLines()` applies the
+same order to `erpState.lines` on add, SKU match, blur of an unknown key, import
+and load, so the editing table, the sheet and the PDF/Excel output are one
+order.
+
+**7. Document Mode.** The mode tabs only called `renderErpHeader()` and
+`renderErpRows()` — never `schedulePdfPreview()` — so the document SHEET (and
+therefore the printed/exported title) kept the previous mode's name until some
+other edit rebuilt it. The tab handler now forces a rebuild and re-renders the
+summary. Verified: 60ms after the click the sheet reads PRO FORMA INVOICE /
+TAX INVOICE / DELIVERY NOTE. `ERP_MODES` also gained `noLabel`, so the
+reference row matches the mode ("Pro Forma Invoice No" instead of "Quotation
+No").
+
+**8. Mode-field auto-fill from brand.** `ERP_MODE_FIELDS` entries carry a
+`brandKey`; `renderErpModeFields()` shows `erpState.meta[key]` when the document
+has an override, otherwise the brand value, otherwise blank. Nothing is copied
+into either store, so a brand edit flows to every un-overridden document (the
+brand inputs call `renderErpModeFields()` on input) and an override survives
+mode switches. Verified: all five Pro Forma fields populated, an override won
+and persisted, the other fields kept inheriting.
+
+NOTE: `erpState.meta` is display/only today — the bank block is NOT printed on
+the document. Adding it to the (format-locked) template is a separate, explicit
+decision.
+
+**9. Confirmation dialog.** `confirmAction({title, message, confirmLabel,
+cancelLabel, danger})` returns a Promise and drives `#confirm-modal`; Escape and
+backdrop click cancel, Enter confirms only when the Confirm button holds focus.
+It falls back to `window.confirm` if the markup is missing. **28 call sites**
+now route through it — every tool reset, Clear/Clear-all, history clear,
+activity clear, record overwrite/delete, backup restore, request delete, brand
+reset, accent reset, background reset, and item/client deletion (which was
+previously NOT confirmed at all). Handlers became `async` for the await; the
+only remaining `window.confirm` is Log out, which destroys nothing.
+
+BOOT TRAP: any `await confirmAction` inside a NON-async function is a parse
+error ("Unexpected identifier") that kills the whole bundle — check the
+enclosing function signature when adding a new call site.
+
+DEBUG TRAP: `window.alert` blocks the main thread indefinitely in the preview
+harness. Stub it before driving the database forms or an accidental duplicate
+SKU will hang the page.
+
+## Other Utilities = the shared tool-card grid (reused component)
+
+The page used to be an icon grid (`#utility-slots` + `.tool-slot`) plus ONE
+detail panel (`#utility-preview`, `#open-utility-btn`) with click-to-preview /
+double-click-to-open. It is now twelve `.tool-card` cards — the exact component
+that rendered the Home shortcuts before those were removed — so the styling is
+the app's own, not a lookalike.
+
+- Markup: `#utilities-view` = banner + `<div class="tools-grid"
+  id="utility-tools-grid">`. Icon grid and detail panel deleted.
+- JS: `renderToolCards()` fills that grid from `TOOL_ORDER` (all twelve,
+  reached-for order, no primary/secondary split) using the existing
+  `toolCardHtml()` — emoji badge, name, one-line `blurb`, `timeAgo(last)`,
+  usage count, `Launch Tool →`. Called on `showView('utilities')`,
+  `recordUsage()` and boot. One delegated click on the grid launches a card.
+- Deleted with it: `TOOLS_PRIMARY`, `toolsMoreOpen`, the Home `#tools-grid`
+  delegated launcher, `renderUtilityPreview()`, the `.tool-slot` selector-bar
+  wiring, `#open-utility-btn`. `selectTool()` is now only `currentTool = id`
+  (every panel that mirrored it is retired); ~12 call sites still use it.
+- Dead CSS removed from `style.css`: `.tool-slot*`, `.utilities-grid*`,
+  `.tool-bar*`, `.tool-preview*`, `.tool-desc`, `.tool-cta`, `.utility-preview*`.
+  `.tool-badge` was KEPT — the tool banners still use it — so only its
+  `.tool-slot`-prefixed variants were dropped.
+
+## STACKING TRAP: the footer silently ate clicks on the rail's bottom
+
+The rail (`aside#sidebar`) is a CHILD of `main.container`. `main.container` is
+`position: relative; z-index: 1` → **it is a stacking context**, so the rail's
+own `z-index: 40` is scoped inside it and cannot lift it out. The rule
+`.site-header, main, .site-footer { position: relative; z-index: 1 }` put the
+footer in the SAME layer as a sibling of `main`; on a tie DOM order wins and the
+footer is later, so the footer painted — and hit-tested — above the whole
+`main.container` subtree including the fixed rail. Its background is
+`rgba(0, 0, 0, 0)`, so it was an INVISIBLE full-width slab that swallowed clicks
+on the bottom of the rail (Menu, Toggle theme, How to use, the account block)
+whenever a short page brought it into view. Symptom tracked the page's HEIGHT,
+not the page itself — that is the tell for this bug class.
+
+Proof method (reuse it): `document.elementFromPoint()` on each control's centre
++ a sweep of the whole rail on a 24px grid, with the rail settled
+(`getComputedStyle(sidebar).transform === 'matrix(1, 0, 0, 1, 0, 0)'`). Before:
+`backup`/`plans` (footer at y≈696 in a 1000px viewport) hit `div.footer-col` on
+the rail's lower controls. After: every page clean.
+
+FIX (two parts, both in `style.css`):
+1. `main.container { z-index: 2 }` — the rail must outrank the footer.
+2. `@media (min-width: 1025px) .site-footer { padding-left: var(--sidebar-w) }`
+   (+ `body.sidebar-collapsed .site-footer { padding-left: 0 }`) — the footer is
+   a sibling of main and never inherited main's reserved rail column, so its
+   left edge sat UNDER the rail. Reserving the column means the two never
+   overlap at all, instead of trading a working control for a dead one.
+   `max-width` is deliberately untouched so the footer's top rule still spans
+   the viewport.
+
+RULE OF THUMB: a `position: fixed` child of a page wrapper is trapped in that
+wrapper's stacking context — a sibling of the wrapper with the same z-index will
+cover it. Check `elementFromPoint`, not the z-index number.
+
+## Collapsible sidebar sections
+
+`WORKSPACE` / `ERP & DATA` / `RECORDS & BACKUP` / `MORE`, plus a fifth
+`CONFIGURATION` group appended for Appearance Settings (see below). Each is a
+`.nav-section` with a `.nav-group-label` header button (chevron rotates 90°
+when expanded ↔ 0° when collapsed). State is per key in
+`nexora_nav_sections_v1`; only explicit toggles are written, so
+`NAV_SECTION_DEFAULTS` (all five expanded) is what a fresh profile sees.
+Collapsing sets `hidden` on the list — it never navigates, and it removes the
+links from the tab order.
+
+IMPORTANT: `NAV_SECTION_DEFAULTS` in `app.js` is also the source of truth for
+which keys may be toggled — `toggleNavSection()` refuses a key that is not a
+property of it. Adding a section to the HTML without adding its key there gives
+a header that paints fine (an unknown key defaults to expanded) but silently
+refuses to collapse.
+
+RENAMES (labels only — ids, routes and handlers untouched): `Company & Brand
+Settings`→`Company Database`, `History & Saved Documents`→`Library`,
+`Data Backup & Restore`→`Backup`, `Collapse menu`→`Menu`.
+
+WHERE THINGS SIT: Appearance Settings keeps the CONFIGURATION group it already
+lived in rather than being folded into MORE — so MORE holds exactly the three
+specified items and nothing was moved that was not asked to move. Toggle theme
+and How to use stay pinned in `.sidebar-foot`.
+
+GOTCHA: `Menu` and any last-in-nav item live inside the SCROLLABLE
+`.sidebar-nav`. On a viewport where the nav overflows, items below the fold are
+clipped (not blocked) until the nav is scrolled — `scrollIntoView`/
+`nav.scrollTop` before hit-testing, or a probe will look like a failed click.
+
+## Database forms: explicit "Save", never auto-save
+
+`#db-item-add` / `#db-client-add` are labelled **Save Item** / **Save Client**
+with the `save` (floppy) icon; in an edit session `setDbFormMode()` switches them
+to **Update Item** / **Update Client** with the `check` icon, so the label always
+names what the click does. The static HTML carries the initial Save label +
+icon too, because `setDbFormMode()` is only called from `resetDbForm()` and
+`startEdit*()` — nothing repaints the button on boot.
+
+NOTHING in these forms writes on typing, blur or field change. `saveDb()` is
+called only from `addDbItem` / `addDbClient` and the four delete handlers, so a
+half-typed record cannot enter the table (verified: filling all ten client
+fields, firing input/change/focusout/blur and clicking away left both
+`nexora_item_db` and `nexora_client_db` byte-identical). One Save click =
+exactly one record AND exactly one `calcmall_history` row.
+
+BOTH create paths now end in `resetDbForm(which)` (was `clearDbForm`), so a save
+leaves a genuinely blank form: every text input cleared, the edit session
+closed, the button back on its Save label, and — for clients — the currency
+select returned to `companyCurrency()` with `userPicked` cleared. Deliberate: a
+hand-picked currency used to survive resets, but carrying one record's currency
+into the next silently saves the next client under the wrong currency, which is
+exactly the leftover-data trap. Change that branch if per-client currency is
+meant to be sticky.
+
+`clearDbForm` still exists (blanking only) and `resetDbForm` is what callers
+should use.
+
+The three other "Add item" buttons (`erp-add-row`, `boq-add-row`,
+`inv-add-row`) are deliberately untouched — they append a LINE ITEM to a
+document, not a database record.
+
 ## Why the two top-level html files exist
 
 - `index.html` — canonical app the user opens/distributes.

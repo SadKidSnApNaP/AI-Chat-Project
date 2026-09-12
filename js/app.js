@@ -507,6 +507,68 @@
     toastTimer = setTimeout(function () { el.classList.remove('show'); }, 3800);
   }
 
+  /* ── Confirmation dialog ────────────────────────────────────────
+     ONE prompt for every reset / destructive action in the app.
+
+     confirmAction({ title, message, confirmLabel, cancelLabel, danger })
+     resolves true only when the user explicitly confirms, so handlers read
+     as `if (!(await confirmAction({...}))) return;`. It falls back to
+     window.confirm when the dialog markup is absent (e.g. an older page
+     cached from a CDN) so a missing modal can never silently allow a wipe.
+
+     Escape and a click on the backdrop count as Cancel — the safe answer is
+     always the default. */
+  let confirmResolver = null;
+
+  function confirmAction(opts) {
+    const o = opts || {};
+    const message = o.message || 'This cannot be undone.';
+    const modal = $('confirm-modal');
+    const titleEl = $('confirm-title');
+    const textEl = $('confirm-text');
+    const okBtn = $('confirm-ok');
+    const cancelBtn = $('confirm-cancel');
+    if (!modal || !okBtn || !cancelBtn) return Promise.resolve(window.confirm(message));
+
+    // A second prompt while one is open must not leave the first unresolved.
+    if (confirmResolver) { const prev = confirmResolver; confirmResolver = null; prev(false); }
+
+    if (titleEl) titleEl.textContent = o.title || 'Are you sure?';
+    if (textEl) textEl.textContent = message;
+    okBtn.textContent = o.confirmLabel || 'Confirm';
+    cancelBtn.textContent = o.cancelLabel || 'Cancel';
+    okBtn.classList.toggle('btn-danger', !!o.danger);
+    modal.hidden = false;
+    try { okBtn.focus(); } catch (e) { /* ignore */ }
+
+    return new Promise(function (resolve) {
+      const finish = function (val) {
+        if (!confirmResolver) return;
+        confirmResolver = null;
+        document.removeEventListener('keydown', onKey, true);
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        modal.removeEventListener('click', onBackdrop);
+        modal.hidden = true;
+        resolve(val);
+      };
+      const onOk = function () { finish(true); };
+      const onCancel = function () { finish(false); };
+      const onBackdrop = function (e) { if (e.target === modal) finish(false); };
+      const onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+        // Enter confirms only when the confirm button has focus, so a stray
+        // Enter cannot wipe data.
+        else if (e.key === 'Enter' && document.activeElement === okBtn) { e.preventDefault(); finish(true); }
+      };
+      confirmResolver = finish;
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      modal.addEventListener('click', onBackdrop);
+      document.addEventListener('keydown', onKey, true);
+    });
+  }
+
   /* ── First-time "How to use" onboarding modal ────────────────── */
   // Shows once per browser (localStorage 'hasSeenOnboarding'), and again
   // on first login/signup for brand-new accounts.
@@ -593,9 +655,31 @@
     });
   }
 
+  /* Raw parse. Returns NaN for anything unusable — callers that need an
+     "is this blank?" distinction use this; callers feeding a CALCULATION
+     use num0() below so a typo can never become NaN in a total.
+
+     Whitespace is stripped along with thousands separators: "100 00" is a
+     typo for 10000, not a broken number, so Number() must not see the space
+     and hand back NaN. A string that is nothing BUT whitespace still parses
+     as blank (NaN) rather than quietly becoming 0, so "empty" and "zero"
+     stay distinguishable for every caller that cares. */
   function num(v) {
     if (v === '' || v === null || v === undefined) return NaN;
-    return Number(String(v).replace(/,/g, ''));
+    const cleaned = String(v).replace(/[,\s]/g, '');
+    if (cleaned === '' || cleaned === '-' || cleaned === '.' || cleaned === '+') return NaN;
+    return Number(cleaned);
+  }
+
+  // Anything -> a finite number, 0 when empty/invalid. Every money or
+  // quantity that reaches a total, a PDF cell or a spreadsheet cell goes
+  // through here (or through Calc.toNum, which is the same rule).
+  function num0(v) { return Calc.toNum(v, 0); }
+
+  // The characters a numeric field is allowed to contain, applied as the
+  // user types AND to anything pasted in.
+  function numericSafeText(raw, allowNegative) {
+    return Calc.sanitizeNumericText(raw, allowNegative);
   }
 
   function uid() {
@@ -650,6 +734,20 @@
     const st = $('theme-toggle-settings');
     if (st) st.textContent = light ? 'Switch to Dark mode' : 'Switch to Light mode';
     try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch (e) { /* ignore */ }
+    // Screen readers follow the sidebar button's meaning, not its wording.
+    if (tt && tt.setAttribute) tt.setAttribute('aria-pressed', light ? 'true' : 'false');
+  }
+
+  /* The ONE source of theme truth is the data-theme attribute on <html>
+     (mirrored to <body class="light-theme"> and persisted under THEME_KEY by
+     applyTheme). Both toggles — the sidebar button and the Appearance
+     Settings switch — call exactly this, so they can never disagree. */
+  function themeNow() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+
+  function toggleTheme() {
+    applyTheme(themeNow() === 'light' ? 'dark' : 'light');
   }
 
   /* ── Custom accent color (CSS variables, persisted) ── */
@@ -728,12 +826,15 @@
       else sb.removeAttribute('aria-hidden');
     }
     const toggle = $('sidebar-collapse');
-    if (toggle) toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    const label = $('sidebar-collapse-label');
-    if (label) {
-      label.textContent = desktop
-        ? (collapsed ? 'Expand menu' : 'Collapse menu')
-        : 'Close menu';
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      // The visible label is a fixed "Menu" (rename of "Collapse menu"); the
+      // action it will take is carried by the accessible name + tooltip.
+      const action = desktop
+        ? (collapsed ? 'expand the navigation' : 'collapse the navigation')
+        : 'close the navigation';
+      toggle.setAttribute('aria-label', 'Menu — ' + action);
+      toggle.setAttribute('title', 'Menu — ' + action);
     }
     const reopen = $('sidebar-reopen');
     if (reopen) reopen.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
@@ -767,6 +868,78 @@
     });
   }
 
+  /* ── Collapsible nav sections (WORKSPACE / ERP & DATA / RECORDS & BACKUP / MORE) ──
+     Each section toggles independently and its choice is remembered per key,
+     so collapsing MORE never touches ERP & DATA. Only explicit toggles are
+     written to storage, which keeps "what a new user sees" fixed at the
+     defaults below rather than pinned to whatever the last click did. */
+  const NAV_SECTIONS_KEY = 'nexora_nav_sections_v1';
+  const NAV_SECTION_DEFAULTS = { workspace: true, erp: true, records: true, more: true, configuration: true };
+
+  function readNavSectionStore() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(NAV_SECTIONS_KEY) || '{}'); } catch (e) { saved = null; }
+    return (saved && typeof saved === 'object') ? saved : {};
+  }
+
+  // Effective state: remembered value when there is one, otherwise the default.
+  function navSectionState() {
+    const saved = readNavSectionStore();
+    const state = {};
+    const keys = Object.keys(NAV_SECTION_DEFAULTS);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      state[k] = Object.prototype.hasOwnProperty.call(saved, k)
+        ? saved[k] !== false
+        : NAV_SECTION_DEFAULTS[k];
+    }
+    return state;
+  }
+
+  function paintNavSections(state) {
+    const secs = document.querySelectorAll('.nav-section');
+    for (let i = 0; i < secs.length; i++) {
+      const sec = secs[i];
+      const open = state[sec.getAttribute('data-nav-section')] !== false;
+      sec.classList.toggle('collapsed', !open);
+      const head = sec.querySelector('.nav-group-label');
+      if (head) {
+        head.setAttribute('aria-expanded', open ? 'true' : 'false');
+        head.setAttribute('title', (open ? 'Hide' : 'Show') + ' ' +
+          (head.firstElementChild ? head.firstElementChild.textContent.trim() : 'section'));
+      }
+      // `hidden` removes the links from the tab order too, so a collapsed
+      // section cannot be reached by keyboard — collapsed means collapsed.
+      const items = sec.querySelector('.nav-group-items');
+      if (items) items.hidden = !open;
+    }
+  }
+
+  function toggleNavSection(key) {
+    if (!key || !Object.prototype.hasOwnProperty.call(NAV_SECTION_DEFAULTS, key)) return;
+    const state = navSectionState();
+    state[key] = !state[key];
+    const saved = readNavSectionStore();
+    saved[key] = state[key];
+    try { localStorage.setItem(NAV_SECTIONS_KEY, JSON.stringify(saved)); } catch (e) { /* ignore */ }
+    paintNavSections(state);
+  }
+
+  function initNavSections() {
+    // Paint first: the header markup ships expanded so the nav is usable even
+    // before this runs, then the remembered state is applied on top.
+    paintNavSections(navSectionState());
+    const nav = $('sidebar-nav');
+    if (!nav) return;
+    nav.addEventListener('click', function (e) {
+      const t = e.target;
+      const head = (t && t.closest) ? t.closest('.nav-group-label') : null;
+      if (!head) return;
+      e.preventDefault();
+      toggleNavSection(head.getAttribute('data-nav-toggle'));
+    });
+  }
+
   /* ── Comma formatting for numeric inputs (display only) ── */
   // User types digits; commas are painted on blur and stripped again on
   // focus, so the underlying value never contains separators.
@@ -783,17 +956,83 @@
 
   // Delegated: works for static inputs AND dynamically rendered table rows
   // (focusin/focusout bubble, unlike focus/blur).
+  function isNumericField(el) {
+    return !!(el && el.getAttribute && el.getAttribute('data-numeric') === '1');
+  }
+
+  // Field kinds: 'int' accepts WHOLE numbers only (digits, no decimal point,
+  // no sign) — used by the Item Key / SKU; 'num' accepts a decimal number.
+  function numericFieldKind(el) {
+    if (!el || !el.getAttribute) return null;
+    if (el.getAttribute('data-int') === '1') return 'int';
+    if (el.getAttribute('data-numeric') === '1') return 'num';
+    return null;
+  }
+
+  /* Characters that must never enter a numeric field. Modifier and control
+     keys always pass so shortcuts, tabbing, undo and backspace keep working;
+     the numeric keypad's own keys are covered by the length check. */
+  function isBlockedNumericKey(e, kind) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (e.key.length !== 1) return false;              // Shift, Arrow, Backspace, F5…
+    if (/[0-9]/.test(e.key)) return false;
+    if (kind === 'int') return true;                   // whole numbers only: no '.', no '-'
+    if (e.key === '.') return e.target.value.indexOf('.') !== -1;  // one decimal point only
+    if (e.key === '-' || e.key === '+') return true;   // no negatives in these fields
+    return true;                                       // letters, spaces, $, %, e, etc.
+  }
+
+  /* Applied on every keystroke AND on paste/drop, so a stray space in
+     "100 00" is stripped before it can ever reach a calculation. */
+  function sanitizeNumericField(el) {
+    const kind = numericFieldKind(el);
+    if (!kind) return false;
+    const cleaned = kind === 'int' ? String(el.value).replace(/[^0-9]/g, '') : numericSafeText(el.value, false);
+    if (cleaned === el.value) return false;
+    const atEnd = el.selectionStart === null || el.selectionStart >= el.value.length;
+    const caret = el.selectionStart === null ? cleaned.length : Math.max(0, el.selectionStart - (el.value.length - cleaned.length));
+    el.value = cleaned;
+    try { if (atEnd) el.setSelectionRange(cleaned.length, cleaned.length);
+      else el.setSelectionRange(caret, caret); } catch (err) { /* not a text input */ }
+    return true;
+  }
+
   function formatAllNumericInputs() {
     document.addEventListener('focusin', function (e) {
-      if (e.target && e.target.getAttribute && e.target.getAttribute('data-numeric') === '1') {
+      if (isNumericField(e.target)) {
         e.target.value = String(e.target.value).replace(/,/g, '');
       }
     });
     document.addEventListener('focusout', function (e) {
-      if (e.target && e.target.getAttribute && e.target.getAttribute('data-numeric') === '1') {
+      if (isNumericField(e.target)) {
         paintNumericInput(e.target);
       }
     });
+    // 1 ─ block invalid characters at the point of typing.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Process' || e.keyCode === 229) return;   // IME composition
+      const kind = numericFieldKind(e.target);
+      if (!kind) return;
+      if (isBlockedNumericKey(e, kind)) e.preventDefault();
+    }, true);
+    // 2 ─ scrub whatever still gets through (paste, drop, autofill, a
+    //     programmatic value, or a browser that ignored the key filter).
+    document.addEventListener('input', function (e) {
+      sanitizeNumericField(e.target);
+    }, true);
+    document.addEventListener('paste', function (e) {
+      const kind = numericFieldKind(e.target);
+      if (!kind) return;
+      const text = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if (!text) return;
+      e.preventDefault();
+      const cleaned = kind === 'int' ? text.replace(/[^0-9]/g, '') : numericSafeText(text, false);
+      const start = e.target.selectionStart === null ? e.target.value.length : e.target.selectionStart;
+      const end = e.target.selectionEnd === null ? start : e.target.selectionEnd;
+      const next = e.target.value.slice(0, start) + cleaned + e.target.value.slice(end);
+      e.target.value = kind === 'int' ? String(next).replace(/[^0-9]/g, '') : numericSafeText(next, false);
+      e.target.dispatchEvent(new Event('input', { bubbles: true }));
+    }, true);
   }
 
   /* ── Rate unit display: stored canonical hourly ⇄ entered unit ── */
@@ -966,26 +1205,13 @@
   const TOOL_VIEWS = { 'scope-guard': 'tool', 'qr': 'qr', 'boq': 'boq', 'pricing': 'pricing', 'invoice': 'invoice', 'duty': 'duty', 'variation': 'variation', 'breakeven': 'breakeven', 'fx': 'fx', 'gpa': 'gpa', 'retainer': 'retainer', 'delay': 'delay' };
   function toolViewFor(id) { return TOOL_VIEWS[id] || 'tool'; }
 
+  /* Which tool the user last reached for. The panels that used to mirror it
+     (the icon-grid slot styling and the single preview card) are retired —
+     Other Utilities renders one card per tool and navigates directly — so
+     this is now pure state, kept for the launch handlers. */
   function selectTool(id) {
-    const t = TOOLS[id];
-    if (!t) return;
+    if (!TOOLS[id]) return;
     currentTool = id;
-    const slots = document.querySelectorAll('.tool-slot');
-    for (let i = 0; i < slots.length; i++) {
-      const on = slots[i].getAttribute('data-tool') === id;
-      slots[i].classList.toggle('active', on);
-      slots[i].setAttribute('aria-selected', on ? 'true' : 'false');
-    }
-    const tp = $('tp-badge'); // retired preview card — null-safe after the Insights Hub redesign
-    if (!tp) return;
-    tp.textContent = t.badge;
-    $('tp-name').textContent = t.name;
-    $('tp-desc').textContent = t.desc;
-    $('tp-meta').textContent = t.meta;
-    $('tp-status').hidden = t.available;
-    const btn = $('open-tool-btn');
-    btn.disabled = !t.available;
-    btn.textContent = t.available ? 'Open Calculator \u2192' : 'Coming soon';
   }
 
   /* ── View switching (Home ↔ tool) ──────────────────────────
@@ -1056,8 +1282,10 @@
     for (const tid in TOOL_VIEWS) {
       if (TOOL_VIEWS[tid] === name) recordUsage(tid);
     }
+    // The card grid lives on Other Utilities now, so refresh it there (a
+    // launch bumps that tool's Last used / Usage while you are on its page).
+    if (name === 'utilities') renderToolCards();
     if (name === 'home') {
-      renderToolsGrid();
       renderKpis();
       renderActivity();
     }
@@ -1626,6 +1854,34 @@
     try { localStorage.setItem(CURRENCY_KEY, JSON.stringify(toolCurrency)); } catch (e) { /* ignore */ }
   }
 
+  /* ── The company's own currency ───────────────────────────────
+     Brand & Theme Settings carries a free-text "Account currency"
+     (the bank account's currency, e.g. LKR). It is normalised to a code
+     the tools understand and used as the DEFAULT for anything that asks
+     "what currency is this business in?" — the client form, for one. */
+  function companyCurrency() {
+    const raw = String((brand && brand.accountCur) || '').trim().toUpperCase();
+    const code = raw.replace(/[^A-Z]/g, '');
+    if (Calc.TOOL_CURRENCIES[code]) return code;
+    // Tolerate "Rs", "Rs.", "SLR" and "LKR (Rs.)" style entries.
+    if (code === 'SLR' || code === 'RS' || code === 'LKR') return 'LKR';
+    return 'LKR';
+  }
+
+  /* A brand-new client starts on the company currency, NOT on whatever
+     option happens to sit first in the <select>. The old markup shipped
+     USD as the first option with nothing selected, so every client saved
+     without touching the dropdown silently claimed to invoice in dollars
+     while the rest of the app worked in rupees. */
+  function syncDbClientCurrency(force) {
+    const sel = $('db-client-currency');
+    if (!sel) return;
+    if (dbEditing.client > -1) return;              // never stomp an edit session
+    if (!force && sel.dataset.userPicked === '1') return;  // deliberate choice wins
+    sel.value = companyCurrency();
+    sel.dataset.userPicked = '';
+  }
+
   function setToolCurrency(tool, code) {
     if (!Calc.TOOL_CURRENCIES[code]) return;
     // Global sync: one change applies to EVERY calculator, table and PDF
@@ -1781,8 +2037,8 @@
     if (first) first.focus();
   }
 
-  function clearQr() {
-    if (!window.confirm('Clear all line items? This cannot be undone.')) return;
+  async function clearQr() {
+    if (!(await confirmAction({ title: 'Clear line items?', message: 'Clear all line items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
     qrRows = [];
     saveQr();
     renderQr();
@@ -2319,16 +2575,16 @@
     if (first) first.focus();
   }
 
-  function clearBoq() {
-    if (!window.confirm('Clear all BOQ items? This cannot be undone.')) return;
+  async function clearBoq() {
+    if (!(await confirmAction({ title: 'Clear BOQ items?', message: 'Clear all BOQ items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
     boqState.lines = [];
     saveBoq();
     renderBoqRows();
     updateBoqSummary();
   }
 
-  function resetBoq() {
-    if (!window.confirm('Reset this quotation? This clears the details, items, discount and VAT.')) return;
+  async function resetBoq() {
+    if (!(await confirmAction({ title: 'Reset quotation?', message: 'This clears the details, items, discount and VAT.', confirmLabel: 'Reset', danger: true }))) return;
     boqState = emptyBoq();
     saveBoq();
     renderBoq();
@@ -2629,16 +2885,16 @@
     if (first) first.focus();
   }
 
-  function clearInv() {
-    if (!window.confirm('Clear all line items? This cannot be undone.')) return;
+  async function clearInv() {
+    if (!(await confirmAction({ title: 'Clear line items?', message: 'Clear all line items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
     invState.lines = [];
     saveInv();
     renderInvRows();
     updateInvSummary();
   }
 
-  function resetInv() {
-    if (!window.confirm('Reset this document? This clears the type, fields, business details and items.')) return;
+  async function resetInv() {
+    if (!(await confirmAction({ title: 'Reset document?', message: 'This clears the type, fields, business details and items.', confirmLabel: 'Reset', danger: true }))) return;
     invState = emptyInv();
     saveInv();
     renderInv();
@@ -2737,8 +2993,8 @@
     updatePricing();
   }
 
-  function resetPricing() {
-    if (!window.confirm('Reset the pricing calculator? This clears cost, overhead and profit target.')) return;
+  async function resetPricing() {
+    if (!(await confirmAction({ title: 'Reset pricing calculator?', message: 'This clears cost, overhead and profit target.', confirmLabel: 'Reset', danger: true }))) return;
     prState = emptyPricing();
     savePricing();
     fillPricingForm();
@@ -3430,7 +3686,29 @@
   // type: 'pdf' → re-downloadable via the source tool; 'copy' → snapshot.
   // draft: { tool: <TOOLS key> } — tool state persists in its own key, so
   // the draft only needs to know where to navigate / which export to rerun.
+  /* Identical entries produced within this window are treated as ONE action.
+     A document is described by type + tool + client + ref + total, so two
+     genuinely different documents can never collide here — but a click that
+     somehow reaches its handler twice (a double-fire, not a double-click) no
+     longer leaves two rows with the same millisecond on the clock. */
+  const HISTORY_DEDUPE_MS = 2000;
+
+  function isDuplicateHistory(entry) {
+    const last = history[0];
+    if (!last) return false;
+    if (Date.now() - last.at > HISTORY_DEDUPE_MS) return false;
+    const same = function (a, b) { return String(a || '') === String(b || ''); };
+    return same(last.type, entry.type || 'pdf') &&
+      same(last.tool, entry.tool) &&
+      same(last.toolName, entry.toolName) &&
+      same(last.title, entry.title) &&
+      same(last.client, entry.client) &&
+      same(last.ref, entry.ref) &&
+      same(last.total, entry.total);
+  }
+
   function pushHistory(entry) {
+    if (isDuplicateHistory(entry)) return;
     history.unshift({
       id: uid(),
       type: entry.type || 'pdf',
@@ -3534,8 +3812,8 @@
     }
   }
 
-  function clearHistory() {
-    if (!window.confirm('Clear the entire history? This cannot be undone.')) return;
+  async function clearHistory() {
+    if (!(await confirmAction({ title: 'Clear history?', message: 'Clear the entire history? This cannot be undone.', confirmLabel: 'Clear everything', danger: true }))) return;
     history = [];
     draftStore = {};
     saveHistory();
@@ -3600,8 +3878,8 @@
     updateRetainer();
   }
 
-  function resetRetainer() {
-    if (!window.confirm('Reset the retainer estimator? This clears the client details and pricing inputs.')) return;
+  async function resetRetainer() {
+    if (!(await confirmAction({ title: 'Reset retainer estimator?', message: 'This clears the client details and pricing inputs.', confirmLabel: 'Reset', danger: true }))) return;
     rtState = emptyRetainer();
     saveRetainer();
     fillRetainerForm();
@@ -3692,8 +3970,8 @@
     updateDelay();
   }
 
-  function resetDelay() {
-    if (!window.confirm('Reset the delay calculator? This clears the contract details and penalty rates.')) return;
+  async function resetDelay() {
+    if (!(await confirmAction({ title: 'Reset delay calculator?', message: 'This clears the contract details and penalty rates.', confirmLabel: 'Reset', danger: true }))) return;
     dlState = emptyDelay();
     saveDelay();
     fillDelayForm();
@@ -3826,17 +4104,6 @@
     $('brand-status').textContent = used === 0 ? 'Not set up yet' : (used + ' of 4 set');
   }
 
-  /* ── All Utilities preview card ───────────────────────────── */
-  function renderUtilityPreview() {
-    const t = TOOLS[currentTool] || TOOLS['scope-guard'];
-    $('up-badge').textContent = t.badge;
-    $('up-name').textContent = t.name;
-    $('up-desc').textContent = t.desc;
-    $('up-meta').textContent = t.meta;
-    $('open-utility-btn').disabled = !t.available;
-    $('open-utility-btn').textContent = t.available ? 'Open Calculator \u2192' : 'Coming soon';
-  }
-
   /* ── Data-Centric Insights Hub (home view) ───────────────── */
   // Inline stroke-style SVG icons (monochrome, currentColor) so no external
   // assets are needed. Each key maps to a small 24×24 viewBox path set.
@@ -3915,7 +4182,7 @@
     toolUsage[toolId].count++;
     toolUsage[toolId].last = Date.now();
     saveUsage();
-    renderToolsGrid(); // refresh Last used / Usage in place
+    renderToolCards(); // refresh Last used / Usage in place
   }
 
   function timeAgo(ts) {
@@ -3933,16 +4200,13 @@
     return new Date(ts).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   }
 
-  // Tools grid — 4-column structured cards on the Insights Hub.
-  /* The everyday three, in the order they are reached for. Everything else
-     lives behind "Advanced tools" so Home does not open with twelve
-     identical-weight cards. Ordered explicitly rather than by the TOOLS key
-     order, which is just the order the file happens to define them in. */
-  const TOOLS_PRIMARY = ['invoice', 'boq', 'pricing'];
-  /* Remembered so launching a tool from inside the disclosure does not slam
-     it shut behind you (recordUsage re-renders the grid). Still collapsed on
-     a fresh load — this is session state, not a persisted preference. */
-  let toolsMoreOpen = false;
+  // Tools grid — the app's structured calculator card component
+  // (`.tools-grid` + `.tool-card` + `.tool-launch`), reused as-is from the
+  // Home shortcuts that used to render it. It is now the whole of Other
+  // Utilities. Ordered the way the tools are reached for, not the order the
+  // TOOLS map happens to define them in.
+  const TOOL_ORDER = ['scope-guard', 'qr', 'boq', 'pricing', 'invoice', 'duty',
+    'variation', 'breakeven', 'fx', 'gpa', 'retainer', 'delay'];
 
   function toolCardHtml(id) {
     const t = TOOLS[id];
@@ -3961,28 +4225,16 @@
     '</button>';
   }
 
-  function renderToolsGrid() {
-    const grid = $('tools-grid');
+  /* Other Utilities: one card per tool, always all twelve in TOOL_ORDER —
+     no primary/secondary split and no disclosure, because this page exists
+     precisely to show everything at once. */
+  function renderToolCards() {
+    const grid = $('utility-tools-grid');
     if (!grid) return;
-    const all = Object.keys(TOOLS);
-    const primary = TOOLS_PRIMARY.filter(function (id) { return all.indexOf(id) !== -1; });
-    const rest = all.filter(function (id) { return primary.indexOf(id) === -1; });
-    /* "Advanced tools" is a native <details> so it is collapsed by default,
-       keyboard operable and needs no state of its own. The card click
-       handler is delegated on #tools-grid and matches closest('.tool-card'),
-       so a card inside the disclosure still launches normally and clicking
-       the summary itself does nothing but toggle. */
-    grid.innerHTML =
-      primary.map(toolCardHtml).join('') +
-      '<details class="tools-more"' + (toolsMoreOpen ? ' open' : '') + '>' +
-        '<summary class="tools-more-summary">' +
-          '<span class="tools-more-label">Advanced tools</span>' +
-          '<span class="tools-more-hint">' + rest.length + ' more calculators \u2014 scope, duty, variations, FX and more</span>' +
-        '</summary>' +
-        '<div class="tools-grid tools-grid-advanced">' + rest.map(toolCardHtml).join('') + '</div>' +
-      '</details>';
-    const more = grid.querySelector('details.tools-more');
-    if (more) more.addEventListener('toggle', function () { toolsMoreOpen = more.open; });
+    grid.innerHTML = TOOL_ORDER
+      .filter(function (id) { return !!TOOLS[id]; })
+      .map(toolCardHtml)
+      .join('');
   }
 
   // KPI row — live counts from the local data stores.
@@ -4232,8 +4484,8 @@
     }).join('');
     if (clearBtn) clearBtn.hidden = false;
   }
-  function clearActivity() {
-    if (!window.confirm('Clear the recent activity feed? Saved documents in History are not affected.')) return;
+  async function clearActivity() {
+    if (!(await confirmAction({ title: 'Clear activity feed?', message: 'Saved documents in History are not affected.', confirmLabel: 'Clear feed', danger: true }))) return;
     history = [];
     draftStore = {};
     saveHistory();
@@ -4278,7 +4530,80 @@
       } catch (e) { /* ignore */ }
     }
     if (!items.length && !clients.length) return emptyDb();
+    /* Repair legacy rows on the way in, WITHOUT flattening three different
+       states into one. A rate that is missing, a rate of 0 and a rate that
+       cannot be read at all must stay distinguishable:
+         missing   → null   (nothing was ever entered)
+         0         → 0      (a genuine zero price — free/zero-cost items)
+         unreadable→ kept   (so the table can flag it instead of printing 0)
+       A rate that IS readable is only rewritten when it needs normalising
+       ("100 00" → 10000), so genuine values are never touched. */
+    let repaired = false;
+    items = items.map(function (it) {
+      if (!it || typeof it !== 'object') return it;
+      const out = Object.assign({}, it);
+      const raw = it.rate;
+      const isBlank = raw === null || raw === undefined || String(raw).trim() === '';
+      if (isBlank) {
+        if (raw !== null) repaired = true;
+        out.rate = null;
+        return out;
+      }
+      // Legacy stringified-null artefacts read as "never entered".
+      if (/^(null|undefined|nan)$/i.test(String(raw).trim())) { repaired = true; out.rate = null; return out; }
+      const n = Calc.toNum(raw, NaN);
+      if (!Number.isFinite(n)) return out;      // unreadable — leave it VISIBLE
+      const normalised = n < 0 ? 0 : Math.round(n * 10000) / 10000;
+      if (normalised !== raw) repaired = true;
+      out.rate = normalised;
+      return out;
+    });
+    // Persist the repair once, so the stored JSON stops carrying a null/NaN
+    // rate and every later read agrees with what the table shows. Written
+    // with the key directly — saveDb() reads the module-scope `db`, which
+    // does not exist yet while this initialiser is running.
+    if (repaired) {
+      try { localStorage.setItem(DB_KEY_ITEMS, JSON.stringify(items)); } catch (e) { /* ignore */ }
+    }
     return { items: items, clients: clients };
+  }
+
+  /* ── A stored rate has THREE possible states ──────────────────
+     Treating them as one is what made a broken database entry look like a
+     legitimate free item. `dbRateInfo` is the single classifier every
+     reader goes through: the table, the drawer and the ERP auto-fill.
+
+       { state: 'set',     value: 10000 }   a real number, 0 included
+       { state: 'missing', value: null  }   nothing was ever entered
+       { state: 'invalid', value: null  }   present but unreadable
+
+     `text` is what to display, so "genuinely zero" (0), "never entered"
+     (—) and "broken" (Invalid) can never be mistaken for each other. */
+  function dbRateInfo(value) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return { state: 'missing', value: null, text: '\u2014' };
+    }
+    if (/^(null|undefined|nan)$/i.test(String(value).trim())) {
+      return { state: 'missing', value: null, text: '\u2014' };
+    }
+    const n = Calc.toNum(value, NaN);
+    if (!Number.isFinite(n)) return { state: 'invalid', value: null, text: 'Invalid' };
+    const clean = n < 0 ? 0 : Math.round(n * 10000) / 10000;
+    return { state: 'set', value: clean, text: Calc.fmtNum(clean) };
+  }
+
+  /* What the create/edit form stores. A blank field is "never entered"
+     (null) rather than a silent 0, and anything the field can hold is
+     already a real number by the time it gets here. */
+  function storedRateFromInput(value) {
+    const info = dbRateInfo(value);
+    return info.state === 'set' ? info.value : null;
+  }
+
+  function dbRateTitle(info) {
+    if (info.state === 'invalid') return 'This rate cannot be read — open the item and set a number (use 0 for a zero-cost item)';
+    if (info.state === 'missing') return 'No default rate saved — pick this SKU in the ERP and the Rate cell stays blank until you type one';
+    return 'Default rate used when this SKU is picked in the ERP';
   }
 
   let db = loadDb();
@@ -4301,17 +4626,115 @@
     return db.clients.find(function (c) { return c.name.toLowerCase() === key; }) || null;
   }
 
+  /* ── SKU ordering: the one comparison used everywhere ──────────
+     A numeric SKU ("2") sorts before "10"; a non-numeric one falls back to
+     plain text order; and an item with no SKU sorts last rather than jumping
+     to the top of the list. */
+  function skuRank(sku) {
+    const s = String(sku === null || sku === undefined ? '' : sku).trim();
+    if (s === '') return { empty: 1, num: Infinity, text: '' };
+    const n = Number(s);
+    return { empty: 0, num: Number.isFinite(n) ? n : Infinity, text: s.toLowerCase() };
+  }
+
+  function compareSku(a, b) {
+    const ra = skuRank(a);
+    const rb = skuRank(b);
+    if (ra.empty !== rb.empty) return ra.empty - rb.empty;   // blanks last
+    if (ra.num !== rb.num) return ra.num - rb.num;           // 2 before 10
+    if (ra.text !== rb.text) return ra.text < rb.text ? -1 : 1;
+    return 0;
+  }
+
+  /* Items in SKU-ascending order, as [record, originalIndex] pairs.
+     The INDEX is what the row buttons carry, so sorting the view never
+     re-points an edit or a delete at the wrong record. */
+  function dbItemsBySku() {
+    return db.items.map(function (it, i) { return { it: it, i: i }; })
+      .sort(function (a, b) { return compareSku(a.it.sku, b.it.sku); });
+  }
+
+  /* ── Home: compact master-data preview ──────────────────────────
+     Shows at most HOME_DB_LIMIT most-recent items and clients in condensed
+     rows. It is bounded by construction — adding a thousand records changes
+     the CONTENT of five rows, never the height of the block — and each row's
+     full text lives in its title attribute so long descriptions can be read
+     without stretching the layout. "View all" opens the full database. */
+  const HOME_DB_LIMIT = 5;
+
+  function homeDbMostRecent(list) {
+    return list.map(function (rec, i) { return { rec: rec, i: i }; })
+      .sort(function (a, b) {
+        const ta = Number(a.rec && a.rec.addedAt) || 0;
+        const tb = Number(b.rec && b.rec.addedAt) || 0;
+        if (ta !== tb) return tb - ta;          // newest first
+        return b.i - a.i;                       // no timestamp: insertion order
+      })
+      .slice(0, HOME_DB_LIMIT);
+  }
+
+  function renderHomeDbPreview() {
+    const itemsEl = $('home-db-items');
+    const clientsEl = $('home-db-clients');
+    if (!itemsEl && !clientsEl) return;
+
+    const itemCount = $('home-db-items-count');
+    if (itemCount) itemCount.textContent = db.items.length + (db.items.length === 1 ? ' item' : ' items');
+    const clientCount = $('home-db-clients-count');
+    if (clientCount) clientCount.textContent = db.clients.length + (db.clients.length === 1 ? ' client' : ' clients');
+
+    if (itemsEl) {
+      if (!db.items.length) {
+        itemsEl.innerHTML = '<p class="home-db-empty">No items saved yet. Add one in the Item &amp; Client Database and it will auto-fill ERP line items.</p>';
+      } else {
+        itemsEl.innerHTML = homeDbMostRecent(db.items).map(function (pair) {
+          const it = pair.rec;
+          const info = dbRateInfo(it.rate);
+          return '<button type="button" class="home-db-row" data-db="item" data-id="' + pair.i + '">' +
+            '<span class="home-db-main">' +
+              '<span class="home-db-title"><strong>' + esc(it.sku) + '</strong></span>' +
+              '<span class="home-db-sub db-mini-name" title="' + esc(it.name || '') + '">' + esc(it.name || '\u2014') + '</span>' +
+            '</span>' +
+            '<span class="home-db-meta db-rate-' + info.state + '" title="' + dbRateTitle(info) + '">' + esc(info.text) + '</span>' +
+          '</button>';
+        }).join('');
+      }
+    }
+
+    if (clientsEl) {
+      if (!db.clients.length) {
+        clientsEl.innerHTML = '<p class="home-db-empty">No clients saved yet. A saved client auto-fills the ERP header when its name is typed.</p>';
+      } else {
+        clientsEl.innerHTML = homeDbMostRecent(db.clients).map(function (pair) {
+          const c = pair.rec;
+          const site = c.defaultProject ? ' \u00b7 Site: ' + c.defaultProject : '';
+          const addr = (c.address || '\u2014') + site;
+          return '<button type="button" class="home-db-row" data-db="client" data-id="' + pair.i + '">' +
+            '<span class="home-db-main">' +
+              '<span class="home-db-title"><strong>' + esc(c.clientName || c.name) + '</strong></span>' +
+              '<span class="home-db-sub db-mini-addr" title="' + esc(addr) + '">' + esc(addr) + '</span>' +
+            '</span>' +
+            '<span class="home-db-meta">' + esc(c.currency || '') + '</span>' +
+          '</button>';
+        }).join('');
+      }
+    }
+  }
+
   function renderDb() {
     const itemsBody = $('db-item-rows');
     if (!db.items.length) {
       itemsBody.innerHTML = '<div class="empty-cell">No items yet. Add your first SKU above — ERP line items will auto-fill from it.</div>';
     } else {
-      itemsBody.innerHTML = db.items.map(function (it, i) {
+      itemsBody.innerHTML = dbItemsBySku().map(function (pair) {
+        const it = pair.it, i = pair.i;
+        const info = dbRateInfo(it.rate);
         return '<div class="db-row db-grid-items" data-id="' + i + '">' +
-          '<span class="db-sku"><strong>' + esc(it.sku) + '</strong></span>' +
-          '<span class="db-name">' + esc(it.name) + '</span>' +
+          '<span class="db-sku" title="' + esc(it.sku) + '"><strong>' + esc(it.sku) + '</strong></span>' +
+          '<span class="db-name" title="' + esc(it.name || '') + '">' + esc(it.name) + '</span>' +
           '<span class="db-unit">' + esc(it.unit) + '</span>' +
-          '<span class="db-rate qr-amount">' + Calc.fmtNum(it.rate) + '</span>' +
+          '<span class="db-rate qr-amount db-rate-' + info.state + '" title="' + dbRateTitle(info) + '">' +
+            esc(info.text) + '</span>' +
           '<span class="db-del db-actions">' +
             '<button type="button" class="qr-edit db-item-edit" data-id="' + i + '" aria-label="Edit item" title="Edit item">' + toolIconSvg('edit') + '</button>' +
             '<button type="button" class="qr-del db-item-del" data-id="' + i + '" aria-label="Remove item" title="Remove item">\u2715</button>' +
@@ -4325,10 +4748,11 @@
       clientBody.innerHTML = '<div class="empty-cell">No clients yet. Saved clients auto-fill the ERP header by project name.</div>';
     } else {
       clientBody.innerHTML = db.clients.map(function (c, i) {
-        const site = c.defaultProject ? '<span class="db-addr">Site: ' + esc(c.defaultProject) + '</span>' : '';
+        const site = c.defaultProject ? ' \u00b7 Site: ' + c.defaultProject : '';
+        const fullAddress = (c.address || '\u2014') + site;
         return '<div class="db-row db-grid-clients" data-id="' + i + '">' +
-          '<span class="db-sku"><strong>' + esc(c.name) + '</strong></span>' +
-          '<span class="db-name db-addr">' + esc(c.address || '\u2014') + (site ? ' \u00b7 ' + site : '') + '</span>' +
+          '<span class="db-sku" title="' + esc(c.name) + '"><strong>' + esc(c.name) + '</strong></span>' +
+          '<span class="db-name db-addr" title="' + esc(fullAddress) + '">' + esc(fullAddress) + '</span>' +
           '<span class="db-unit">' + esc(c.currency) + '</span>' +
           '<span class="db-del db-actions">' +
             '<button type="button" class="qr-edit db-client-edit" data-id="' + i + '" aria-label="Edit client" title="Edit client">' + toolIconSvg('edit') + '</button>' +
@@ -4338,6 +4762,9 @@
       }).join('');
     }
     $('db-client-count').textContent = db.clients.length + (db.clients.length === 1 ? ' client' : ' clients');
+    // The Home preview reads the same store, so it is refreshed from here and
+    // can never drift from the full database view.
+    renderHomeDbPreview();
     // ERP datalists
     $('erp-sku-list').innerHTML = db.items.map(function (it) {
       return '<option value="' + esc(it.sku) + '"></option>';
@@ -4362,14 +4789,20 @@
   const DB_CLIENT_FIELDS = ['db-client-name', 'db-client-project', 'db-client-address', 'db-client-contact',
     'db-client-tin', 'db-client-posupply', 'db-client-pono', 'db-client-termsdt', 'db-client-shipto', 'db-client-hscode'];
 
+  /* Labels the submit button for the mode it is in. Saving is always an
+     EXPLICIT act in these forms — nothing here is written to storage on
+     typing, blur or a field change — so the label names the action the click
+     performs: "Save Item"/"Save Client" to create a record, "Update …" to
+     write changes back over the record being edited. */
   function setDbFormMode(which) {
     const isItem = which === 'item';
     const editing = dbEditing[which] > -1;
     const btn = $(isItem ? 'db-item-add' : 'db-client-add');
     const cancel = $(isItem ? 'db-item-cancel' : 'db-client-cancel');
     if (btn) {
-      btn.innerHTML = '<span class="nav-icon" aria-hidden="true">' + toolIconSvg(editing ? 'check' : 'plus') +
-        '</span>' + (editing ? 'Update ' + which : 'Add ' + which);
+      // Save = floppy (a new record). Update = check (confirming changes).
+      btn.innerHTML = '<span class="nav-icon" aria-hidden="true">' + toolIconSvg(editing ? 'check' : 'save') +
+        '</span>' + (editing ? 'Update ' : 'Save ') + (isItem ? 'Item' : 'Client');
     }
     if (cancel) cancel.hidden = !editing;
   }
@@ -4382,14 +4815,29 @@
     }
   }
 
+  /* Leaves the form blank and ready for the next entry: every input cleared,
+     the edit session closed and the submit button back to its Save label.
+     Called after a successful save as well as when an edit ends, so a saved
+     record never leaves leftovers in the form. */
   function resetDbForm(which) {
     const wasEditing = dbEditing[which] > -1;
     dbEditing[which] = -1;
     clearDbForm(which);
-    if (!wasEditing) { setDbFormMode(which); return; }
-    if (which === 'client' && dbEditCurrency) {
+    if (which === 'client') {
       const cur = $('db-client-currency');
-      if (cur) cur.value = dbEditCurrency;
+      if (cur) {
+        if (wasEditing && dbEditCurrency) {
+          cur.value = dbEditCurrency;   // edit ended: put back what it held before
+        } else {
+          /* A finished save starts a genuinely NEW entry, so the select goes
+             back to the company currency like any fresh form. It deliberately
+             drops a hand-picked value too: carrying one record's currency into
+             the next is exactly the leftover-data trap, and it would silently
+             save a client under the wrong currency. */
+          cur.value = companyCurrency();
+          cur.dataset.userPicked = '';
+        }
+      }
       dbEditCurrency = '';
     }
     setDbFormMode(which);
@@ -4414,6 +4862,8 @@
     $('db-item-sku').value = it.sku || '';
     $('db-item-name').value = it.name || '';
     $('db-item-unit').value = it.unit || '';
+    // Pre-fill with what is stored, including an unreadable value, so the
+    // item can be repaired rather than silently reset.
     $('db-item-rate').value = (it.rate === null || it.rate === undefined) ? '' : String(it.rate);
     setDbFormMode('item');
     revealDbForm('item');
@@ -4463,7 +4913,7 @@
       sku: sku,
       name: name,
       unit: $('db-item-unit').value.trim() || 'Nr',
-      rate: num($('db-item-rate').value),
+      rate: storedRateFromInput($('db-item-rate').value),
       /* The only timestamp a database record has, and the only way the KPI
          trend can tell when something was added. Edits preserve the original
          through the Object.assign below; records created before this existed
@@ -4483,7 +4933,7 @@
     }
     db.items.push(record);
     saveDb();
-    clearDbForm('item');
+    resetDbForm('item');   // blank the form for the next entry
     renderDb();
     pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' added — ' + db.items.length + ' SKUs' });
     renderKpis();
@@ -4533,7 +4983,7 @@
     }
     db.clients.push(record);
     saveDb();
-    clearDbForm('client');
+    resetDbForm('client'); // blank the form for the next entry
     renderDb();
     pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' added — ' + db.clients.length + ' clients' });
     renderKpis();
@@ -4543,23 +4993,31 @@
   /* ── Master ERP Engine (unified document builder) ───────────── */
   const ERP_KEY = 'calcmall_erp_v1';
 
+  // `doc` is the document TITLE printed on the sheet; `noLabel` is the label
+  // for its reference number in the metadata grid. Both follow the selected
+  // mode, so a Pro Forma can no longer print "Quotation No".
   const ERP_MODES = {
-    quotation:  { label: 'Quotation / Offer',        doc: 'QUOTATION',            refPh: 'REF-2026-001' },
-    proforma:   { label: 'Pro Forma Invoice',        doc: 'PRO FORMA INVOICE',    refPh: 'PI-2026-001' },
-    commercial: { label: 'Tax / Commercial Invoice', doc: 'TAX INVOICE',          refPh: 'INV-2026-001' },
-    delivery:   { label: 'Delivery Note',            doc: 'DELIVERY NOTE',        refPh: 'DN-2026-001' }
+    quotation:  { label: 'Quotation / Offer',        doc: 'QUOTATION',            noLabel: 'Quotation No',          refPh: 'REF-2026-001' },
+    proforma:   { label: 'Pro Forma Invoice',        doc: 'PRO FORMA INVOICE',    noLabel: 'Pro Forma Invoice No',  refPh: 'PI-2026-001' },
+    commercial: { label: 'Tax / Commercial Invoice', doc: 'TAX INVOICE',          noLabel: 'Tax Invoice No',        refPh: 'INV-2026-001' },
+    delivery:   { label: 'Delivery Note',            doc: 'DELIVERY NOTE',        noLabel: 'Delivery Note No',      refPh: 'DN-2026-001' }
   };
 
   // Per-mode extra fields shown under the mode tabs. "meta" holds anything
   // beyond the shared header (bank details, VAT reg no, delivery address…).
+  /* `brandKey` is the Company & Brand Settings field this input inherits
+     from. The input shows the brand value whenever the document has no
+     override of its own, so switching mode fills Bank / Account / SWIFT /
+     Branch straight from the saved Bank & Beneficiary block — and a value
+     typed here still wins. */
   const ERP_MODE_FIELDS = {
     quotation:  [],
     proforma:   [
-      { key: 'payment', label: 'Payment terms', ph: 'e.g. 50% advance, balance on delivery' },
-      { key: 'bank', label: 'Bank name', ph: 'e.g. Commercial Bank' },
-      { key: 'account', label: 'Account number', ph: 'e.g. 1001234567890' },
-      { key: 'swift', label: 'SWIFT code', ph: 'e.g. CCEYLKLX' },
-      { key: 'branch', label: 'Branch code', ph: 'e.g. 001' }
+      { key: 'payment', label: 'Payment terms', ph: 'e.g. 50% advance, balance on delivery', brandKey: 'payTerms' },
+      { key: 'bank', label: 'Bank & branch', ph: 'e.g. Commercial Bank — Ekala Branch', brandKey: 'bankBranch' },
+      { key: 'account', label: 'Account number', ph: 'e.g. 1001234567890', brandKey: 'accountNo' },
+      { key: 'swift', label: 'SWIFT code', ph: 'e.g. CCEYLKLX', brandKey: 'swift' },
+      { key: 'branch', label: 'Branch code', ph: 'e.g. 001', brandKey: 'branchCode' }
     ],
     commercial: [
       { key: 'vatreg', label: 'VAT / Tax reg no', ph: 'e.g. VAT123456789' },
@@ -4601,6 +5059,20 @@
       if (!Calc.TOOL_CURRENCIES[out.currency]) out.currency = 'LKR';
       out.meta = (out.meta && typeof out.meta === 'object') ? out.meta : {};
       out.lines = Array.isArray(out.lines) ? out.lines : [];
+      /* Heal anything saved before numeric filtering existed: a qty or rate
+         stored as "100 00" / "NaN" is repaired to a clean number (0 when it
+         cannot be read at all) instead of being carried into the totals. */
+      out.lines = out.lines.map(function (l) {
+        if (!l || typeof l !== 'object') return l;
+        const row = Object.assign({}, l);
+        if (row.qty !== '' && row.qty !== undefined && row.qty !== null) row.qty = String(num0(row.qty));
+        if (row.rate !== '' && row.rate !== undefined && row.rate !== null) row.rate = String(num0(row.rate));
+        return row;
+      });
+      out.discount = Calc.isNumericText(out.discount) ? String(num0(out.discount)) : '';
+      out.vat = Calc.isNumericText(out.vat) ? String(num0(out.vat)) : '';
+      // Existing drafts join the same ordering as the database.
+      out.lines.sort(function (a, b) { return compareSku(a.sku, b.sku); });
       return out;
     } catch (e) { return emptyErp(); }
   }
@@ -4671,12 +5143,29 @@
     }).join('');
     for (let i = 0; i < fields.length; i++) {
       const el = document.getElementById('erp-m-' + fields[i].key);
-      if (el) el.value = erpState.meta[fields[i].key] || '';
+      if (!el) continue;
+      /* Precedence: a value typed on THIS document wins, otherwise the saved
+         brand value, otherwise blank. The document override is never copied
+         into brand, and the brand value is never written into the override
+         slot — so changing the brand still flows through to every document
+         that has not been overridden. */
+      const own = erpState.meta[fields[i].key];
+      const inherited = fields[i].brandKey ? (brand[fields[i].brandKey] || '') : '';
+      el.value = (own !== undefined && own !== null && String(own).trim() !== '') ? own : inherited;
     }
     // Money columns only make sense for money documents.
     const showMoney = erpDocType();
     $('erp-rate-head').hidden = !showMoney;
     $('erp-amt-head').hidden = !showMoney;
+  }
+
+  // A picked SKU whose database record carries NO usable rate (never entered,
+  // or unreadable): the cell stays blank and is visibly flagged. A stored rate
+  // of 0 is a real price, so it fills in and is not flagged.
+  function needsRate(row) {
+    if (!row || !row.sku || String(row.rate).trim() !== '') return false;
+    const it = dbFindItem(row.sku);
+    return !!it && dbRateInfo(it.rate).state !== 'set';
   }
 
   function renderErpRows() {
@@ -4693,7 +5182,9 @@
           '<td><input type="text" class="erp-name" value="' + esc(row.name) + '" placeholder="Item name &amp; description" autocomplete="off"></td>' +
           '<td><input type="text" class="erp-unit" value="' + esc(row.unit) + '" placeholder="Nr" autocomplete="off" aria-label="Unit type"></td>' +
           '<td><input type="text" inputmode="decimal" data-numeric="1" class="erp-qty" value="' + esc(String(row.qty)) + '" placeholder="0" aria-label="Quantity"></td>' +
-          '<td class="erp-rate-col"><input type="text" inputmode="decimal" data-numeric="1" class="erp-rate" value="' + esc(String(row.rate)) + '" placeholder="0" aria-label="Rate"' + (showMoney ? '' : ' disabled') + '></td>' +
+          '<td class="erp-rate-col"><input type="text" inputmode="decimal" data-numeric="1" class="erp-rate' + (needsRate(row) ? ' erp-rate-unset' : '') + '" value="' + esc(String(row.rate)) + '" placeholder="' + (needsRate(row) ? 'rate' : '0') + '" aria-label="Rate"' +
+            (needsRate(row) ? ' title="This SKU has no default rate in the Item Database — type one, or set it once in the database and every future line will fill in"' : '') +
+            (showMoney ? '' : ' disabled') + '></td>' +
           '<td class="erp-amt-col qr-amount">' + (showMoney ? (amount === null ? '\u2014' : erpMoney(amount)) : '\u2014') + '</td>' +
           '<td><button type="button" class="qr-del" data-id="' + row.id + '" aria-label="Remove item">\u2715</button></td>' +
         '</tr>';
@@ -4708,8 +5199,10 @@
       const a = erpLineAmount(l);
       return sum + (a === null ? 0 : a);
     }, 0);
-    const discPct = num(erpState.discount);
-    const vatPct = num(erpState.vat);
+    // num0: an empty or malformed percentage is 0, never NaN — so the
+    // totals below cannot print "NaN" no matter what the fields hold.
+    const discPct = num0(erpState.discount);
+    const vatPct = num0(erpState.vat);
     const disc = Calc.boqDiscount(sub, discPct);
     const net = Calc.boqNet(sub, discPct);
     const vat = Calc.boqVatAmount(net, vatPct);
@@ -4749,8 +5242,8 @@
     if (val('erp-hscode') !== undefined) erpState.hsCode = val('erp-hscode');
     if (val('erp-ref') !== undefined) erpState.ref = val('erp-ref');
     if (val('erp-date') !== undefined && val('erp-date') !== '') erpState.date = val('erp-date');
-    if (val('erp-discount') !== undefined) erpState.discount = val('erp-discount');
-    if (val('erp-vat') !== undefined) erpState.vat = val('erp-vat');
+    if (val('erp-discount') !== undefined) erpState.discount = numericSafeText(val('erp-discount'), false);
+    if (val('erp-vat') !== undefined) erpState.vat = numericSafeText(val('erp-vat'), false);
     if (val('erp-terms') !== undefined) erpState.terms = val('erp-terms');
     // Line items: read current cell values back into the state rows
     const rows = document.querySelectorAll('#erp-rows .qr-row');
@@ -4759,10 +5252,13 @@
       const row = erpState.lines.find(function (r) { return r.id === rowEl.getAttribute('data-id'); });
       if (!row) continue;
       const grab = function (cls) { const el = rowEl.querySelector('.' + cls); return el ? el.value.replace(/,/g, '') : null; };
+      // Quantity and Rate are numeric by definition — strip anything that is
+      // not a digit or a decimal point before it reaches the state object.
+      const grabNum = function (cls) { const v = grab(cls); return v === null ? null : numericSafeText(v, false); };
       const sku = grab('erp-sku'); if (sku !== null) row.sku = sku;
       const name = grab('erp-name'); if (name !== null) row.name = name;
       const unit = grab('erp-unit'); if (unit !== null) row.unit = unit;
-      const qty = grab('erp-qty'); if (qty !== null) row.qty = qty;
+      const qty = grabNum('erp-qty'); if (qty !== null) row.qty = qty;
       const rate = grab('erp-rate'); if (rate !== null && !rowEl.querySelector('.erp-rate').disabled) row.rate = rate;
     }
   }
@@ -4803,6 +5299,25 @@
     schedulePdfPreview();
   }
 
+  /* The Rate a SKU contributes to a line. Returns '' when the database
+     holds no usable number for that item, so a blank cell asks the user
+     to price the line instead of a fake 0 quietly joining the totals. */
+  function erpRateForItem(it) {
+    if (!it) return '';
+    const info = dbRateInfo(it.rate);
+    /* Every valid finite rate auto-fills — 0 INCLUDED. A zero-cost line is a
+       legitimate price and must not be blanked out just because it is falsy.
+       Only a missing or unreadable rate falls back to an empty cell. */
+    return info.state === 'set' ? String(info.value) : '';
+  }
+
+  /* Line items follow the same SKU-ascending order as the master database, so
+     the editing table, the document sheet and the PDF/Excel output are one
+     order rather than three. A line with no SKU yet sorts to the end. */
+  function sortErpLines() {
+    erpState.lines.sort(function (a, b) { return compareSku(a.sku, b.sku); });
+  }
+
   function addErpRow(sku) {
     const row = { id: uid(), sku: sku || '', name: '', unit: 'Nr', qty: '', rate: '' };
     if (sku) {
@@ -4811,10 +5326,11 @@
         row.sku = it.sku;
         row.name = it.name;
         row.unit = it.unit;
-        row.rate = it.rate !== 0 && it.rate !== '' ? String(it.rate) : '';
+        row.rate = erpRateForItem(it);
       }
     }
     erpState.lines.push(row);
+    sortErpLines();
     saveErp();
     renderErpRows();
     return row;
@@ -4829,7 +5345,11 @@
     row.sku = it.sku;
     row.name = it.name;
     row.unit = it.unit;
-    if (it.rate !== 0 && it.rate !== '') row.rate = String(it.rate);
+    /* Auto-fill the Rate from the saved default. Every finite rate fills in,
+       including 0 (a legitimately free line); only a missing or unreadable
+       database rate leaves the cell blank. */
+    row.rate = erpRateForItem(it);
+    sortErpLines();
     saveErp();
     renderErpRows();
     // put the cursor back on the qty cell of the same row
@@ -4954,8 +5474,24 @@
     erpState.deliveryTerms = client.deliveryTerms || '';
     erpState.shipTo = client.shipTo || '';
     erpState.hsCode = client.hsCode || '';
+    /* The client's saved default currency overrides the company/tool default
+       for THIS document — that is the whole point of the field, and the
+       document is the customer-facing artefact. Say so out loud: a silently
+       swapped currency is how a dollar invoice gets sent to a rupee client. */
     if (Calc.TOOL_CURRENCIES[client.currency]) {
+      const wasCode = erpCurrencyCode();
       setToolCurrency('erp', client.currency);
+      if (wasCode !== client.currency) {
+        showToast('Document currency set to ' + client.currency + ' — ' + (client.clientName || client.name) +
+          '\u2019s saved default (change it in the banner above).');
+      }
+    } else {
+      const fallback = companyCurrency();
+      if (fallback !== erpCurrencyCode()) {
+        setToolCurrency('erp', fallback);
+        showToast('Document currency set to the company currency, ' + fallback +
+          ' \u2014 this client has no saved currency of its own.');
+      }
     }
     saveErp();
     renderErpHeader();
@@ -5003,7 +5539,7 @@
       ' · ' + rec.state.lines.length + ' lines' + when;
   }
 
-  function erpSaveRecord() {
+  async function erpSaveRecord() {
     const id = $('erp-record-id').value.trim();
     if (!id) {
       window.alert('Enter a Primary Key / Record ID first (e.g. 1 or ACME-WH-01), then click Save Record.');
@@ -5012,7 +5548,11 @@
     }
     const snapshot = erpRecordSnapshot();
     const exists = !!erpRecords[id];
-    if (exists && !window.confirm('Record "' + id + '" already exists — overwrite it with the current form?')) return;
+    if (exists && !(await confirmAction({
+      title: 'Overwrite saved record?',
+      message: 'Record "' + id + '" already exists. Overwrite it with the current form?',
+      confirmLabel: 'Overwrite'
+    }))) return;
     erpRecords[id] = snapshot;
     saveErpRecords();
     erpRecordMeta(id);
@@ -5054,11 +5594,16 @@
     return true;
   }
 
-  function erpDeleteRecord() {
+  async function erpDeleteRecord() {
     const id = $('erp-record-id').value.trim();
     if (!id) { window.alert('Enter the Record ID to delete.'); return; }
     if (!erpRecords[id]) { window.alert('No record saved as "' + id + '".'); return; }
-    if (!window.confirm('Delete saved record "' + id + '"? The current form stays as it is.')) return;
+    if (!(await confirmAction({
+      title: 'Delete saved record?',
+      message: 'Delete saved record "' + id + '"? The current form stays as it is.',
+      confirmLabel: 'Delete',
+      danger: true
+    }))) return;
     delete erpRecords[id];
     saveErpRecords();
     erpRecordMeta(id);
@@ -5196,8 +5741,9 @@
             sku: String(getv('sku') == null ? '' : getv('sku')).trim(),
             name: desc,
             unit: String(getv('unit') == null ? '' : getv('unit')).trim() || 'Nr',
-            qty: qty,
-            rate: rate
+            // Imported numbers go through the same sanitiser as typed ones.
+            qty: numericSafeText(qty, false),
+            rate: numericSafeText(rate, false)
           });
           lineCount += 1;
         }
@@ -5206,6 +5752,7 @@
         showToast('No recognizable data found. Use the Template button to see the exact expected format.', 'error');
         return;
       }
+      sortErpLines();
       saveErp();
       renderErp();
       updateErpSummary();
@@ -5472,7 +6019,7 @@
     if (brand.spec) rows.push([brand.spec]);
     rows.push([]);
     rows.push(['Supplier', '', 'Purchaser', '']);
-    rows.push(['Date of Invoice', dateStr, ERP_MODES[erpState.mode].doc === 'TAX INVOICE' ? 'Tax Invoice No' : 'Doc No', erpState.ref || '']);
+    rows.push(['Date of Invoice', dateStr, ERP_MODES[erpState.mode].noLabel || 'Doc No', erpState.ref || '']);
     rows.push(["Supplier's TIN", brand.tin || '', "Purchaser's TIN", erpState.clientTin || '']);
     rows.push(["Supplier's Name", mxLegalName(), "Purchaser's Name", erpState.client || '']);
     rows.push(['Address', brand.address || '', 'Address', erpState.address || '']);
@@ -5486,18 +6033,23 @@
     let idx = 0;
     erpState.lines.forEach(function (l) {
       idx += 1;
-      rows.push([idx, l.name || l.sku || '', l.unit || '', num(l.qty), l.rate === '' ? null : num(l.rate), erpLineAmount(l)]);
+      // num0 through the same sanitizer the inputs use: the spreadsheet can
+      // never contain a literal "NaN" cell, and round2 keeps binary float
+      // noise (0.1 + 0.2 style tails) out of the money columns.
+      const amt = erpLineAmount(l);
+      rows.push([idx, l.name || l.sku || '', l.unit || '', Calc.round2(num0(l.qty)), Calc.round2(num0(l.rate)),
+        amt === null ? 0 : Calc.round2(amt)]);
     });
     rows.push([]);
-    rows.push(['', '', '', '', 'Sub Total', t.sub]);
+    rows.push(['', '', '', '', 'Sub Total', Calc.round2(num0(t.sub))]);
     if (t.discPct > 0) {
-      rows.push(['', '', '', '', 'Discount (' + Calc.fmtPct(t.discPct) + ')', -t.disc]);
-      rows.push(['', '', '', '', 'Taxable Sub Total', t.net]);
+      rows.push(['', '', '', '', 'Discount (' + Calc.fmtPct(t.discPct) + ')', Calc.round2(-num0(t.disc))]);
+      rows.push(['', '', '', '', 'Taxable Sub Total', Calc.round2(num0(t.net))]);
     }
     if (t.vatPct > 0) {
-      rows.push(['', '', '', '', Calc.fmtPct(t.vatPct) + ' VAT', t.vat]);
+      rows.push(['', '', '', '', Calc.fmtPct(t.vatPct) + ' VAT', Calc.round2(num0(t.vat))]);
     }
-    rows.push(['', '', '', '', 'TOTAL', t.final]);
+    rows.push(['', '', '', '', 'TOTAL', Calc.round2(num0(t.final))]);
     const w = Calc.amountInWords(t.final) || 'Zero';
     rows.push(['Due amount in words:', (FM_CUR_WORDS[erpState.currency] || 'Rupees') + ' ' + w + ' Only']);
     return rows;
@@ -5853,7 +6405,7 @@
       row('Date of Supply', data.supplyDate, MXPT.labelW, { edit: 'supplyDate', kind: 'date' });
     /* Editable: the document number and every PURCHASER field. */
     const rightBand = '<div style="' + bandStyle + '">' +
-      row(docTitle === 'TAX INVOICE' ? 'Tax Invoice No' : 'Quotation No', data.docNo, MXPT.labelWR,
+      row(data.docNoLabel || 'Doc No', data.docNo, MXPT.labelWR,
         { lh: MXPT.lh.addl, band: true, edit: 'docNo' }) + '</div>';
     const rightBox = row("Purchaser's TIN", data.clientTin, MXPT.labelWR, { edit: 'clientTin' }) +
       row("Purchaser's Name", data.clientName, MXPT.labelWR, { edit: 'client' }) +
@@ -6359,6 +6911,7 @@
           supplierPhone: esc(brandPhone() || ''),
           tagline: esc(brand.spec || brand.tag || ''),
           documentType: esc(mode.doc),
+          docNoLabel: esc(mode.noLabel || 'Doc No'),
           invoiceDate: esc(dateStr),
           // Falls back to the invoice date until the sheet sets its own, so
           // the slot is never empty.
@@ -6429,8 +6982,8 @@
     });
   }
 
-  function resetErp() {
-    if (!window.confirm('Reset the ERP document? This clears the header, items, discount, VAT and terms.')) return;
+  async function resetErp() {
+    if (!(await confirmAction({ title: 'Reset the document?', message: 'This clears the header, items, discount, VAT and terms.', confirmLabel: 'Reset document', danger: true }))) return;
     erpState = emptyErp();
     saveErp();
     renderErp();
@@ -6438,9 +6991,17 @@
   }
 
   /* ── Reset ────────────────────────────────────────────────────── */
-  function resetAll() {
-    if (!window.confirm('Reset all data? This clears your project, every logged request, any Quantity & Rate line items, the quotation, and the history.')) return;
-    if (!window.confirm('Really reset everything? This cannot be undone.')) return;
+  async function resetAll() {
+    /* One dialog, not two — the second window.confirm used to be the only
+       thing standing between a mis-click and a total wipe, and it is the
+       single most destructive button in the app. The wording now names
+       everything it removes. */
+    if (!(await confirmAction({
+      title: 'Reset ALL data?',
+      message: 'This permanently deletes your project, every logged request, all Quantity & Rate line items, the quotations and invoices, the Master ERP Engine draft, the item & client database, your brand settings and the entire history. This cannot be undone.',
+      confirmLabel: 'Delete everything',
+      danger: true
+    }))) return;
     state = emptyState();
     editingId = null;
     qrRows = [];
@@ -6546,7 +7107,7 @@
   function restoreBackupFile(file) {
     const reader = new FileReader();
     reader.onerror = function () { showToast('Could not read that file \u2014 please try again.', 'error'); };
-    reader.onload = function () {
+    reader.onload = async function () {
       let data = null;
       try {
         const parsed = JSON.parse(String(reader.result));
@@ -6558,7 +7119,12 @@
       }
       const names = Object.keys(data);
       if (!names.length) { showToast('That backup file is empty.', 'error'); return; }
-      if (!window.confirm('Restore ' + names.length + ' saved ' + (names.length === 1 ? 'entry' : 'entries') + '? This overwrites the data currently stored in this browser.')) return;
+      if (!(await confirmAction({
+        title: 'Restore this backup?',
+        message: 'Restore ' + names.length + ' saved ' + (names.length === 1 ? 'entry' : 'entries') + '? This overwrites the data currently stored in this browser.',
+        confirmLabel: 'Restore',
+        danger: true
+      }))) return;
       let ok = 0;
       for (let i = 0; i < names.length; i++) {
         try { window.localStorage.setItem(names[i], data[names[i]]); ok++; } catch (e) { /* skip oversized */ }
@@ -6585,21 +7151,15 @@
     $('sidebar-brand').addEventListener('click', function () {
       showView('home');
     });
-    // (open-tool-btn retired with the Insights Hub redesign — null-safe skip)
-    const openToolBtn = $('open-tool-btn');
-    if (openToolBtn) openToolBtn.addEventListener('click', function () {
-      if (consumeToolCredit()) showView(toolViewFor(currentTool));
-    });
 
-    // Tool selector bar: click a badge to preview that tool,
-    // double-click to open it immediately
-    const slots = document.querySelectorAll('.tool-slot');
-    for (let i = 0; i < slots.length; i++) {
-      slots[i].addEventListener('click', function () {
-        selectTool(this.getAttribute('data-tool'));
-      });
-      slots[i].addEventListener('dblclick', function () {
-        const id = this.getAttribute('data-tool');
+    // Other Utilities: one handler for the whole card grid — the card IS the
+    // launch control, so a single click opens the tool (credit-gated).
+    const utilityToolsGrid = $('utility-tools-grid');
+    if (utilityToolsGrid) {
+      utilityToolsGrid.addEventListener('click', function (e) {
+        const card = e.target.closest('.tool-card');
+        if (!card) return;
+        const id = card.getAttribute('data-tool');
         selectTool(id);
         if (consumeToolCredit()) showView(toolViewFor(id));
       });
@@ -6678,9 +7238,8 @@
       });
     }
     initSidebarState();
-    $('theme-toggle-settings').addEventListener('click', function () {
-      applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
-    });
+    initNavSections();
+    $('theme-toggle-settings').addEventListener('click', toggleTheme);
     const accentSwatches = document.querySelectorAll('.accent-swatch');
     for (let i = 0; i < accentSwatches.length; i++) {
       accentSwatches[i].addEventListener('click', function () {
@@ -6695,7 +7254,8 @@
       applyAccent(this.value);
       try { localStorage.setItem(ACCENT_KEY, this.value); } catch (e) { /* ignore */ }
     });
-    $('accent-reset').addEventListener('click', function () {
+    $('accent-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset accent colour?', message: 'Restores the default accent used across buttons, highlights and charts.', confirmLabel: 'Reset accent' }))) return;
       applyAccent('');
       try { localStorage.removeItem(ACCENT_KEY); } catch (e) { /* ignore */ }
       $('accent-picker').value = '#ffffff';
@@ -6714,9 +7274,7 @@
     });
 
     // Theme toggle (dark ⇄ light, persisted in localStorage)
-    $('theme-toggle').addEventListener('click', function () {
-      applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
-    });
+    $('theme-toggle').addEventListener('click', toggleTheme);
     // Background presets + picker
     (function () {
       try {
@@ -6743,7 +7301,8 @@
         }
         const resetBtn = document.getElementById('bgreset');
         if (resetBtn) {
-          resetBtn.addEventListener('click', function () {
+          resetBtn.addEventListener('click', async function () {
+            if (!(await confirmAction({ title: 'Reset background?', message: 'Restores the default dashboard background.', confirmLabel: 'Reset background' }))) return;
             applyBg('');
             try { localStorage.removeItem(BG_KEY); } catch (e) { /* ignore */ }
             const p2 = document.getElementById('bgpicker');
@@ -6873,7 +7432,7 @@
 
     // History rows (delegated — rows are rebuilt on each render)
     const tbody = $('req-rows');
-    tbody.addEventListener('click', function (e) {
+    tbody.addEventListener('click', async function (e) {
       const btn = e.target.closest('button[data-action]');
       if (!btn) return;
       const id = btn.getAttribute('data-id');
@@ -6881,7 +7440,7 @@
       if (!req) return;
       const action = btn.getAttribute('data-action');
       if (action === 'delete') {
-        if (window.confirm('Delete this request?')) {
+        if (await confirmAction({ title: 'Delete request?', message: 'This removes the logged request permanently.', confirmLabel: 'Delete', danger: true })) {
           state.requests = state.requests.filter(function (r) { return r.id !== id; });
           if (editingId === id) cancelEdit();
           saveState();
@@ -7061,8 +7620,8 @@
       });
     }
     $('dt-copy').addEventListener('click', copyDutyBreakdown);
-    $('dt-reset').addEventListener('click', function () {
-      if (!window.confirm('Reset the import duty calculator? This clears the CIF value, units and all tax rates.')) return;
+    $('dt-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset import duty calculator?', message: 'This clears the CIF value, units and all tax rates.', confirmLabel: 'Reset', danger: true }))) return;
       dutyState = emptyDuty();
       saveDuty();
       fillDutyForm();
@@ -7082,8 +7641,8 @@
       });
     }
     $('vr-pdf').addEventListener('click', gateClick(exportVariationPdf));
-    $('vr-reset').addEventListener('click', function () {
-      if (!window.confirm('Reset the variation builder? This clears the project details, costs and work description.')) return;
+    $('vr-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset variation builder?', message: 'This clears the project details, costs and work description.', confirmLabel: 'Reset', danger: true }))) return;
       varState = emptyVariation();
       saveVariation();
       fillVariationForm();
@@ -7103,8 +7662,8 @@
       });
     }
     $('bk-copy').addEventListener('click', copyBreakevenSummary);
-    $('bk-reset').addEventListener('click', function () {
-      if (!window.confirm('Reset the breakeven calculator? This clears your income target, overhead and time settings.')) return;
+    $('bk-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset breakeven calculator?', message: 'This clears your income target, overhead and time settings.', confirmLabel: 'Reset', danger: true }))) return;
       bkState = emptyBreakeven();
       saveBreakeven();
       fillBreakevenForm();
@@ -7134,8 +7693,8 @@
       saveFx();
     });
     $('fx-copy').addEventListener('click', copyFxInvoice);
-    $('fx-reset').addEventListener('click', function () {
-      if (!window.confirm('Reset the FX & fee adjuster? This clears the payout target and fee rates.')) return;
+    $('fx-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset FX & fee adjuster?', message: 'This clears the payout target and fee rates.', confirmLabel: 'Reset', danger: true }))) return;
       fxState = emptyFx();
       saveFx();
       fillFxForm();
@@ -7157,8 +7716,8 @@
       })(gpInputs[i]);
     }
     $('gp-copy').addEventListener('click', copyGpaSummary);
-    $('gp-reset').addEventListener('click', function () {
-      if (!window.confirm('Reset the GPA planner? This clears your progress, targets and course weights.')) return;
+    $('gp-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset GPA planner?', message: 'This clears your progress, targets and course weights.', confirmLabel: 'Reset', danger: true }))) return;
       gpState = emptyGpa();
       saveGpa();
       fillGpaForm();
@@ -7622,6 +8181,13 @@
         saveErp();
         renderErpHeader();
         renderErpRows();
+        /* The document SHEET is built by the preview scheduler, which the
+           mode tabs never used to touch — so switching to Pro Forma left the
+           sheet (and therefore the printed/exported title) showing the old
+           mode's name until some other edit happened to rebuild it. Force a
+           rebuild now, and re-render the summary card for the new mode. */
+        updateErpSummary();
+        schedulePdfPreview(true);
       });
     }
     $('erp-mode-fields').addEventListener('input', function (e) {
@@ -7646,8 +8212,8 @@
       }
       if (input.classList.contains('erp-name')) row.name = input.value;
       else if (input.classList.contains('erp-unit')) row.unit = input.value;
-      else if (input.classList.contains('erp-qty')) row.qty = input.value.replace(/,/g, '');
-      else if (input.classList.contains('erp-rate')) row.rate = input.value.replace(/,/g, '');
+      else if (input.classList.contains('erp-qty')) row.qty = numericSafeText(input.value, false);
+      else if (input.classList.contains('erp-rate')) row.rate = numericSafeText(input.value, false);
       const amount = erpLineAmount(row);
       rowEl.querySelector('.qr-amount').textContent = erpDocType() ? (amount === null ? '\u2014' : erpMoney(amount)) : '\u2014';
       updateErpSummary();
@@ -7656,10 +8222,17 @@
     erpBody.addEventListener('change', function (e) {
       // change fires on datalist selection in some browsers — catch SKU picks
       const input = e.target;
-      if (input.classList && input.classList.contains('erp-sku')) {
-        const rowEl = input.closest('.qr-row');
-        if (rowEl) erpFillFromSku(rowEl);
-      }
+      if (!input.classList || !input.classList.contains('erp-sku')) return;
+      const rowEl = input.closest('.qr-row');
+      if (!rowEl) return;
+      const row = erpState.lines.find(function (r) { return r.id === rowEl.getAttribute('data-id'); });
+      if (row) row.sku = input.value;
+      const matched = dbFindItem(input.value);
+      erpFillFromSku(rowEl);           // no-op for an unknown key, sorts when matched
+      /* A key the database does not know still has to take its place in the
+         order — done on change/blur rather than per keystroke, so rows are
+         never reshuffled under the cursor while a SKU is being typed. */
+      if (!matched) { sortErpLines(); saveErp(); renderErpRows(); }
     });
     erpBody.addEventListener('click', function (e) {
       const del = e.target.closest('.qr-del');
@@ -7682,7 +8255,7 @@
     for (let i = 0; i < erpDiscVat.length; i++) {
       (function (pair) {
         $(pair[0]).addEventListener('input', function () {
-          erpState[pair[1]] = this.value.replace(/,/g, '');
+          erpState[pair[1]] = numericSafeText(this.value, false);
           saveErp();
           updateErpSummary();
         });
@@ -7718,12 +8291,25 @@
     // ── Item & Client Database ─────────────────────────────────
     $('db-item-add').addEventListener('click', addDbItem);
     $('db-client-add').addEventListener('click', addDbClient);
-    $('db-item-rows').addEventListener('click', function (e) {
+    // A hand-picked client currency survives form resets — it is a choice,
+    // not a leftover of whatever the form happened to start on.
+    if ($('db-client-currency')) {
+      $('db-client-currency').dataset.userPicked = '';
+      $('db-client-currency').addEventListener('change', function () { this.dataset.userPicked = '1'; });
+    }
+    $('db-item-rows').addEventListener('click', async function (e) {
       const edit = e.target.closest('.db-item-edit');
       if (edit) { startEditDbItem(Number(edit.getAttribute('data-id'))); return; }
       const del = e.target.closest('.db-item-del');
       if (!del) return;
       const idx = Number(del.getAttribute('data-id'));
+      const rec = db.items[idx];
+      if (!(await confirmAction({
+        title: 'Remove item?',
+        message: 'Remove "' + ((rec && rec.sku) || 'this item') + '" from the master database? Documents already created are not affected.',
+        confirmLabel: 'Remove',
+        danger: true
+      }))) return;
       db.items.splice(idx, 1);
       noteDbRemoval('item', idx);
       saveDb();
@@ -7732,12 +8318,19 @@
       renderKpis();
       updateKPICards();
     });
-    $('db-client-rows').addEventListener('click', function (e) {
+    $('db-client-rows').addEventListener('click', async function (e) {
       const edit = e.target.closest('.db-client-edit');
       if (edit) { startEditDbClient(Number(edit.getAttribute('data-id'))); return; }
       const del = e.target.closest('.db-client-del');
       if (!del) return;
       const idx = Number(del.getAttribute('data-id'));
+      const rec = db.clients[idx];
+      if (!(await confirmAction({
+        title: 'Remove client?',
+        message: 'Remove "' + ((rec && (rec.clientName || rec.name)) || 'this client') + '" from the master database? Documents already created are not affected.',
+        confirmLabel: 'Remove',
+        danger: true
+      }))) return;
       db.clients.splice(idx, 1);
       noteDbRemoval('client', idx);
       saveDb();
@@ -7811,7 +8404,7 @@
               '<td><strong>' + esc(it.sku) + '</strong></td>' +
               '<td class="db-name">' + esc(it.name || '\u2014') + '</td>' +
               '<td>' + esc(it.unit || '\u2014') + '</td>' +
-              '<td class="text-right">' + Calc.fmtNum(it.rate) + '</td>' +
+              '<td class="text-right db-rate db-rate-' + dbRateInfo(it.rate).state + '" title="' + dbRateTitle(dbRateInfo(it.rate)) + '">' + esc(dbRateInfo(it.rate).text) + '</td>' +
               '<td class="w70"><span class="db-actions">' +
                 '<button type="button" class="qr-edit db-item-drawer-edit" data-sku="' +
                   esc(it.sku).replace(/"/g, '&quot;') + '" aria-label="Edit item" title="Edit item">' + toolIconSvg('edit') + '</button>' +
@@ -7876,7 +8469,7 @@
       if (searchClients) searchClients.addEventListener('input', function () { refreshDbDrawer('clients'); });
       // Delete from drawer (delegates to the live table rows).
       const itemsBody = $('db-items-drawer-rows');
-      if (itemsBody) itemsBody.addEventListener('click', function (e) {
+      if (itemsBody) itemsBody.addEventListener('click', async function (e) {
         const edit = e.target.closest('.db-item-drawer-edit');
         if (edit) { window.editDatabaseItem(edit.getAttribute('data-sku')); return; }
         const del = e.target.closest('.db-item-drawer-del');
@@ -7884,6 +8477,12 @@
         const sku = del.getAttribute('data-sku');
         const idx = db.items.findIndex(function (it) { return it.sku === sku; });
         if (idx === -1) return;
+        if (!(await confirmAction({
+          title: 'Remove item?',
+          message: 'Remove "' + sku + '" from the master database? Documents already created are not affected.',
+          confirmLabel: 'Remove',
+          danger: true
+        }))) return;
         db.items.splice(idx, 1);
         noteDbRemoval('item', idx);
         saveDb();
@@ -7894,7 +8493,7 @@
         updateKPICards();
       });
       const clientsBody = $('db-clients-drawer-rows');
-      if (clientsBody) clientsBody.addEventListener('click', function (e) {
+      if (clientsBody) clientsBody.addEventListener('click', async function (e) {
         const edit = e.target.closest('.db-client-drawer-edit');
         if (edit) { window.editDatabaseClient(edit.getAttribute('data-name')); return; }
         const del = e.target.closest('.db-client-drawer-del');
@@ -7902,6 +8501,12 @@
         const name = del.getAttribute('data-name');
         const idx = db.clients.findIndex(function (c) { return (c.clientName || c.name) === name; });
         if (idx === -1) return;
+        if (!(await confirmAction({
+          title: 'Remove client?',
+          message: 'Remove "' + name + '" from the master database? Documents already created are not affected.',
+          confirmLabel: 'Remove',
+          danger: true
+        }))) return;
         db.clients.splice(idx, 1);
         noteDbRemoval('client', idx);
         saveDb();
@@ -7934,6 +8539,9 @@
           brand[pair[1]] = this.value;
           saveBrand();
           renderBrandStatus();
+          /* Bank / beneficiary / payment-terms edits flow straight into any
+             ERP mode field that has not been overridden on the document. */
+          renderErpModeFields();
         });
       })(brandPairs[i]);
     }
@@ -7953,8 +8561,8 @@
       saveBrand();
       renderBrand();
     });
-    $('brand-reset').addEventListener('click', function () {
-      if (!window.confirm('Reset brand data? This clears the letterhead details, logo and default terms.')) return;
+    $('brand-reset').addEventListener('click', async function () {
+      if (!(await confirmAction({ title: 'Reset brand data?', message: 'This clears the letterhead details, logo, bank & beneficiary block and default terms.', confirmLabel: 'Reset brand', danger: true }))) return;
       brand = emptyBrand();
       saveBrand();
       renderBrand();
@@ -7964,34 +8572,24 @@
     const fe = $('footer-erp'); if (fe) fe.addEventListener('click', function () {
       showView('erp');
     });
-    // ── Insights Hub: tools grid launches + activity clear ──────
-    const toolsGrid = $('tools-grid');
-    if (toolsGrid) {
-      toolsGrid.addEventListener('click', function (e) {
-        const card = e.target.closest('.tool-card');
-        if (!card) return;
-        const id = card.getAttribute('data-tool');
-        selectTool(id);
-        if (consumeToolCredit()) showView(toolViewFor(id));
+    // ── Insights Hub: activity clear ───────────────────────────
+    // ── Home: master-database preview (compact, bounded) ──────
+    const homeViewAll = $('home-db-viewall');
+    if (homeViewAll) homeViewAll.addEventListener('click', function () { showView('db'); });
+    [$('home-db-items'), $('home-db-clients')].forEach(function (list) {
+      if (!list) return;
+      list.addEventListener('click', function (e) {
+        const row = e.target.closest ? e.target.closest('.home-db-row') : null;
+        if (!row) return;
+        const idx = Number(row.getAttribute('data-id'));
+        // Land on the full database with that record already open for
+        // editing — the preview is a shortcut, not a second editor.
+        if (row.getAttribute('data-db') === 'client') { showView('db'); startEditDbClient(idx); }
+        else { showView('db'); startEditDbItem(idx); }
       });
-    }
+    });
     const actClear = $('activity-clear');
     if (actClear) actClear.addEventListener('click', clearActivity);
-    const utilSlots = document.querySelectorAll('#utility-slots .tool-slot');
-    for (let i = 0; i < utilSlots.length; i++) {
-      utilSlots[i].addEventListener('click', function () {
-        selectTool(this.getAttribute('data-tool'));
-        renderUtilityPreview();
-      });
-      utilSlots[i].addEventListener('dblclick', function () {
-        const id = this.getAttribute('data-tool');
-        selectTool(id);
-        if (consumeToolCredit()) showView(toolViewFor(id));
-      });
-    }
-    $('open-utility-btn').addEventListener('click', function () {
-      if (consumeToolCredit()) showView(toolViewFor(currentTool));
-    });
   }
 
   /* ── Init ─────────────────────────────────────────────────────── */
@@ -8007,8 +8605,7 @@
     renderStorageStatus();
   } catch (e) { try { console.error('Nexora Engine boot:', e); } catch (e2) { /* ignore */ } }
   updateUnitLabels();
-  selectTool('scope-guard'); // default selection for the utilities preview
-  renderUtilityPreview();    renderToolsGrid();
+  renderToolCards(); // Other Utilities: the card grid is the page
     renderKpis();
     renderActivity();
     updateKPICards();
@@ -8027,6 +8624,7 @@
   fillRetainerForm();
   fillDelayForm();
   renderBrand();
+  syncDbClientCurrency(true);
   renderDb();
   renderErp();
   renderHistory();
