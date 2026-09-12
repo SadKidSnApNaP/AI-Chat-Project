@@ -1,0 +1,39 @@
+Date of Invoice :9/9/2026                  TAX INVOICE
+
+                                                               Tax Invoice No : 26SEP_MTX_648
+
+Supplier's TIN   :101168840                            Purchaser's TIN : 103270111
+Supplier's Name  :Metrix Engineering Services pvt ltd
+Address          :5/1A Samagi Mw,Depanama ,            Purchaser's Name : Access Logistics Park Ekala (Pvt) Ltd
+                 :Pannipitiya.
+Telephone No     :0112 286695                          Addres        : Access Towers, 278, Union Place
+Date of Supply
+                                                                     : Colombo 02
+
+                                                       Telephone No  :
+
+                                                       Place of Supply : N/R
+
+Additional Information :
+
+No                        Discription                  Unit    Qty      Rate (LKR)                  Amount (LKR)
+
+1 Service of Fire Detection System                     Nr      1        2,726,000.00                2,726,000.00
+
+2 Service of Fire Suppression System                   Nr      1              135,000.00            135,000.00
+
+3 Intermadite Visits                                   Nr      1              330,000.00              330,000.00
+
+                           Sub Total                                                                3,191,000.00
+                           Discount                                                                   116,000.00
+
+                                                 18% VAT                                            3,075,000.00
+                                                  TOTAL                                               553,500.00
+Due amount in words : Rupees ''Three Million Six Hundred Twenty-Eight Thousand Five Hundred'' Only
+                                                                                                    3,628,500.00
+Thanking you for making business with us and assuring you our very best services at all times
+
+On Behalf of Metrix Engineering Services,
+
+Authorized Signatory
+

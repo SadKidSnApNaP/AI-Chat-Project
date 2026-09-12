@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Change & Scope Calculator — calculation tests</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 24px; color: #1f2430; }
+    h1 { font-size: 20px; }
+    #summary { font-weight: 700; padding: 8px 12px; border-radius: 8px; display: inline-block; margin: 0 0 16px; }
+    #summary.pass { background: #e9f8ee; color: #15803d; }
+    #summary.fail { background: #fdecec; color: #dc2626; }
+    table { border-collapse: collapse; font-size: 14px; width: 100%; max-width: 900px; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e4e7ef; vertical-align: top; }
+    th { font-size: 12px; text-transform: uppercase; color: #6b7280; }
+    .ok { color: #15803d; }
+    .bad { color: #dc2626; font-weight: 700; }
+    code { background: #f1f2f7; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+    .pass-row td { background: #fafffb; }
+    .fail-row td { background: #fff7f7; }
+  </style>
+</head>
+<body>
+  <h1>Project Change & Scope Calculator — calculation tests</h1>
+  <p>Open this file in a browser (double-click it). It needs no server. Relies on <code>../js/calculations.js</code>.</p>
+  <div id="summary">Running…</div>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Test</th><th>Expected</th><th>Got</th><th>Result</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script src="../js/calculations.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var rows = document.getElementById('rows');
+      var summary = document.getElementById('summary');
+      var tests = [];
+      var passCount = 0;
+      var rowNum = 0;
+
+      function add(name, expected, fn) {
+        tests.push({ name: name, expected: expected, fn: fn });
+      }
+      function approx(a, b) { return Math.abs(a - b) < 1e-9; }
+
+      function test(name, expected, fn) {
+        var result, ok = false;
+        try {
+          result = fn();
+          if (typeof expected === 'number' && typeof result === 'number') ok = approx(result, expected);
+          else ok = result === expected;
+        } catch (e) {
+          result = 'THREW: ' + e.message;
+        }
+        rowNum++;
+        var cls = ok ? 'pass-row' : 'fail-row';
+        var mark = ok ? '<span class="ok">PASS</span>' : '<span class="bad">FAIL</span>';
+        var tr = document.createElement('tr');
+        tr.className = cls;
+        tr.innerHTML = '<td>' + rowNum + '</td>' +
+          '<td>' + name + '</td>' +
+          '<td><code>' + String(expected) + '</code></td>' +
+          '<td><code>' + String(result) + '</code></td>' +
+          '<td>' + mark + '</td>';
+        rows.appendChild(tr);
+        if (ok) passCount++;
+      }
+
+      /* Handoff fixture: 20 h / $1,500 / $75/hr → 32 h / $46.88/hr / −37.5% */
+      test('originalEffectiveRate: 1500/20 = 75', 75, function () {
+        return Calc.originalEffectiveRate(1500, 20);
+      });
+      test('originalEffectiveRate: 800/10 = 80', 80, function () {
+        return Calc.originalEffectiveRate(800, 10);
+      });
+      test('projectedEffectiveRate: 1500/(20+12) ≈ 46.875 → rounds to 46.88', 46.88, function () {
+        return Calc.round2(Calc.projectedEffectiveRate(1500, 20, 12));
+      });
+      test('projectedEffectiveRate: committed value raises rate — (20000+5000)/(64+8)h → 347.22', 347.22, function () {
+        return Calc.round2(Calc.projectedEffectiveRate(20000, 64, 8, 5000));
+      });
+      test('projectedEffectiveRate: fairly-charged extra holds rate (equal rate → unchanged)', 312.5, function () {
+        return Calc.round2(Calc.projectedEffectiveRate(20000, 64, 8, 2500));
+      });
+      test('committedValue: approved+pending counted, declined excluded', 5100, function () {
+        return Calc.committedValue([
+          { status: 'approved', hours: 8, rate: 625, expenses: 0 },
+          { status: 'pending', hours: 2, rate: 0, expenses: 100 },
+          { status: 'declined', hours: 5, rate: 999, expenses: 0 }
+        ]);
+      });
+      test('rateDropPct: (75 − 46.875)/75 = 37.5', 37.5, function () {
+        return Calc.rateDropPct(75, 46.875);
+      });
+      test('rateDropPct: no drop when projected ≥ original → 0', 0, function () {
+        return Calc.rateDropPct(75, 90);
+      });
+      test('rateDropPct: rate hits 0 → 100%', 100, function () {
+        return Calc.rateDropPct(75, 0);
+      });
+
+      /* Request value & break-even */
+      test('requestValue: 5h × 84 + 0 = 420', 420, function () {
+        return Calc.requestValue(5, 84, 0);
+      });
+      test('requestValue: 5h × 60 + 20 expenses = 320', 320, function () {
+        return Calc.requestValue(5, 60, 20);
+      });
+      test('breakEvenCharge: 12h × 75 = 900 (keeps blended rate)', 900, function () {
+        return Calc.breakEvenCharge(12, 75, 0);
+      });
+      test('breakEvenCharge: 4h × 75 + 20 expenses = 320', 320, function () {
+        return Calc.breakEvenCharge(4, 75, 20);
+      });
+      test('isCommitted: pending & approved count, declined does not', true, function () {
+        return Calc.isCommitted('pending') && Calc.isCommitted('approved') && !Calc.isCommitted('declined');
+      });
+
+      /* History semantics */
+      var requests = [
+        { id: 'a', description: 'Dashboard', status: 'pending', hours: 4, rate: 60, expenses: 0 },   // $240
+        { id: 'b', description: 'Extra revision', status: 'approved', hours: 1, rate: 60, expenses: 0 }, // $60
+        { id: 'c', description: 'Mobile changes', status: 'declined', hours: 2, rate: 60, expenses: 0 }  // excluded
+      ];
+      test('committedHours: only pending + approved (4+1, declined 2 excluded) = 5', 5, function () {
+        return Calc.committedHours(requests);
+      });
+      test('unbilledValue: $240 + $60 = 300 (declined excluded)', 300, function () {
+        return Calc.unbilledValue(requests);
+      });
+
+      /* Guards */
+      test('originalEffectiveRate: hours = 0 → 0 (no crash)', 0, function () {
+        return Calc.originalEffectiveRate(1000, 0);
+      });
+      test('projectedEffectiveRate: total hours 0 → 0 (no crash)', 0, function () {
+        return Calc.projectedEffectiveRate(500, 0, 0);
+      });
+      test('requestValue: NaN inputs → 0', 0, function () {
+        return Calc.requestValue(NaN, NaN, NaN);
+      });
+
+      /* Formatting */
+      test('fmtMoney: 46.875 → "$46.88"', '$46.88', function () {
+        return Calc.fmtMoney(46.875, '$');
+      });
+      test('fmtMoney: 900 → "$900.00"', '$900.00', function () {
+        return Calc.fmtMoney(900, '$');
+      });
+      test('fmtMoney: thousands grouping → "Rs62,500.00"', 'Rs62,500.00', function () {
+        return Calc.fmtMoney(62500, 'LKR');
+      });
+      test('fmtMoney: grouped decimals → "$1,234,567.89"', '$1,234,567.89', function () {
+        return Calc.fmtMoney(1234567.89, '$');
+      });
+      test('fmtMoney: LKR symbol works', 'Rs500.00', function () {
+        return Calc.fmtMoney(500, 'Rs');
+      });
+      test('fmtHours: 10 → "10"', '10', function () {
+        return Calc.fmtHours(10);
+      });
+      test('fmtHours: 5.25 → "5.3"', '5.3', function () {
+        return Calc.fmtHours(5.25);
+      });
+      test('fmtPct: 37.5 → "37.5%"', '37.5%', function () {
+        return Calc.fmtPct(37.5);
+      });
+      test('fmtPct: 12.34 → "12.3%"', '12.3%', function () {
+        return Calc.fmtPct(12.34);
+      });
+      test('fmtRate: 75 → "$75.00/hr"', '$75.00/hr', function () {
+        return Calc.fmtRate(75, '$');
+      });
+
+      /* Quantity & Rate calculator (tool #02) — fmtNum */
+      test('fmtNum: 37500 → "37,500"', '37,500', function () {
+        return Calc.fmtNum(37500);
+      });
+      test('fmtNum: 62500 → "62,500"', '62,500', function () {
+        return Calc.fmtNum(62500);
+      });
+      test('fmtNum: 8.75 → "8.75"', '8.75', function () {
+        return Calc.fmtNum(8.75);
+      });
+      test('fmtNum: 2.5 × 3.5 = 8.75 (decimals multiply correctly)', 8.75, function () {
+        return Calc.round2(2.5 * 3.5);
+      });
+      test('fmtNum: 100 → "100" (trailing zeros trimmed)', '100', function () {
+        return Calc.fmtNum(100);
+      });
+      test('fmtNum: 1234567.891 → "1,234,567.89" (grouping + rounding)', '1,234,567.89', function () {
+        return Calc.fmtNum(1234567.891);
+      });
+      test('fmtNum: 0 → "0"', '0', function () {
+        return Calc.fmtNum(0);
+      });
+      test('fmtNum: NaN → "0" (no crash)', '0', function () {
+        return Calc.fmtNum(NaN);
+      });
+
+      /* Engineering Quotation & BOQ Generator (tool #03) */
+      test('boqAmount: 25 × 1500 = 37500', 37500, function () {
+        return Calc.boqAmount(25, 1500);
+      });
+      test('boqAmount: negative qty → null (invalid)', null, function () {
+        return Calc.boqAmount(-1, 100);
+      });
+      test('boqAmount: blank rate → null (invalid)', null, function () {
+        return Calc.boqAmount(5, '');
+      });
+      test('boqSubTotal: 37500 + 10000 + 15000 = 62500', 62500, function () {
+        return Calc.boqSubTotal([
+          { qty: 25, rate: 1500 },
+          { qty: 4, rate: 2500 },
+          { qty: 1, rate: 15000 }
+        ]);
+      });
+      test('boqDiscount: 100000 × 5% = 5000', 5000, function () {
+        return Calc.boqDiscount(100000, 5);
+      });
+      test('boqNet: 100000 − 5000 = 95000', 95000, function () {
+        return Calc.boqNet(100000, 5);
+      });
+      test('boqVatAmount: 95000 × 18% = 17100', 17100, function () {
+        return Calc.boqVatAmount(95000, 18);
+      });
+      test('boqFinal: (100000 − 5000) + 18% VAT = 112100', 112100, function () {
+        return Calc.boqFinal(100000, 5, 18);
+      });
+
+      /* Import Duty & Landed Cost (tool #06) */
+      test('dutyCalc: CIF 1000 @ 15% duty = 150', 150, function () {
+        return Calc.dutyCalc(1000, { duty: 15, pal: 20, cess: 1.5, sscl: 2.5, vat: 18 }).duty;
+      });
+      test('dutyCalc: total tax @ 15/20/1.5/2.5/18 = 570', 570, function () {
+        return Calc.dutyCalc(1000, { duty: 15, pal: 20, cess: 1.5, sscl: 2.5, vat: 18 }).totalTax;
+      });
+      test('dutyCalc: landed = CIF + tax = 1570', 1570, function () {
+        return Calc.dutyCalc(1000, { duty: 15, pal: 20, cess: 1.5, sscl: 2.5, vat: 18 }).landed;
+      });
+      test('dutyCalc: blank CIF → null', null, function () {
+        return Calc.dutyCalc('', {});
+      });
+      test('dutyCalc: negative CIF → null', null, function () {
+        return Calc.dutyCalc(-5, {});
+      });
+      test('dutyCalc: blank rates → zero tax (valid)', 0, function () {
+        return Calc.dutyCalc(1000, {}).totalTax;
+      });
+
+      /* Variation & Change Order (tool #07) */
+      test('variationCalc: 3,500,000 + 425,000 = 3,925,000', 3925000, function () {
+        return Calc.variationCalc(3500000, 425000).revised;
+      });
+      test('variationCalc: % increase ≈ 12.1429', 12.142857142857142, function () {
+        return Calc.variationCalc(3500000, 425000).increase;
+      });
+      test('variationCalc: blank original → null', null, function () {
+        return Calc.variationCalc('', 100).revised;
+      });
+      test('variationCalc: negative added → null', null, function () {
+        return Calc.variationCalc(100, -5).revised;
+      });
+
+      /* Rate & Overhead Breakeven (tool #08) */
+      test('breakevenCalc: 230 days − 39 admin days = 1528 billable h', 1528, function () {
+        return Calc.breakevenCalc(4000000, 600000, 230, 6, 8, 15).billableHours;
+      });
+      test('breakevenCalc: gross = (4M + 600k) ÷ 0.85', 4600000 / 0.85, function () {
+        return Calc.breakevenCalc(4000000, 600000, 230, 6, 8, 15).gross;
+      });
+      test('breakevenCalc: hourly = gross ÷ billable hours', (4600000 / 0.85) / 1528, function () {
+        return Calc.breakevenCalc(4000000, 600000, 230, 6, 8, 15).hourly;
+      });
+      test('breakevenCalc: daily = hourly × 8', ((4600000 / 0.85) / 1528) * 8, function () {
+        return Calc.breakevenCalc(4000000, 600000, 230, 6, 8, 15).daily;
+      });
+      test('breakevenCalc: missing days → null', null, function () {
+        return Calc.breakevenCalc(100, 0, '', 0, 8, 0);
+      });
+      test('breakevenCalc: admin eats all days → hourly null', null, function () {
+        return Calc.breakevenCalc(100, 0, 230, 200, 8, 0).hourly;
+      });
+
+      /* Cross-Border FX & Fee Adjuster (tool #09) */
+      test('fxFeeCalc: Stripe 2.9% + $0.30 on $1,000 target → invoice 1000.30/0.971', 1000.30 / 0.971, function () {
+        return Calc.fxFeeCalc(1000, 2.9, 0.30, 0).invoice;
+      });
+      test('fxFeeCalc: you receive exactly the target', 1000, function () {
+        return Calc.fxFeeCalc(1000, 2.9, 0.30, 0).received;
+      });
+      test('fxFeeCalc: fees = invoice − target', (1000.30 / 0.971) - 1000, function () {
+        return Calc.fxFeeCalc(1000, 2.9, 0.30, 0).fees;
+      });
+      test('fxFeeCalc: +2% FX markup → invoice 1000.30/0.951', 1000.30 / 0.951, function () {
+        return Calc.fxFeeCalc(1000, 2.9, 0.30, 2).invoice;
+      });
+      test('fxFeeCalc: blank target → null', null, function () {
+        return Calc.fxFeeCalc('', 2.9, 0.3, 0);
+      });
+
+      /* Academic GPA & Target Grade Planner (tool #10) */
+      test('gpaRequired: (3.3×120 − 3.1×90)/30 = 3.90', 3.9, function () {
+        return Calc.gpaRequired(3.1, 90, 3.3, 30).required;
+      });
+      test('gpaRequired: 3.1→3.5 in 30 credits needs 4.70 → impossible', true, function () {
+        return Calc.gpaRequired(3.1, 90, 3.5, 30).impossible;
+      });
+      test('gpaRequired: feasible case flagged', true, function () {
+        return Calc.gpaRequired(3.1, 90, 3.3, 30).feasible;
+      });
+      test('gpaRequired: zero remaining credits → null', null, function () {
+        return Calc.gpaRequired(3.1, 90, 3.5, 0);
+      });
+      test('courseNeeded: (75 − 72)/0.4 = 7.5% needed', 7.5, function () {
+        return Calc.courseNeeded(72, 75, 40).needed;
+      });
+      test('courseNeeded: impossible target → locked', true, function () {
+        return Calc.courseNeeded(50, 95, 10).locked;
+      });
+      test('courseNeeded: target below current → cushion', true, function () {
+        return Calc.courseNeeded(90, 75, 20).cushion;
+      });
+      test('courseNeeded: zero remaining weight → null', null, function () {
+        return Calc.courseNeeded(72, 75, 0);
+      });
+
+      /* Retainer & SLA Pricing (tool #11) */
+      test('retainerCalc: 20h×3500+15000 cost = 85000', 85000, function () {
+        return Calc.retainerCalc(20, 3500, 15000, 30, 10).cost;
+      });
+      test('retainerCalc: 30% margin + 10% SLA → (85000/0.7)×1.1', (85000 / 0.7) * 1.1, function () {
+        return Calc.retainerCalc(20, 3500, 15000, 30, 10).price;
+      });
+      test('retainerCalc: profit = price − cost', ((85000 / 0.7) * 1.1) - 85000, function () {
+        return Calc.retainerCalc(20, 3500, 15000, 30, 10).profit;
+      });
+      test('retainerCalc: annual = cost × 12 (no margin/SLA)', 85000 * 12, function () {
+        return Calc.retainerCalc(20, 3500, 15000, 0, 0).annual;
+      });
+      test('retainerCalc: missing hours → null', null, function () {
+        return Calc.retainerCalc('', 3500, 0, 0, 0);
+      });
+
+      /* Project Delay & Damages Impact (tool #12) */
+      test('delayCalc: 5M @ 0.5%/day × 15d = 375000 penalty', 375000, function () {
+        return Calc.delayCalc(5000000, 0.5, 0, 15, 0).penalty;
+      });
+      test('delayCalc: + 25000/day overhead × 15 = 750000 total', 750000, function () {
+        return Calc.delayCalc(5000000, 0.5, 0, 15, 25000).total;
+      });
+      test('delayCalc: cap 5% clamps penalty to 250000', 250000, function () {
+        return Calc.delayCalc(5000000, 0.5, 5, 15, 0).penalty;
+      });
+      test('delayCalc: capped flag set', true, function () {
+        return Calc.delayCalc(5000000, 0.5, 5, 15, 0).capped;
+      });
+      test('delayCalc: % of contract = 15', 15, function () {
+        return Calc.delayCalc(5000000, 0.5, 0, 15, 25000).pctOfContract;
+      });
+      test('delayCalc: blank contract → null', null, function () {
+        return Calc.delayCalc('', 0.5, 10, 5, 0);
+      });
+
+      // Amount in words (formal invoice layout)
+      test('amountInWords: 2726000 → formal wording', 'Two Million Seven Hundred Twenty-Six Thousand', function () {
+        return Calc.amountInWords(2726000);
+      });
+      test('amountInWords: cents included', 'One Thousand Two Hundred Fifty and Cents Seventy-Five', function () {
+        return Calc.amountInWords(1250.75);
+      });
+      test('amountInWords: zero → Zero', 'Zero', function () {
+        return Calc.amountInWords(0);
+      });
+      test('amountInWords: 392350', 'Three Hundred Ninety-Two Thousand Three Hundred Fifty', function () {
+        return Calc.amountInWords(392350);
+      });
+      test('amountInWords: blank → Zero (defensive fallback)', 'Zero', function () {
+        return Calc.amountInWords('');
+      });
+      test('amountInWords: invalid → empty string', '', function () {
+        return Calc.amountInWords('abc');
+      });
+
+      var total = tests.length;
+      for (var i = 0; i < tests.length; i++) test(tests[i].name, tests[i].expected, tests[i].fn);
+
+      var allPass = passCount === total;
+      summary.textContent = passCount + ' / ' + total + ' tests passed';
+      summary.className = allPass ? 'pass' : 'fail';
+      document.title = (allPass ? 'PASS' : 'FAIL') + ' — ' + passCount + '/' + total;
+    })();
+  </script>
+</body>
+</html>

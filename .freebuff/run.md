@@ -1,0 +1,822 @@
+# Nexora Engine (formerly CalcMall) — Business Intelligence & ERP — preview & run notes
+
+Static, dependency-free web app: `index.html` + `css/style.css` +
+`js/calculations.js` + `js/app.js`. No package.json, no build step, no server
+software included. In a normal browser, just double-click `index.html`
+(`file://` works; data lives in `localStorage`). Renamed to "Nexora Engine"
+2026-09-10 (user-visible strings only — `calcmall_*` localStorage keys kept
+for data compatibility).
+
+## How to run the preview
+
+**Current mode (2026-09-11): local static server + URL registration.**
+The Preview tab's htmlPath mode serves a cached snapshot that can lag or
+corrupt externally-written files (mid-write captures broke app.js once), so
+the preview now runs a tiny PowerShell static server over the project root
+and registers `index.html` by URL — the page loads its real `css/style.css`,
+`js/calculations.js`, `js/app.js` straight from disk on every request.
+
+Start it detached (port 8437; PowerShell recipe — stdout/stderr to DIFFERENT
+files):
+
+```powershell
+powershell -NoProfile -Command "(Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"F:\AI-Chat Project\server-preview.ps1\"' -RedirectStandardOutput 'F:\AI-Chat Project\.freebuff\preview-3d2b8678-6d91-4c71-ac61-1caa17ac8cca.log' -RedirectStandardError 'F:\AI-Chat Project\.freebuff\preview-3d2b8678-6d91-4c71-ac61-1caa17ac8cca.log.err' -WindowStyle Hidden -PassThru).Id"
+```
+
+Confirm it survived and answers, then register by URL:
+`register_preview(url = 'http://127.0.0.1:8437/index.html', pid = <pid>)`.
+Kill/restart with the port's owner:
+`Get-NetTCPConnection -LocalPort 8437 -State Listen`.
+
+Fallback mode (no server wanted): regenerate `preview.html` (below) and
+`register_preview(htmlPath = preview.html)`. NOTE: after external (PowerShell)
+writes to any file the preview layer serves, make one small platform edit to
+that file (str_replace) or the layer may keep serving a stale snapshot.
+`preview.html` currently also carries two intentional patches: the stale
+inline app IIFE is disabled (`<script type="text/plain"
+data-stale-inline-app=...>`) and fresh css/js load from
+`http://127.0.0.1:8437/...` at the end of body — both redundant when serving
+via the static server, and both regenerated away by rebuilding preview.html
+from sources (re-add only if the htmlPath fallback is ever needed).
+
+## Glassmorphism theme & emoji policy (2026-09-12)
+
+The final block of `css/style.css` ("NEXORA DASHBOARD THEME — final override
+ruleset") is loaded last and wins the cascade: deep blue/purple radial canvas
+on `body`/`#app-root`, translucent glass cards (`.card`, `.kpi-card`,
+`.utility-card`, `.tool-card`, `.activity-panel`, `.widget-card`), indigo
+hover glow, white `#0b0d17`-text CTAs, and green/red/grey `.kpi-delta` pills.
+Emoji policy: the sidebar/nav uses strictly monochrome inline SVG icons (no
+emoji glyphs), while each `.tool-card` shows a distinct rich emoji in its
+square badge via the `TOOL_EMOJI` map in `js/app.js`
+(`renderToolsGrid`). All 12 tool ids have an entry; add a new one there
+whenever a tool is added or it falls back to the placeholder glyph.
+
+**Glow backdrop (2026-09-12):** `<body>` starts with
+`<div id="glow-backdrop"></div>` — a fixed, `pointer-events:none`,
+`z-index:-9999` layer carrying the indigo/violet/cyan/base radial gradients (styled in
+`css/style.css` right above the `body::before` rule). The `#nexora-glass-force`
+block keeps `:root` on the `--bg-gradient` as an opaque canvas fallback but
+forces `body`, `#app-root`, `.container`, `.main-area` (and the generic
+`.main-content`/`.min-h-screen`/`.dashboard-container` names) to
+`background: transparent` so the glow shows through. Any new full-screen
+wrapper with an opaque background must be added to that transparent list or it
+will hide the glow.
+
+**Forced glass overrides (2026-09-12):** `index.html` also carries a
+`<style id="nexora-glass-force">` block placed immediately after the
+stylesheet `<link>`. The build inlines `css/style.css` at the link position,
+so this block always loads last; its selectors are `:root`-prefixed (higher
+specificity than the equal-`!important` rules in `style.css`) so the deep
+blue/purple `--bg-gradient`, `--card-bg`, `--card-border`, `--card-glow`
+variables and the card/hover/overlay rules can never be overridden. Edit
+`index.html` (not `style.css`) to retune these. Two known intentional side
+effects: the Appearance "Background color" presets/picker no longer repaint
+`body` (the forced gradient wins), and rule 5's `[class*="bg-"]` wildcard
+excludes `.bg-preset`/`.bg-picker`/`.bg-row`/`.bg-presets` so the color
+swatches keep their fills.
+
+## Sidebar structure (2026-09-12)
+
+The left nav is grouped with `.nav-group-label` headers (10px, `#6b7280`,
+700, uppercase) in three sections — WORKSPACE (Home / Master ERP Engine /
+Item & Client Database), MANAGEMENT (History & Saved Documents / All
+Utilities), CONFIGURATION (Company & Brand Settings / Appearance Settings /
+Data Backup & Restore). The active item uses `.sidebar-link.active` =
+`rgba(99,102,241,0.15)` background + `border-left: 3px solid #6366f1`
+(`padding-left: 9px` compensates so labels stay aligned). The sidebar footer
+pins the theme toggle, the permanent "How to use" button and the user/guest
+card, which now also shows a local-storage line (`.js-storage-status`, filled
+by `renderStorageStatus()` using the existing `storageUsedBytes()`/`fmtBytes()`).
+
+`Data Backup & Restore` (`#sidebar-backup` → `#backup-view`) downloads a JSON
+snapshot of every localStorage entry (`downloadBackup`) and restores one
+(`restoreBackupFile`, accepts the wrapped `{data:{…}}` payload or a bare
+key→value map, confirms, then reloads). `showView()` hides `#backup-view` for
+non-backup views and `navIds` maps `sidebar-backup` → `backup`.
+
+## Access control & AI credits (2026-09-12)
+
+Two GLOBAL `window.localStorage` keys (not routed through the per-user key
+shim): `nexora_user_logged_in` (`'true'` when signed in) and
+`nexora_ai_credits`. `handleAuthSubmit()` calls `grantLoginEntitlements()` on
+both login and sign-up, which sets the flag and resets credits to `'1'`;
+logout removes the flag. `initAccessState()` migrates pre-existing sessions
+(sets the flag if `currentUser` exists and grants 1 credit if the key is
+missing).
+
+**Developer / admin bypass (2026-09-12):** `ADMIN_EMAIL =
+'himalabey.503@gmail.com'` (plus `ADMIN_CREDITS = 99999` and the third raw
+key `nexora_user_role`). `grantLoginEntitlements(email)` — called by
+`handleAuthSubmit()` for both login and sign-up — routes that address to
+`grantAdminEntitlements()`, which sets `nexora_user_role = 'admin'` and
+`nexora_ai_credits = '99999'`; every other account gets
+`nexora_user_role = 'user'` and the single free credit. `initAccessState()`
+also promotes an already-signed-in developer session, so the bypass applies
+without a fresh login. `isAdmin()` returns true on the role flag OR on the
+live session email (so clearing the role key still works and
+`checkAccessAndCredits()` re-asserts the role). The gate then returns `true`
+before any credit read: no deduction, no "1 AI Credit Used" toast, never the
+limit modal. `renderAuthUi()` shows the admin badge text
+`Logged In (Admin - Unlimited Testing)` instead of the credit count. To
+retire the dev account, change `ADMIN_EMAIL` and clear
+`nexora_user_role`/`nexora_ai_credits` for signed-in testers.
+
+`checkAccessAndCredits()` is the single strict gate: it reads the two raw
+keys (never deducting when it blocks), opens `showAuthRequiredModal()` /
+`showCreditLimitModal()` (thin aliases over `#gate-modal` in auth / limit
+mode), and on success deducts one credit, toasts "1 AI Credit Used" and
+calls `updateCreditUI()` (`renderAuthUi()` + `renderStorageStatus()`).
+`consumeToolCredit()` is now just an alias of it.
+
+Wrapping helpers: `gateClick(handler)` returns a click listener that runs the
+gate first and, when blocked, calls `preventDefault()` + `stopPropagation()`
++ `stopImmediatePropagation()` and returns `false` — so no export, no download
+and no print dialog can fire. `gated(fn)` does the same for starters that get
+no event (the History re-export path).
+
+Everything that STARTS a tool session or produces an output now goes through
+it: the Home tools grid card / "Launch Tool →" button, both `.tool-slot`
+paths, `#open-utility-btn`, the six footer shortcut launchers
+(`footer-open-*`), the History "view" action for tool drafts, and every
+exporter — `#erp-pdf`, `#erp-export-xlsx`, `#boq-pdf`, `#qr-pdf`, `#inv-pdf`,
+`#vr-pdf` plus the History "pdf" re-download. Sidebar navigation, the ERP
+engine form itself and the DB/backup views stay ungated (or guests could not
+reach the dashboard at all), as do in-form actions like `Save Record` and
+`Template` download. Guests get the `#gate-modal` in auth mode; a drained
+balance gets it in limit mode. Sidebar status (`renderAuthUi`) shows
+`Guest Account (0 Credits)` with an amber `.acct-status-guest` dot, or
+`Logged In (N Credit… Available)` / `(N Credits Left)` with the green dot.
+
+## Editing saved items & clients (2026-09-12)
+
+Both database collections can be **edited as well as deleted**. There is no
+second modal: editing re-uses the existing create form so validation, the
+SKU/client-name de-duplication and the ERP datalists stay in one place.
+
+- `dbEditing = { item: -1, client: -1 }` holds the ARRAY INDEX of the record
+  currently loaded into the form; `-1` means plain "add" mode.
+- `startEditDbItem(idx)` / `startEditDbClient(idx)` prefill the form,
+  `setDbFormMode()` swaps the primary button to **"Update item" /
+  "Update client"** with a check icon (restoring the `plus` icon + "Add …"
+  label in add mode) and reveals the `#db-item-cancel` / `#db-client-cancel`
+  ghost buttons. `revealDbForm()` switches to `#db-view`, scrolls the card
+  into sight and focuses the first field — so an edit started from a drawer
+  is visible.
+- `addDbItem()` / `addDbClient()` update `db.items[editIdx]` in place with
+  `Object.assign` when a session is active (never append a duplicate). The
+  duplicate guards compare against `db.items.indexOf(existing) !== editIdx`,
+  so **renaming a record to its own current SKU/name is allowed** but
+  colliding with another record is still refused.
+- `resetDbForm(which)` clears the fields and returns to add mode;
+  `noteDbRemoval(which, idx)` keeps an open session pointing at the right
+  record after a delete (same index → reset, greater index → shift down).
+- Public hooks for the drawer (and anything external):
+  **`window.editDatabaseItem(id)`** and **`window.editDatabaseClient(id)`**,
+  where `id` is the item's `sku` / the client's `clientName || name` — the
+  app's natural primary keys. They close any open drawer, then start the
+  edit session. The `nexora_database_items` / `nexora_database_clients` key
+  names from the original request do NOT exist here; live keys are
+  `nexora_item_db` / `nexora_client_db` (see the DB section above).
+- UI: every DB row and every drawer row now carries an edit button next to
+  the delete one, inside a `.db-actions` flex group (`gap: 6px`). Class
+  `.qr-edit` mirrors `.qr-del` (30×30, 8px radius, 15px inline `edit` SVG)
+  with an indigo hover (`.qr-edit` uses the new `edit` entry in
+  `TOOL_ICONS`). Grid action columns widened `36px → 72px` in
+  `.db-grid-items` / `.db-grid-clients` (and the `max-width: 760px`
+  override), and the drawer tables' Action cell is `.w70` (`.data-table
+  .w70 { width: 74px; }`).
+
+Verified live: edit→save updates in place (count unchanged, no duplicate),
+names/SKUs renamable, duplicate SKU blocked with the alert, cancel restores
+the pre-edit client currency, editing a record then deleting the row above
+keeps the session valid, deleting the edited record itself resets to add
+mode, and the drawer edit path closes the drawer and lands on the prefilled
+form. Console clean.
+
+## Sign-up Email OTP verification (2026-09-12)
+
+Sign up is two steps inside `#auth-modal`. Step 1 is the registration form
+(`#auth-step-1`, submit button reads **Continue** in signup mode); on submit
+`handleAuthSubmit()` validates, rejects duplicate emails, then calls
+`beginOtpVerification(name, email, hashPass(pass))`. Step 2 is `#otp-form`,
+swapped in by `showAuthStep('otp')` (which also hides `.auth-tabs` and sets
+the modal title to **"Verify Your Email"** — the step heading, deliberately
+not duplicated inside the form).
+
+The code is simulated locally (no mail service, no network): a random 6-digit
+PIN (`Math.floor(100000 + Math.random() * 900000)`) is stored in the
+spec-named globals `window.currentSignupOTP` and `window.otpExpiry =
+Date.now() + 2 * 60 * 1000`.
+
+**The code is NEVER rendered into the page (2026-09-12).** The old floating
+`#otp-mail-toast` / `.mail-toast` notification is gone from `js/app.js`,
+`index.html` and `css/style.css` — do not resurrect it. A 1-second interval
+(`startOtpTimer`) still drives the live `Code expires in: MM:SS` line; at zero
+it switches to `Code expired — click Resend Code for a new one.` and adds
+`.expired` (red).
+
+Delivery goes through one hook, `sendVerificationEmail(email, otp)` (async,
+fired-and-forgotten with a `.catch` so a dead mail service can never block the
+view the user is already on) called from BOTH `beginOtpVerification()` and
+`resendOtp()`. Its dev body logs
+`[DEV MODE] OTP for <email>: <otp>` — the single console line, deliberately
+not duplicated with a second `console.log('OTP:', …)` — and the production
+call is staged commented-out against `POST /api/auth/send-otp`; uncomment it
+and drop the log to go live. Read the code from the console to finish a local
+sign-up.
+
+`#otp-help` (`.modal-card .otp-help`, 12.5px `#8b949e`) sits under the OTP
+input: "Check your inbox (or dev console during local testing) for your
+6-digit verification code." It is referenced from the input's
+`aria-describedby` alongside `otp-timer`.
+
+`handleOtpSubmit()` checks expiry first (`Date.now() > window.otpExpiry` →
+"Verification code has expired. Please click 'Resend Code'."), then compares
+the stripped-digits value to `window.currentSignupOTP` (mismatch → "Invalid
+verification code. Please check and try again."), and only then calls
+`finishSignup()`: push the user (name / email / hashed pass / created) into
+`users`, `grantLoginEntitlements(email)`, `setSession(email)` (reloads =
+auto-login). `resendOtp()` clears the timers, mints a fresh code, resets the
+expiry to +2 minutes, clears input + errors and fires a new notification.
+`#otp-code` filters to digits, max 6. `resetAuthFlow()` (tied to mode
+switches, `closeAuthModal()` and Esc) stops the countdown, drops the pending
+code and returns to step 1.
+
+CSS caveat worth remembering: the auth styles use `.modal-card p` and
+`.auth-field input`, whose specificity beats a bare class — the OTP rules are
+therefore written as `.modal-card .otp-sub` / `.otp-input` / `.otp-timer` /
+`.otp-resend`, and `#otp-form[hidden]`/`#auth-step-1[hidden]` are forced with
+`display: none !important` because the theme block styles `form`/`div`
+elements.
+
+First preview load shows the "How to use" onboarding modal automatically
+(`hasSeenOnboarding` is empty in the preview's fresh localStorage); Skip / X /
+Get Started all dismiss it for the session. The permanent "❓ How to use"
+button at the bottom of the sidebar re-opens it anytime.
+
+## How to reproduce the preview artifact
+
+`preview.html` must stay in sync with the real sources. Regenerate it after
+editing `index.html`, `css/style.css`, `js/calculations.js`, or `js/app.js`.
+From a PowerShell at the project root run the build script (reads/writes
+UTF-8 — no manual inline commands needed):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build-preview.ps1
+# → preview.html written: <bytes>
+```
+
+`build-preview.ps1` inlines `css/style.css`, `js/calculations.js` and
+`js/app.js` into `index.html` and fails loudly if an asset tag goes missing
+or a JS file ever contains `</script>`. There is also `build-test.ps1`, which
+produces `test-inline.html` (the calculation test page with the math file
+inlined) — used only to verify the 86 assertions from the Preview tab, since
+the preview server cannot serve sibling files. Delete `test-inline.html`
+after checking; the canonical test page is `test/calculations.test.html`
+(double-click it from disk — no server needed).
+
+Checks after regenerating (via preview tools):
+- Sidebar fixed & flush left (left:0); footer shows only brand + Legal (no
+  TOOLS column). Settings section 3: bg preset/picker/reset updates the body
+  background instantly, persists in `cm-bg-v1`, and the picker restores the
+  saved color on reload; the accent strip persists `cm-accent-v1`.
+- No 404/console errors; `document.styleSheets.length >= 1`;
+  `typeof window.Calc === 'object'`.
+- Header controls: Login/Sign up open the "Accounts coming soon in v2.0"
+  modal (Esc/overlay/button close); the ☀️/🌙 toggle flips light/dark and
+  persists (`cm-theme` in localStorage).
+- Dynamic labels: switching a Hours|Days toggle relabels the fields
+  (hourly/daily rate, extra hours/days) and converts an entered rate ×8/÷8
+  so values stay correct; a days project renders "2d" everywhere.
+- Landing first: app opens on the CalcMall Home/All Tools view (black-and-
+  white glassmorphism: grayscale Unsplash background + frosted cards); the
+  tool selector
+  bar (Scope Guard / Qty & Rate / Quotation / Pricing / Invoice) swaps the
+  preview card, "Coming
+  soon" tools disable the button; "Open Calculator →", the logo, and the
+  Home link switch views (Qty & Rate opens `#qr-view`; the Quotation badge
+  opens `#boq-view`).
+- Homepage sections: 3-step "How CalcMall works" grid, "Why use CalcMall"
+  two-column copy, 4-item FAQ accordion (native `<details>`), and the footer
+  (tool link, Reset all data, Terms/Privacy opening `#legal-modal` with the
+  matching copy).
+- Save a project (price 1500, hours 20, target 60) → all four main cards
+  appear; original effective rate shows `$75.00/hr`.
+- Days check: set the setup unit to Days and enter 2.5 (same 20 h) →
+  original rate still `$75.00/hr`, dashboard shows `2.5d`; a 1.5-day request
+  at 60 → value `$720.00`, drop `37.5%`, committed `1.5d`, current estimate
+  `4d`, change-order text contains `2.5d (20 h)`.
+- Add a request of 12 extra hours → drop `37.5%`, rate `$46.88/hr`,
+  break-even `$900.00`; after adding, the dashboard turns red with unbilled
+  `$720.00`; generating a message fills the inline Change Order Generator.
+- Quantity & Rate tool (#02): select the Qty & Rate badge → preview shows
+  Tool #02 with an enabled button; open it → line-items table. Enter the
+  example rows (Pipe installation 25 m 1500 / Valve installation 4 No. 2500
+  / Testing 1 Lot 15000) → amounts 37,500 / 10,000 / 15,000 and Total
+  62,500. Decimals (2.5 × 3.5 → 8.75) fine; negative qty → amount "—" and
+  total uncorrupted; ✕ removes a row; Enter on the last row adds + focuses
+  the next; rows persist across reload (`cm-qr-v1`); Clear all empties.
+- BOQ tool (#03): select the Quotation badge → preview shows Tool #03 with
+  an enabled button; open it → Quotation Details + Bill of Quantities +
+  Discount/VAT & Summary. Fill client fields, add items (25 m 1500, 4 Nr
+  2500, 1 Lot 15000), set 5% discount / 18% VAT → Sub Rs62,500.00, Discount
+  −Rs3,125.00, Net Rs59,375.00, VAT +Rs10,687.50, Final Rs70,062.50; the
+  offscreen `#quotation-doc` holds the formal letter (METRIX letterhead,
+  recipient, itemized table, totals, T&C, signature); "Download Client
+  Quotation PDF" runs html2pdf (needs the CDN; on a real browser it saves
+  a PDF); data persists across reload (`cm-boq-v1`); Reset quotation clears
+  it. Requires the html2pdf.js CDN script in the head to be reachable.
+- Nav names: the tool bar + banner headings read "Quotation" (shortened
+  from "Quotation Tool") and "Invoice" opens the Smart Invoice & Document
+  Builder (#05, `#invoice-view`).
+- PDF document template — Access Ekala sheet (2026-09-12): `generatePrintHTML(data)`
+  in `app.js` is now the **complete client-supplied Access Ekala template**,
+  verbatim. It renders the WHOLE document itself — header banner (logo cell
+  25% + right-aligned company block), tagline over the `#0d1b6e` divider,
+  bordered title bar, the 2-column bordered Supplier | Purchaser metadata
+  grid, the bordered line-item table (`NO · DESCRIPTION · UNIT · QTY ·
+  RATE (LKR) · AMOUNT (LKR)`, money as `2,726,000.00` with NO currency
+  prefix), the right-aligned Sub Total / Discount / 18% VAT / TOTAL breakdown
+  (Discount and VAT rows emitted ONLY when their value is `> 0`; TOTAL has
+  the `3px double` bottom border) and the words + courtesy + sign-off footer.
+  `buildErpDoc()` therefore only FEEDS it data (items as
+  `{description, unit, qty, rate, amount}`, `subTotal`, `discount`, `vat`,
+  `grandTotal`, `amountInWords` = `"<currency word> <Calc.amountInWords> Only"`,
+  `supplierContact` built as `Contact: <phone> | email: <addr> | www.<site>`)
+  and must NOT splice anything into the markup any more.
+  Consequences/notes: the template has **one** company-name field
+  (`data.supplierName`, fed `mxLegalName()`); `TRANSPARENT_PX` is still passed
+  when no logo is uploaded so the `<img>` can't print a broken-image glyph;
+  the title/label swap is the template's own
+  (`TAX INVOICE` → "Tax Invoice No", otherwise "Quotation No"), the PO row is
+  omitted when `poNo` is empty, and `Place of Supply` falls back to `N/R`.
+  DROPPED by this template (it has no slot for them): the T&C / payment-terms
+  block (`brandDocTerms()`), the BANK & BENEFICIARY block, the seal, and the
+  mode-specific extras (VAT Reg No / Consignee / Deliver To / Vehicle), and
+  **Delivery Note mode now prints money columns too** (the template always
+  renders Rate/Amount — the old `showMoney`/`erpDocType()` behaviour is no
+  longer applied to the PDF, though it still drives the on-screen table).
+  `mxDocTable` / `mxFooter` / `mxMoney` (and the `.mx-*` CSS) are now DEAD
+  code with zero call sites — left in place deliberately; delete them only
+  after checking nothing else grows a dependency on them.
+- METRIX letterhead tune-up (2026-09-12): the tagline (`.mx-spec`) is a bare
+  block — no wrapper box — styled italic/bold 11px centered `#0d1b6e`
+  (`margin: 4px 0 8px 0`, full width) directly under the `Contact:` line, with
+  a full-width `.mx-rule` (`border-bottom: 2px solid #0d1b6e`, `margin-bottom:
+  12px`) rendered right after it (only when a tagline exists). `.mx-doctitle`
+  (QUOTATION / TAX INVOICE) is centered `800`/16px with `letter-spacing: 2px`,
+  `margin: 10px 0 14px 0`, 1px top+bottom borders. Both copies — `style.css`
+  and the `PRINT_DOC_CSS` array in `app.js` — must stay in sync. Metadata
+  mapping is strict: "Purchaser's Name" ← `#erp-client`; "Additional
+  Information" row value renders as `Project Name: <value>` ← `#erp-project`.
+- PDF engine (2026-09-09): all 5 PDF exports (QR, BOQ/Quotation,
+  Invoice, Variation, ERP) use the **standalone hidden-iframe print engine**
+  (`compilePrintHtml` + `openPrintWindow` in app.js): a complete inline-
+  styled A4 HTML document is written into a new window
+  (open → write → close), images/styles wait before print(). Works
+  fully offline; no html2pdf/CDN dependency for exports. Blank PDF bug
+  (CDN/offscreen capture) is fixed. `@media print` rules in style.css
+  keep on-page printing dark-text-on-white with chrome hidden.
+- Sidebar logo (2026-09-09): the 🏬 CalcMall block atop the sidebar is a
+  button (`#sidebar-brand`, cursor pointer + hover tint) — clicking it
+  opens the Homepage Dashboard (`#home-view`, hero + tool directory).
+  The header logo (`#brand-home`) does the same.
+- Currencies (2026-09-09): 15 codes in `Calc.TOOL_CURRENCIES` (USD, EUR,
+  GBP, LKR, AED, INR, CAD, AUD, SGD, JPY, CHF, SAR, MYR, ZAR, NZD) in
+  every banner select. `setToolCurrency` syncs GLOBALLY: any select change
+  updates all tools' displays + `erpState`/`invState` + PDF symbols without
+  resetting inputs. All-Utilities icons render in a glass `.utilities-grid`
+  (auto-fill minmax(110px,1fr)).
+- Theme & accent (2026-09-09): Settings "Toggle theme" switches BOTH
+  `data-theme` on <html> and the `light-theme` class on <body> (persisted
+  in `cm-theme`); a Custom Accent Color card (presets + color input,
+  `cm-accent-v1`) rewrites the `--accent*`/`--glow` variables live. Scope
+  Guard rate displays follow the Hours/Days unit via `fmtRateU`
+  (canonical-hourly → ×8 shown as `$X/day`). The alert callout is red
+  (⚠️, `.killer.danger`) when the effective rate drops and green (✅,
+  `.killer.ok`) when it holds/rises — the projection now includes the
+  chargeable value of committed extras (`projectedEffectiveRate` 4th arg,
+  `Calc.committedValue`). Approve/Decline history buttons are green #22c55e
+  / red #ef4444 (`.mini.ok` / `.mini.danger`).
+- ERP engine (2026-09-09): the app now opens on the **Master ERP Engine**
+  (`#erp-view`, default). Sidebar: 🏢 ERP / 📦 Item & Client Database /
+  📜 History & Saved Documents / 🎨 Brand & Theme Settings / 🛠️ All
+  Utilities. Brand kit (`calcmall_brand_v1`), DB (`calcmall_db_v1`) and
+  ERP doc (`calcmall_erp_v1`) all live in localStorage; project name
+  auto-fills client/address/currency, SKU auto-fills name/unit/rate,
+  Document Mode tabs switch Quotation/Pro Forma/Commercial/Delivery
+  (delivery hides money columns), and "Generate Document PDF" renders the
+  brand letterhead + items + totals + terms + signature via html2pdf.
+  The 12 utilities moved to the All Utilities grid (dblclick opens).
+- Sidebar & history (2026-09-08): the left sidebar shows 🛠️ Tools
+  Dashboard / 📜 History / ⚙️ Settings / Currency (sticky ≥1025px; overlay
+  drawer via the floating ☰ Menu button (top of <main>) below 1025px —
+  the top navbar was removed 2026-09-10 (sidebar-only navigation, Home/
+  theme/Login/Sign up live in the sidebar footer); the Settings view also
+  has a theme toggle and Reset all data). Any PDF export or Copy summary
+  creates a `calcmall_history` entry — open 📜 History: entries list tool,
+  title, total with currency and timestamp, with View/Load draft
+  (navigates to the tool), Re-download PDF (re-runs the export), Delete,
+  and Clear all. Double-clicking a tool icon in the grid opens the tool
+  directly. Numeric inputs show comma grouping on blur (1,500,000) and
+  strip commas on focus; math stays correct either way.
+- Tools #11/#12: Retainer (20 h × 3500 + 15,000 OH, 30% margin, 10% SLA →
+  Rs133,571/mo, annual Rs1,602,857, margin 36.4%) and Delay Impact
+  (5M contract, 0.5%/day, 10% cap, 15 days, 25,000/day OH → Rs750,000
+  total = 7.5% of contract, capped warning when raw penalty > cap).
+- Test page: 91/91 assertions pass (open `test/calculations.test.html`
+  from disk, or build `test-inline.html` via `build-test.ps1` to check it
+  in the preview).
+- Quantity & Rate PDF: "📄 Export to PDF" sits next to ＋ Add row / Clear
+  all; it now compiles a formal Metrix-layout sheet (brand letterhead,
+  Item #/Description/Unit/Qty/Rate/Total Amount table, FINAL TOTAL,
+  sign-off) into a hidden-iframe print engine.
+- ERP records & import (2026-09-10): "Primary Key / Record ID" bar in
+  ERP Section 1 (Load/Save/Delete + meta line; store
+  `calcmall_erp_records_v1`) snapshots/restores the whole document; 📥
+  Import Excel / CSV (SheetJS CDN) + ⬇ Template in the ERP banner fill
+  header fields from Field/Value sheets and append items from
+  SKU/Description/Unit/Qty/Rate columns (fuzzy headers, xlsx/xls/csv).
+- Formal document layout (2026-09-10): every invoice-family export
+  (ERP all 4 modes, Smart Invoice, BOQ Quotation, QR sheet, Variation)
+  uses the shared `.fm-*` builders — letterhead + doc banner (with
+  supplier TIN), consignee | order-details metadata box, right-aligned
+  comma-formatted item table, Sub/Discount/Net/VAT/FINAL totals, Amount-
+  In-Words line, bank & beneficiary footer, seal + signature block.
+  Fill the new Brand fields (phone/email/website/spec/TIN + bank block)
+  in 🎨 Brand & Theme Settings to complete the letterhead.
+- Invoice builder (#05): the Document type dropdown swaps dynamic fields —
+  Proforma shows Payment terms/Bank name/Account no/SWIFT/Branch; Commercial
+  shows Invoice no/Date/VAT reg no/Consignee/Bill-to/Currency (LKR/USD);
+  Delivery Note hides the Rate + Amount columns (`display:none` via the
+  `hide-money` class) and the totals summary, swapping in Deliver-to/
+  Delivery date/Note no/Delivery address fields. Fill company name/address/
+  contact → they appear in the offscreen `#inv-doc`; upload a logo → it
+  renders on the letterhead; "Generate Document PDF" fires html2pdf; totals
+  read grouped money (Rs62,500.00); data persists (`cm-inv-v1`); Reset
+  document clears it. Requires the html2pdf.js CDN script in the head.
+
+## Master invoice template (FORMAT ONLY) — 2026-09-12
+
+`generatePrintHTML(data)` in `js/app.js` reproduces the layout of the
+client's master tax invoice. The master PDF is a **design blueprint**:
+`MXPT` holds only measured geometry (page box, margins, band heights,
+column widths, row pitches, rule weights) and **no company data of any
+kind** — every printable string arrives in the `data` argument, sourced
+from the Brand settings and the ERP fields.
+
+Measured against the master's own vector/text operators (US Letter
+612×792pt, zero page margin):
+
+| Element | Master | Rendered |
+|---|---|---|
+| frame box | x 46.08 / top 54.99 / w 519.84 | 46.08 / 54.99 / 519.84 |
+| Date-of-Invoice band | 117.26–136.46 | 117.26–136.46 |
+| metadata boxes | top 142.82, h 118.71 | top 142.82, h 118.71 |
+| Additional Information band | 267.89–287.09 | 267.89–287.09 |
+| item table top | 306.77 | 306.77 |
+| header / item / total rows | 28.44 / 32.64 / 17.76 | same |
+| every text baseline | — | within 0.1px |
+
+Column widths: No 28.44, Description 224.33, Unit 37.22, Qty 48.96,
+Rate 81.39, Amount 99.5 (pt). The master's Address cell is two rows tall,
+leaving ONE blank row before Telephone No in **both** columns — that is
+reproduced, not a bug.
+
+Body text is Roboto 9.8pt, so the app loads Roboto from Google Fonts
+(`index.html`) and the print frame waits on `document.fonts.ready`
+before printing. `@page` is `612pt 792pt; margin: 0` (hides the browser's
+URL/date furniture).
+
+More items than fit one page continue onto further pages with the same
+grid — `thead` repeats, no row/summary/footer block is split
+(`.mx-keep`). The page is never compressed or clipped.
+
+### Long / multiline text (format preserved, rows grow)
+
+The layout is fixed; the TEXT inside it is not. Every block that holds
+user data uses `min-height` + wrapping rather than a fixed height and
+`overflow:hidden`, so long content grows the block downwards instead of
+colliding with the next one:
+
+- **Metadata rows** are `display:flex; align-items:flex-start` with a
+  non-shrinking label (`flex:0 0 <labelW>pt`) and a value span of
+  `white-space:pre-wrap` + `overflow-wrap:anywhere`. Short values keep the
+  master's 19.2pt pitch exactly; a 4-line address simply makes that row
+  taller. Real line breaks the user typed are preserved.
+- **Letterhead** is flow (not absolutely positioned) with the master's
+  measured margins (`hdr: { nameM, addrM, conM, ruleM, tagM }`), so a long
+  company name / address / contact wraps and pushes the frame down. The
+  logo and optional full-width banner stay absolute — images cannot wrap.
+- **Table cells** are `vertical-align: top` at `line-height: 1.3`, so the
+  row number, unit, qty and amounts stay level with the FIRST line of a
+  wrapped description. `padTop` values are derived from the verified
+  mid-aligned baselines; tuning them is the only way to move a table
+  baseline, because a centred cell ignores line-height entirely.
+- **Safety**: `box-sizing:border-box` on everything, `overflow-wrap:
+  anywhere`, `table-layout:fixed`, `max-width:100%` — mirrored in
+  `PRINT_DOC_CSS` (print frame) and the `.mx-doc` block in `css/style.css`
+  (on-screen sheet).
+
+Do NOT put `height:100%` on a wrapper inside a table cell here: it
+resolves against an auto-height row and the rows below land at different
+offsets between layouts.
+
+Regression guard: with the master's own short values every baseline
+(header, 6 metadata rows per column, 3 item rows, 5 summary rows, words,
+courtesy, sign-off, signature) still lands within 0.1px. With a long
+brand name, a 5-line address, a 3-line description and an 80-character
+unbreakable token: no horizontal overflow (doc width stays 816px), no
+row overlap, and nothing clipped.
+
+## Premium Plans view (2026-09-12)
+
+`#plans-section` is a normal workspace view in `.main-area`: `showView('plans')`
+toggles its `hidden` like every other view and `navIds` maps
+`sidebar-plans` → `plans` for the active pill. The sidebar entry sits last
+in the CONFIGURATION group (`#sidebar-plans`, a `<button class="sidebar-link">`
+with the new `star` entry in `TOOL_ICONS`, NOT the `<a class="nav-item">` +
+`⭐` from the original request — the sidebar is SVG-only by an earlier
+explicit rule, and anchors don't participate in `showView`).
+
+Two cards in `.plans-grid`: Monthly Premium `$12.99 / monthly` (ghost CTA)
+and Yearly Premium `$125 / yearly` (featured, `Save ~20%` corner badge,
+primary CTA, indigo edge + glow, green bullets).
+
+Two layout gotchas baked into `css/style.css`:
+
+- The grid is `repeat(2, minmax(0, 1fr))`, **not** `auto-fit minmax(260px…)`:
+  with only two cards auto-fit keeps adding tracks on a wide screen and
+  leaves the pair stranded in the left half. It collapses to one column
+  below `620px` (so the two cards still sit side by side in the ~645px
+  preview pane).
+- The featured card's edge is `:root .card.plan-card-featured` — the
+  `#nexora-glass-force` block in `index.html` sets `:root .card` with
+  `!important`, so a bare `.plan-card-featured` was silently wiped (0,1,0 vs
+  0,2,0, both important). Match its shape and go one class deeper.
+
+`Subscribe Monthly` / `Subscribe Yearly` are `data-plan` / `data-price`
+buttons wired to a shared listener that records the choice in
+`nexora_plan_interest` and calls `showToast(...)`; no payment provider is
+connected in this build, and the view says so in a `hint` under the cards.
+
+## Editable document preview + PDF editor toolbar (2026-09-12)
+
+There was no on-screen PDF preview before this: the document existed only as
+the offscreen `#erp-doc` (`.pdf-offscreen`, `left:-10000px`) and the print
+frame. The ERP view now carries a `Document preview` card holding an
+EDITABLE sheet that **is the print source**: `exportErpPdf()` copies this DOM
+instead of re-running the template, so text retyped by hand (or restyled with
+the toolbar) survives into the PDF.
+
+### Structure
+
+```
+.pdf-preview-card
+├─ .card-head  (#pdf-preview-state pill)
+├─ .pdf-toolbar  (#pdf-toolbar, position: sticky)
+└─ .pdf-preview-shell (overflow:auto, max-height 74vh)
+   └─ .pdf-preview-canvas (width: 816px = 612pt @96dpi)
+      └─ #pdf-preview-container  contenteditable="true"  ← the print source
+```
+
+The canvas is pinned to 816px so the sheet lays out at its true 612pt; the
+shell scrolls on narrower viewports instead of letting the doc root's
+`max-width:100%` squeeze (and reflow) the master grid.
+
+### State machine
+
+`pdfPreviewHtml` (last template output) · `pdfPreviewEdited` (pins the
+preview) · `pdfPreviewTimer` (260ms debounce) · `pdfSelected` · `pdfMoveMode`
+· `pdfDrag`.
+
+- `buildErpDoc()` → writes `#erp-doc` **and** `paintPdfPreview()`.
+- `paintPdfPreview()` → resets selection/drag, repaints from
+  `pdfPreviewHtml`, clears the pin, re-tags blocks, resyncs the toolbar.
+- `schedulePdfPreview(force)` → debounced; **no-ops while pinned** so a form
+  edit can never silently discard a hand correction. `force` (the Rebuild
+  button, `resetErp`, `resetAll`) unpins.
+- Form hooks: one delegated `input`/`change` listener on `#erp-view` covers
+  every field incl. mode fields and item rows; `renderErp()` also schedules,
+  so mode switches / record loads / imports stay in step. Rebuilding only
+  rewrites the preview, never the form, so typing focus is kept.
+
+### Toolbar controls
+
+`#pdf-toolbar` (sticky, `z-index: 7`): font family (Arial / Times New Roman /
+Courier / Calibri), font size −/+ (0.5pt steps, numeric box, 4–48pt clamp),
+`<input type="color">`, zoom range 0.8–1.2 (`#pdf-tb-scale` +
+`#pdf-tb-scale-out` readout), line-height select (1.2/1.4/1.6), **Move mode**
+toggle, **Reset layout**, and a `#pdf-tb-target` readout naming the selection.
+
+- **Selection** — clicking inside the container rings the element
+  (`.pdf-selected`, 2px `#3b82f6`, `outline-offset: 1px`) and syncs the
+  controls. `pdfSyncToolbar()` reads through to the first text-bearing
+  descendant when the wrapper has no text of its own, otherwise the controls
+  would snap back to the page defaults after formatting.
+- **Formatting** is written as **inline CSS**, because the template sets
+  colour/size/family per node — a style on a wrapper would change nothing.
+  `pdfTextNodes()` collects the descendants that actually hold text and styles
+  those. With NO selection the target is the sheet root (`.mx-doc > div`), not
+  the container — the container's own inline style is stripped from the
+  payload.
+- **Zoom** uses `transform: scale()` with `transform-origin: top left` and
+  compensates the canvas box by hand (a transform does not change layout
+  size). Preview-only: it is stripped from the print payload, since scaling
+  the sheet would break the page geometry.
+- **Move mode** tags the 9 top-level sections (`data-pdf-block`), sets
+  `contenteditable="false"` so the pointer cannot select text mid-drag, and
+  drags with **margins** (flow, not absolute) at 1 screen px = 0.75pt ÷ zoom.
+  Sections nudge past each other without overlapping.
+- **Reset layout** repaints the untouched template and returns every control
+  (selection, zoom, colour, line height, font, move mode) to its default.
+
+### Print hygiene
+
+`pdfPreviewPayload()` clones the live sheet and strips **editor** state only:
+`contenteditable`, `spellcheck`, `aria-label`, `.pdf-selected`,
+`data-pdf-block`, `.pdf-move-mode`, and the zoom `transform`/`transform-origin`
+from the host's inline style (other host inline formatting is PRESERVED —
+that is why the transform is cleared property-by-property rather than by
+dropping the whole `style` attribute). The user's own inline formatting and
+drag margins are kept, because those are the edit.
+
+`beforeprint`/`afterprint` toggle `body.pdf-printing`, and `@media print`
+hides `.pdf-toolbar` / `.pdf-tb-target` and kills every selection ring — so
+an app-level Ctrl+P cannot print the chrome either. All hover/tint rules live
+inside `@media screen`.
+
+Verified end-to-end in the print frame: Courier + `#cc0000` formatting, a
+`margin-left: 37.65pt` drag and the item text all present; `contenteditable`,
+`spellcheck`, `pdf-selected`, `data-pdf-block`, `pdf-move-mode`,
+`transform: scale` and every `pdf-tb-*` node all absent.
+
+### Two-cell company header & logo containment (2026-09-12)
+
+The letterhead band is now a `table-layout: fixed` TABLE of the page width
+(612pt) with two top-aligned cells:
+
+- **Logo cell — `width: 22%`** (134.64pt), `padding: 2px 0 0 27.9pt` (the
+  master's own logo inset). The image is CONTAINED rather than pinned:
+  `width:auto; max-width:140px; height:auto; max-height:48px;
+  object-fit:contain; display:block`.
+- **Details cell — `width: 78%`** (477.36pt), `padding: 0 46.08pt 0 0`, so
+  the block's right edge lands exactly on 565.92pt = the frame's right
+  margin (46.08 + 519.84). The name / address / contact lines are
+  `text-align: right`.
+
+The `<tr>` is driven by the details block (37.36pt = nameM −1.13 + nameH
+16.74 + addrM −0.53 + 9.8 + conM 2.68 + 9.8), so the band still measures
+`54.05pt` and the frame still starts at **54.98pt** (master 54.99) —
+everything below the header is unmoved. The rule (2px #000, full 612pt) and
+the italic centered tagline stay OUTSIDE the table so a long tagline keeps
+spanning the page instead of wrapping in the 78% column.
+
+Why the change: the old logo was `position:absolute; height:28.93pt;
+width:auto` with **no max-width**. A compact/square logo therefore rendered
+only ~38.6px tall (the "tiny" logo), while a wide wordmark expanded freely —
+a 5:1 upload measured 192.9px wide from x 27.9pt and ran straight into the
+company name (the "squashed" look). Measured now, all shapes scale with
+aspect ratio preserved and never leave the cell: 1:1 → 48×48px (up from
+~38.6px), 4:5 → 38.4×48, 1:3 → 16×48, 5:1 → 140×28, 10:1 → 140×14.
+
+`MXPT.hdr` carries the new knob values (`logoX: 27.9`, `logoPadTop: 1.5`,
+`logoMaxW: 140`, `logoMaxH: 48`, `logoW: '22%'`, `detailsW: '78%'`).
+
+**Two things to know.** (1) Both cells carry explicit FOUR-SIDE padding: a
+`<td>` has a 1px UA default on every side, and a stray 1px top/bottom on the
+details cell grew the row by 1.5pt and pushed the whole frame to 56.39pt —
+1.4pt off the master. If you add another cell here, set all four paddings.
+(2) A 48px logo plus its 2px padding is 37.5pt, just past the 37.36pt
+details block, so a LOGO THAT FILLS the 48px box raises the row by 0.14pt
+(0.05mm). Sub-pixel; only visible as a 0.06pt shift on the frame top.
+
+Regression guard: with a long brand name, a 4× repeated address and a 3×
+repeated contact line the cell wraps (name 2 lines, address/contact 3 each)
+and the band grows to ~110pt, pushing the frame down — while the frame's
+0.94pt gap (`frameGap`) to the band is preserved exactly, the rule stays
+612pt wide, and there is no horizontal overflow (scrollWidth == clientWidth
+== 816px). With no logo at all the band is 54.05pt and the details still end
+at 565.92pt.
+
+**Pre-existing, NOT touched:** inside the frame there is a 0.75pt (1px)
+offset before the metadata table — the frame's first child (title) ends at
+117.99pt and the metadata `<table>` starts at 118.00pt where the master's
+band sits at 117.26pt. Same class of bug as (1) above (a UA cell padding on
+the metadata table), but fixing it would move the whole body up 0.75pt, so it
+was left alone deliberately. Everything from the frame top down was verified
+unmoved by this change (frame top 54.98 vs master 54.99).
+
+**Brand/ERP state:** verifying this digit lost some local data — the test
+brand (`name`, `legalName`, `address`, `contact`, `spec`, `logo`) and the ERP
+draft were overwritten, and 8 `erp/pdf` history entries were purged while
+cleaning up (the guest `calcmall_history` index is now empty). The brand was
+restored to `name: 'METRIX ENGINEERING'`, `legalName: 'METRIX ENGINEERING
+SERVICES (PVT) LTD'`, `contact: '+94 112 286695'`, everything else blanked —
+**a real uploaded logo cannot be recovered and must be re-uploaded in
+Company & Brand Settings.**
+
+### Page-edge audit (2026-09-12)
+
+Measured inside the real print frame (`#print-frame`), in page units:
+content extents are left 0, right 612, bottom 792 — i.e. exactly the page
+box, no horizontal overflow and no run-on to a second page. The only
+values outside the box are the letterhead name's *inline box* at −1.12pt;
+its **ink** starts at +2.0pt, because for uppercase serif text the cap
+top sits well below the ascender. Nothing is visually clipped.
+
+Deliberately NOT changed: `@page` stays `612pt 792pt; margin: 0` (master
+geometry; margin 0 is also what suppresses the browser's URL/date
+furniture) and the logo stays in the master's measured box (28.93pt tall
+at x 27.9pt / y 8.52pt) with the title at 23.5pt. Requested A4 + 12mm
+margins + 35/30px container padding were declined: the frame is a fixed
+519.84pt, so A4 content width minus those margins and padding (~494pt)
+cannot hold it, and the vertical rhythm would no longer match the master.
+
+Caveat for PHYSICAL printing: the letterhead begins ~2pt from the paper
+edge, which is inside the non-printable border of most inkjet/laser
+printers (~4mm). Printing to PDF is unaffected. If physical prints matter, inset
+the whole sheet and scale the frame to preserve proportions.
+
+The document root now pins `font-size` and `line-height` explicitly,
+because the wrapper class resolves to 12px/1.5 on screen (`.quo-doc` in
+`css/style.css`) but 12px/1.2 inside the print frame (`.mx-doc` in
+`PRINT_DOC_CSS`) — any element relying on inheritance would have measured
+differently in the two contexts.
+
+To re-measure if the template ever changes: copy the master PDF to
+`.freebuff/master-template.pdf` and run
+`powershell -File .freebuff/pdf-layout.ps1 -Path .freebuff/master-template.pdf`,
+which dumps text baselines with x/y and the rectangle/path operators.
+
+### Header logo box, wrapper border & purchaser phone (2026-09-12)
+
+**Logo cell (`H.logoW/logoPadTop/logoMaxW/logoMaxH/detailsW` in `js/app.js`).**
+The two-cell company header is 25% / 75%, logo cell at `padding-top: 3pt`
+(= 4px) plus the master's own 27.9pt left inset, image
+`width:auto;max-width:150px;height:auto;max-height:55px;object-fit:contain;display:block`.
+Measured live: a 3:1 logo renders 150x50px with the aspect ratio exactly 3.0,
+the cell is 204px = 25% of the 816px sheet, and the image's left edge is
+27.89pt — the master's 27.9pt. Both cells set ALL FOUR paddings explicitly:
+a `<td>` carries a UA default 1px on every side, and the stray 1px top/bottom
+grows the row 1.5pt and pushes the whole frame off the master's 54.99pt top.
+
+**The outer document wrapper carries no border.** Measured `0px` on all four
+sides, on both the document root and the inner content wrapper. The Date-of-
+Invoice band, the two metadata boxes, the Additional Information band and the
+item grid each own their own ruling and sit straight on the white canvas.
+
+**Purchaser's Telephone No** is sourced by `purchaserPhone()` — it extracts the
+PHONE token out of the client "Contact person" line with `parseContactPair`,
+the same helper the supplier side already used via `brandPhone()`. That box is
+free text by design (placeholder `R. Perera · +94 77 555 1234`), so a name may
+be typed into it; the template's Telephone slot is a phone slot, so a name can
+no longer reach it. `data.clientPhone` in the template stays the only input to
+that row, and `mxSheetAoa()` (Excel/CSV) uses the same helper so the PDF and the
+spreadsheet agree. Verified: `R. Perera · +94 77 555 1234` renders
+`Telephone No : +94 77 555 1234`, `R. Perera` appears nowhere in the document,
+and with just `R. Perera` typed the row renders EMPTY (never a person's name).
+
+**Geometry re-verified** (sheet-relative pt; master reference in brackets),
+measured with brand data short enough to fit one line: header band 54.05
+[54.05], Date band top 117.25 [117.26], box top 142.79 [142.82], box height
+118.70 [118.71], Additional Information top 267.84 [267.89], table top 306.71
+[306.77], head 28.43 [28.44], item rows 32.64 [32.64], total rows 17.75
+[17.76], every metadata row exactly 19.2.
+
+**Why the metadata boxes can be ~18pt taller than the master.** In a 245.81pt
+column the brand's real legal name and address (`METRIX ENGINEERING SERVICES
+(PVT) LTD` / `5/1A, Samagi Mw, Depanama, Pannipitiya, Sri Lanka`) each wrap to
+two lines, and those rows grow 19.2 → 29.32pt; the boxes are then ~18pt taller
+and everything below shifts by the same amount. That is the deliberate
+grow-don't-overlap behaviour, not a geometry bug: it appears only when the data
+is longer than the master's, and nothing overlaps or is clipped.
+
+Requested metadata metrics NOT applied: `line-height: 1.35` and
+`padding: 4px 6px` on those cells would move every verified baseline. The grid
+uses `min-height: 19.2pt` + `align-items: flex-start` + `white-space: pre-wrap`
+instead, which already wraps multi-line addresses and grows the row downwards
+(measured: a 2-line address makes that row 29.32pt, nothing collides).
+
+**Brand kit / local state.** The synthetic `LOGO 3:1` SVG that an earlier
+aspect-ratio test wrote into `brand.logo` was cleared back to `''`, and
+`legalName` / `address` restored to `METRIX ENGINEERING SERVICES (PVT) LTD` /
+`5/1A, Samagi Mw, Depanama, Pannipitiya, Sri Lanka`. The layout run itself used
+`legalName: METRIX ENGINEERING`, `address: Depanama, Pannipitiya, Sri Lanka`,
+`client: NORTHWIND TRADING`; the ERP draft was reset to its empty state
+afterwards (`resetErp()` leaves `lines: []` and shows the "No items yet" cell —
+note this is NOT the "1 blank row" asked for in an earlier turn).
+
+Leftover local state, deliberately NOT touched: `nexora_user_logged_in: true`,
+`nexora_user_role: admin`, `nexora_ai_credits: 5` while `users` is `[]` — a
+fabricated logged-in admin session left by the access-gating tests — plus the
+per-test-account snapshot keys (`u:gate-test@…`, `u:normal@example.com`,
+`u:otp.test@…`, `u:refactor.tester@…`, `u:style@example.com`,
+`u:second.tester@…`). Remove them for a true first-run guest state.
+
+## Why the two top-level html files exist
+
+- `index.html` — canonical app the user opens/distributes.
+- `preview.html` — generated single-file copy ONLY for the Preview tab.
+  Do not edit by hand; edit the sources and regenerate (above).

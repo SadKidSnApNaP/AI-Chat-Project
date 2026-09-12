@@ -1,0 +1,2 @@
+preview-static listening on http://127.0.0.1:8437/ (root: F:\AI-Chat Project)
+req error: Exception calling "Read" with "3" argument(s): "Unable to read data from the transport connection: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond."

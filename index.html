@@ -1,0 +1,2892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Nexora Engine — business intelligence and ERP: track scope creep, calculate what an extra client request really costs, and send a professional change request.">
+  <title>Nexora Engine | Business Intelligence &amp; ERP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <!-- FORCED GLASS THEME — max specificity, loaded after style.css so it always wins the cascade.
+       Variables live on :root; selectors are :root-prefixed (higher specificity than any
+       later equal-important rule) so no tool/page rule can override them. -->
+  <style id="nexora-glass-force">
+    :root {
+      --bg-gradient: radial-gradient(120% 120% at 75% 20%, #20274c 0%, #111428 50%, #090a14 100%) !important;
+      --card-bg: rgba(23, 29, 50, 0.55) !important;
+      --card-border: rgba(255, 255, 255, 0.09) !important;
+      --card-glow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.12) !important;
+    }
+    /* 2 ─ page wrappers go transparent so #glow-backdrop glows through; :root keeps the
+           gradient as an opaque canvas fallback (the fixed glow div paints above it) */
+    :root {
+      background: var(--bg-gradient) !important;
+      background-attachment: fixed !important;
+    }
+    :root body,
+    :root #app-root,
+    :root .container,
+    :root .main-area,
+    :root .main-content,
+    :root .min-h-screen,
+    :root .dashboard-container {
+      background: transparent !important;
+      background-color: transparent !important;
+      background-image: none !important;
+    }
+    /* 3 ─ glass on every card/panel (real tool/health/process classes included) */
+    :root .card,
+    :root .kpi-card,
+    :root .utility-card,
+    :root .tool-card,
+    :root .activity-panel,
+    :root .activity-card,
+    :root .widget-card,
+    :root .system-health-card {
+      background: var(--card-bg) !important;
+      backdrop-filter: blur(24px) saturate(180%) !important;
+      -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+      border: 1px solid var(--card-border) !important;
+      box-shadow: var(--card-glow) !important;
+      border-radius: 14px !important;
+    }
+    /* 4 ─ blue/purple ambient glow on hover */
+    :root .utility-card:hover,
+    :root .kpi-card:hover,
+    :root .tool-card:hover,
+    :root .activity-panel:hover,
+    :root .widget-card:hover {
+      background: rgba(35, 45, 75, 0.6) !important;
+      border-color: rgba(99, 102, 241, 0.5) !important;
+      box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5), 0 0 25px rgba(99, 102, 241, 0.25) !important;
+    }
+    /* 5 ─ drop flat dark overlay backgrounds (Appearance swatches/pickers excluded) */
+    :root .bg-dark,
+    :root .bg-slate,
+    :root [class*="bg-"]:not(.bg-preset):not(.bg-picker):not(.bg-row):not(.bg-presets) {
+      background-color: transparent !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="glow-backdrop"></div>
+  <main class="container">
+    <button type="button" class="menu-btn" id="menu-btn" aria-label="Open menu"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span>Menu</button>
+    <aside class="sidebar" id="sidebar" aria-label="Site navigation">
+      <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu"><span class="nav-icon" data-icon="close" aria-hidden="true"></span></button>
+      <button type="button" class="sidebar-brand" id="sidebar-brand" aria-label="Nexora Engine — back to Homepage Dashboard">
+        <span class="brand-mark" id="brand-mark-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M9 14.5 l2.2 2.2 4 -4.4"/></svg></span>
+        <strong>Nexora Engine</strong>
+      </button>
+      <nav class="sidebar-nav">
+        <p class="nav-group-label">WORKSPACE</p>
+        <button type="button" class="sidebar-link" id="nav-home"><span class="nav-icon" data-icon="home" aria-hidden="true"></span><span>Home</span></button>
+        <button type="button" class="sidebar-link" id="sidebar-erp"><span class="nav-icon" data-icon="building" aria-hidden="true"></span><span>Master ERP Engine</span></button>
+        <button type="button" class="sidebar-link" id="sidebar-db"><span class="nav-icon" data-icon="database" aria-hidden="true"></span><span>Item &amp; Client Database</span></button>
+
+        <p class="nav-group-label">MANAGEMENT</p>
+        <button type="button" class="sidebar-link" id="sidebar-history"><span class="nav-icon" data-icon="history" aria-hidden="true"></span><span>History &amp; Saved Documents</span></button>
+        <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>All Utilities</span></button>
+
+        <p class="nav-group-label">CONFIGURATION</p>
+        <button type="button" class="sidebar-link" id="sidebar-settings-nav"><span class="nav-icon" data-icon="briefcase" aria-hidden="true"></span><span>Company &amp; Brand Settings</span></button>
+        <button type="button" class="sidebar-link" id="sidebar-appearance"><span class="nav-icon" data-icon="palette" aria-hidden="true"></span><span>Appearance Settings</span></button>
+        <button type="button" class="sidebar-link" id="sidebar-backup"><span class="nav-icon" data-icon="archive" aria-hidden="true"></span><span>Data Backup &amp; Restore</span></button>
+        <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <button type="button" class="sidebar-link sidebar-link-sm" id="theme-toggle" aria-label="Toggle light or dark theme"><span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Toggle theme</span></button>
+        <button type="button" class="sidebar-help-btn" id="sidebar-help" aria-label="Open the How to use guide"><span class="nav-icon" data-icon="help" aria-hidden="true"></span><span>How to use</span></button>
+        <div class="sidebar-profile" id="auth-guest">
+          <div class="user-row">
+            <span class="user-avatar" aria-hidden="true">?</span>
+            <span class="user-meta">
+              <strong>Guest</strong>
+              <small><span class="acct-status acct-status-guest" aria-hidden="true"></span><span id="guest-status">Guest Account (0 Credits)</span></small>
+              <small class="user-storage js-storage-status">Local storage: —</small>
+            </span>
+          </div>
+          <div class="sidebar-auth">
+            <button type="button" class="btn btn-ghost btn-sm" id="login-btn">Login</button>
+            <button type="button" class="btn btn-primary btn-sm" id="signup-btn">Sign up</button>
+          </div>
+        </div>
+        <div class="sidebar-profile" id="user-badge" hidden>
+          <div class="user-row">
+            <span class="user-avatar" id="user-avatar" aria-hidden="true">?</span>
+            <span class="user-meta">
+              <strong id="user-name">—</strong>
+              <small><span class="acct-status" aria-hidden="true"></span><span id="user-status">Logged In (1 Credit Available)</span></small>
+              <small class="user-email" id="user-email">—</small>
+              <small class="user-storage js-storage-status">Local storage: —</small>
+            </span>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="logout-btn">Log Out</button>
+        </div>
+      </div>
+    </aside>
+    <div class="main-area" id="main-area">
+    <noscript>
+      <div class="card">
+        <p>This tool needs JavaScript enabled. Please enable it and reload.</p>
+      </div>
+    </noscript>
+
+    <!-- ══ MASTER ERP ENGINE ═════════════════════════════════ -->
+    <div id="erp-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="building" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Master ERP Engine</h2>
+            <p class="tagline">One unified document builder — quotation, pro forma, tax invoice and delivery note from a single dataset.</p>
+          </div>
+          <div class="erp-import-box">
+            <label class="btn btn-ghost btn-sm file-label" for="erp-import-file"><span class="nav-icon" data-icon="import" aria-hidden="true"></span>Import Excel / CSV</label>
+            <input type="file" id="erp-import-file" accept=".xlsx,.xls,.csv" hidden>
+            <button type="button" class="btn btn-ghost btn-sm" id="erp-template-dl"><span class="nav-icon" data-icon="download" aria-hidden="true"></span>Template</button>
+          </div>
+          <label class="banner-currency" for="erp-currency">Currency
+            <select id="erp-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <!-- Project / client header -->
+      <section class="card" aria-labelledby="erp-header-title">
+        <div class="card-head">
+          <h2 id="erp-header-title"><span class="step" aria-hidden="true">1</span> Project / Client Header</h2>
+        </div>
+        <p class="hint">Pick a saved project (or type a new name) — client, address and currency fill in automatically from your database.</p>
+        <div class="erp-record-bar">
+          <div class="field erp-record-field">
+            <label for="erp-record-id">Primary Key / Record ID</label>
+            <input type="text" id="erp-record-id" placeholder="e.g. 1 or ACME-WH-01" autocomplete="off">
+          </div>
+          <div class="erp-record-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="erp-record-load">Load Record</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="erp-record-save">Save Record</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="erp-record-delete">Delete</button>
+          </div>
+          <p class="erp-record-meta" id="erp-record-meta">Not saved yet</p>
+        </div>
+        <div class="form-grid">
+          <div class="field erp-client-field">
+            <label for="erp-client">Client Name</label>
+            <input type="text" id="erp-client" list="erp-client-name-list" placeholder="e.g. Acme Holdings (Pvt) Ltd" autocomplete="off" aria-autocomplete="list" aria-expanded="false" aria-controls="erp-client-suggestions">
+            <datalist id="erp-client-name-list"></datalist>
+            <div class="erp-client-suggest" id="erp-client-suggestions" hidden role="listbox" aria-label="Saved clients"></div>
+          </div>
+          <div class="field">
+            <label for="erp-project">Project Name</label>
+            <input type="text" id="erp-project" list="erp-project-list" placeholder="e.g. Wattala Warehouse Fit-out — site / job location" autocomplete="off">
+            <datalist id="erp-project-list"></datalist>
+            <div class="erp-client-suggest" id="erp-project-suggestions" hidden role="listbox" aria-label="Clients matching this project"></div>
+          </div>
+          <div class="field field-wide">
+            <label for="erp-address">Client address</label>
+            <input type="text" id="erp-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-contact">Contact person</label>
+            <input type="text" id="erp-contact" placeholder="e.g. R. Perera · +94 77 555 1234" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-clienttin">Client TIN / Reg no</label>
+            <input type="text" id="erp-clienttin" placeholder="e.g. TIN 123 456 789" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-posupply">Place of supply</label>
+            <input type="text" id="erp-posupply" placeholder="e.g. Western Province" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-pono">PO no</label>
+            <input type="text" id="erp-pono" placeholder="e.g. PO-2026-0451" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-terms-dt">Delivery terms</label>
+            <input type="text" id="erp-terms-dt" placeholder="e.g. Delivered to site (DDP)" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-shipto">Ship to</label>
+            <input type="text" id="erp-shipto" placeholder="e.g. Site gate 2, Ekala Industrial Zone" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-hscode">HS code</label>
+            <input type="text" id="erp-hscode" placeholder="e.g. 8536.69" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-ref">Reference number</label>
+            <input type="text" id="erp-ref" placeholder="REF-2026-001" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-date">Date</label>
+            <input type="date" id="erp-date">
+          </div>
+        </div>
+      </section>
+
+      <!-- Document mode switcher -->
+      <section class="card" aria-labelledby="erp-mode-title">
+        <div class="card-head">
+          <h2 id="erp-mode-title"><span class="step" aria-hidden="true">2</span> Document Mode</h2>
+          <span class="pill pill-muted" id="erp-mode-badge">Quotation / Offer</span>
+        </div>
+        <div class="erp-tabs" role="tablist" aria-label="Document mode">
+          <button type="button" class="erp-tab active" role="tab" aria-selected="true" data-erpmode="quotation">Quotation / Offer</button>
+          <button type="button" class="erp-tab" role="tab" aria-selected="false" data-erpmode="proforma">Pro Forma Invoice</button>
+          <button type="button" class="erp-tab" role="tab" aria-selected="false" data-erpmode="commercial">Tax / Commercial Invoice</button>
+          <button type="button" class="erp-tab" role="tab" aria-selected="false" data-erpmode="delivery">Delivery Note</button>
+        </div>
+        <div id="erp-mode-fields" class="form-grid"></div>
+      </section>
+
+      <!-- Items -->
+      <section class="card" aria-labelledby="erp-items-title">
+        <div class="card-head">
+          <h2 id="erp-items-title"><span class="step" aria-hidden="true">3</span> Items</h2>
+          <span class="pill pill-muted" id="erp-line-count">0 lines</span>
+        </div>
+        <p class="hint">Type or pick an <strong>Item Key / SKU</strong> — name, unit and rate auto-fill from your Master Item Database.</p>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Item Key / SKU</th>
+                <th>Item name &amp; description</th>
+                <th>Unit</th>
+                <th>Qty</th>
+                <th id="erp-rate-head">Rate</th>
+                <th id="erp-amt-head">Amount</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="erp-rows"></tbody>
+          </table>
+        </div>
+        <datalist id="erp-sku-list"></datalist>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost" id="erp-add-row"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
+        </div>
+      </section>
+
+      <!-- Totals + terms -->
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="erp-totals-title">
+            <div class="card-head">
+              <h2 id="erp-totals-title"><span class="step" aria-hidden="true">4</span> Discount &amp; Tax</h2>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="erp-discount">Discount %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="erp-discount" placeholder="e.g. 5" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="erp-vat">VAT % <span class="pill pill-muted">default 18</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="erp-vat" placeholder="e.g. 18" autocomplete="off">
+              </div>
+            </div>
+          </section>
+          <section class="card" aria-labelledby="erp-terms-title">
+            <div class="card-head">
+              <h2 id="erp-terms-title"><span class="step" aria-hidden="true">5</span> Terms &amp; Conditions</h2>
+            </div>
+            <div class="field">
+              <label for="erp-terms">Shown at the bottom of every PDF (edit per document)</label>
+              <textarea id="erp-terms" rows="5" placeholder="Payment terms, warranty, validity…"></textarea>
+            </div>
+          </section>
+        </div>
+        <div class="col col-right">
+          <section class="card result-card" aria-labelledby="erp-sum-title">
+            <div class="card-head">
+              <h2 id="erp-sum-title">Live summary</h2>
+            </div>
+            <div class="boq-summary" id="erp-summary"></div>
+            <div class="actions actions-col">
+              <button type="button" class="btn btn-primary" id="erp-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export as PDF</button>
+              <button type="button" class="btn btn-ghost" id="erp-export-xlsx"><span class="nav-icon" data-icon="sheet" aria-hidden="true"></span>Export as Excel (.xlsx)</button>
+              <button type="button" class="btn btn-ghost" id="erp-save"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save Draft</button>
+              <button type="button" class="btn btn-ghost" id="erp-reset">Reset document</button>
+            </div>
+            <p class="error" id="erp-error" role="alert" hidden></p>
+          </section>
+        </div>
+      </div>
+
+      <!-- Live, EDITABLE document preview. This sheet is the print source:
+           "Export as PDF" reads this DOM verbatim, so text typed straight
+           into the page is what comes out of the printer. -->
+      <section class="card pdf-preview-card" aria-labelledby="pdf-preview-title">
+        <div class="card-head">
+          <h2 id="pdf-preview-title">Document preview</h2>
+          <span class="pill pill-muted" id="pdf-preview-state">Live</span>
+        </div>
+        <p class="hint">Click any text on the sheet to edit it — corrections are kept and printed exactly as shown. Editing pins the preview, so form changes stop regenerating it until you press <strong>Rebuild from form</strong>.</p>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="pdf-preview-rebuild"><span class="nav-icon" data-icon="history" aria-hidden="true"></span>Rebuild from form</button>
+        </div>
+
+        <!-- PDF editor toolbar — floats above the sheet. Every control acts
+             on the element you clicked (outlined in blue); nothing here is
+             ever printed (see .pdf-toolbar in @media print). -->
+        <div class="pdf-toolbar" id="pdf-toolbar" role="toolbar" aria-label="Document editor">
+          <div class="pdf-tb-group">
+            <label class="pdf-tb-label" for="pdf-tb-font">Font</label>
+            <select class="pdf-tb-select" id="pdf-tb-font">
+              <option value="Arial, Helvetica, sans-serif">Arial</option>
+              <option value="'Times New Roman', Times, serif">Times New Roman</option>
+              <option value="'Courier New', Courier, monospace">Courier</option>
+              <option value="Calibri, 'Segoe UI', Arial, sans-serif">Calibri</option>
+            </select>
+          </div>
+          <div class="pdf-tb-group">
+            <span class="pdf-tb-label">Size</span>
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-size-down" aria-label="Decrease font size">&minus;</button>
+            <input type="text" inputmode="decimal" class="pdf-tb-num" id="pdf-tb-size" value="9.8" aria-label="Font size in points">
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-size-up" aria-label="Increase font size">+</button>
+          </div>
+          <div class="pdf-tb-group">
+            <label class="pdf-tb-label" for="pdf-tb-color">Colour</label>
+            <input type="color" class="pdf-tb-color" id="pdf-tb-color" value="#000000" aria-label="Text colour">
+          </div>
+          <div class="pdf-tb-group">
+            <label class="pdf-tb-label" for="pdf-tb-scale">Zoom</label>
+            <input type="range" class="pdf-tb-range" id="pdf-tb-scale" min="0.8" max="1.2" step="0.05" value="1" aria-label="Preview scale">
+            <span class="pdf-tb-readout" id="pdf-tb-scale-out">1.00x</span>
+          </div>
+          <div class="pdf-tb-group">
+            <label class="pdf-tb-label" for="pdf-tb-lh">Line</label>
+            <select class="pdf-tb-select" id="pdf-tb-lh">
+              <option value="1.2">1.2</option>
+              <option value="1.4">1.4</option>
+              <option value="1.6">1.6</option>
+            </select>
+          </div>
+          <div class="pdf-tb-group">
+            <button type="button" class="pdf-tb-btn pdf-tb-toggle" id="pdf-tb-move" aria-pressed="false" title="Drag whole sections of the page">Move mode</button>
+          </div>
+          <div class="pdf-tb-group">
+            <button type="button" class="pdf-tb-btn" id="pdf-tb-reset">Reset layout</button>
+          </div>
+          <span class="pdf-tb-target" id="pdf-tb-target">Nothing selected</span>
+        </div>
+
+        <div class="pdf-preview-shell">
+          <div class="pdf-preview-canvas">
+            <div id="pdf-preview-container" contenteditable="true" spellcheck="false" aria-label="Editable document preview" style="outline: none; box-sizing: border-box;"></div>
+          </div>
+        </div>
+      </section>
+    </div><!-- /#erp-view -->
+
+    <!-- ══ ITEM & CLIENT DATABASE ════════════════════════════ -->
+    <div id="db-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="database" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Item &amp; Client Database</h2>
+            <p class="tagline">Your master data — items auto-fill the ERP engine by SKU, clients auto-fill by project name.</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="db-items-title">
+            <div class="card-head">
+              <h2 id="db-items-title">Master Item Database</h2>
+              <button type="button" class="pill pill-muted db-count-btn" id="db-item-count" aria-label="Open item database">0 items</button>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="db-item-sku">Item Key / SKU</label>
+                <input type="text" id="db-item-sku" placeholder="e.g. PIPE-25" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="db-item-name">Item name &amp; description</label>
+                <input type="text" id="db-item-name" placeholder="e.g. PVC pipe 25mm — supply &amp; install" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="db-item-unit">Unit type</label>
+                <input type="text" id="db-item-unit" list="db-unit-list" placeholder="e.g. m / Nr / Lot" autocomplete="off">
+                <datalist id="db-unit-list">
+                  <option value="Nr"></option>
+                  <option value="m"></option>
+                  <option value="Lot"></option>
+                  <option value="Set"></option>
+                  <option value="Item"></option>
+                </datalist>
+              </div>
+              <div class="field">
+                <label for="db-item-rate">Default unit rate</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="db-item-rate" placeholder="e.g. 1,500" autocomplete="off">
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" class="btn btn-primary btn-sm" id="db-item-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="db-item-cancel" hidden>Cancel edit</button>
+            </div>
+            <div class="db-list-head db-grid-items" aria-hidden="true">
+              <span>SKU</span><span>Item</span><span>Unit</span><span class="db-rate-h">Rate</span><span></span>
+            </div>
+            <div class="db-list" id="db-item-rows"></div>
+          </section>
+        </div>
+        <div class="col col-right">
+          <section class="card" aria-labelledby="db-clients-title">
+            <div class="card-head">
+              <h2 id="db-clients-title">Client Database</h2>
+              <button type="button" class="pill pill-muted db-count-btn" id="db-client-count" aria-label="Open client database">0 clients</button>
+            </div>
+            <div class="field">
+              <label for="db-client-name">Client Name</label>
+              <input type="text" id="db-client-name" placeholder="e.g. Acme Holdings (Pvt) Ltd" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-project">Default Project / Site Name <span class="row-muted">(optional)</span></label>
+              <input type="text" id="db-client-project" placeholder="e.g. Wattala Warehouse Fit-out" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-address">Client address</label>
+              <input type="text" id="db-client-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-currency">Default currency</label>
+              <select id="db-client-currency">
+                <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+              </select>
+            </div>
+            <div class="row-muted">Last 8 fields feed the ERP client autofill</div>
+            <div class="field">
+              <label for="db-client-contact">Contact person</label>
+              <input type="text" id="db-client-contact" placeholder="e.g. R. Perera · +94 77 555 1234" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-tin">TIN / Reg no</label>
+              <input type="text" id="db-client-tin" placeholder="e.g. TIN 123 456 789" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-posupply">Place of supply</label>
+              <input type="text" id="db-client-posupply" placeholder="e.g. Western Province" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-pono">PO no</label>
+              <input type="text" id="db-client-pono" placeholder="e.g. PO-2026-0451" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-termsdt">Delivery terms</label>
+              <input type="text" id="db-client-termsdt" placeholder="e.g. Delivered to site (DDP)" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-shipto">Ship to</label>
+              <input type="text" id="db-client-shipto" placeholder="e.g. Site gate 2, Ekala Industrial Zone" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-hscode">HS code</label>
+              <input type="text" id="db-client-hscode" placeholder="e.g. 8536.69" autocomplete="off">
+            </div>
+            <div class="actions">
+              <button type="button" class="btn btn-primary btn-sm" id="db-client-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add client</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="db-client-cancel" hidden>Cancel edit</button>
+            </div>
+            <div class="db-list-head db-grid-clients" aria-hidden="true">
+              <span>Client</span><span>Address</span><span>Cur.</span><span></span>
+            </div>
+            <div class="db-list" id="db-client-rows"></div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#db-view -->
+
+    <!-- ══ HOME / DATA-CENTRIC INSIGHTS HUB ═════════════════ -->
+    <section id="home-view" aria-label="Nexora Engine — Insights Hub">
+      <!-- Top Analytics KPI header row -->
+      <div class="kpi-row" id="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Active Estimates</span>
+            <span class="kpi-delta" id="kpi-est-delta">+3.1%</span>
+          </div>
+          <span class="kpi-value" id="kpi-est">0</span>
+          <span class="kpi-sub" id="kpi-est-sub">Projects with tracked changes</span>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Database Records</span>
+            <span class="kpi-delta" id="kpi-db-delta">+3.1%</span>
+          </div>
+          <span class="kpi-value" id="kpi-db">0</span>
+          <span class="kpi-sub" id="kpi-db-sub">Items &amp; clients in master DB</span>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Saved Documents</span>
+            <span class="kpi-delta" id="kpi-doc-delta">+3.1%</span>
+          </div>
+          <span class="kpi-value" id="kpi-doc">0</span>
+          <span class="kpi-sub" id="kpi-doc-sub">Quotes, invoices &amp; snapshots</span>
+        </div>
+        <div class="kpi-card kpi-accent">
+          <div class="kpi-top">
+            <span class="kpi-label">Processed Value</span>
+            <span class="kpi-delta" id="kpi-val-delta">+3.1%</span>
+          </div>
+          <span class="kpi-value" id="kpi-val">0</span>
+          <span class="kpi-sub" id="kpi-val-sub">Totals across all documents</span>
+          <span class="kpi-cached" id="kpi-val-cached" hidden></span>
+        </div>
+      </div>
+
+      <!-- Main hub: tools grid (left) + recent activity (right) -->
+      <div class="hub-layout">
+        <div class="hub-main">
+          <h3 class="tools-heading">Calculators &amp; Utilities</h3>
+          <div class="tools-grid" id="tools-grid">
+            <!-- Tool cards rendered by renderToolsGrid() -->
+          </div>
+
+          <!-- Visual widgets: Process Map + System Health -->
+          <div class="hub-widgets">
+            <div class="widget-card">
+              <div class="widget-head"><span class="dot" aria-hidden="true"></span>Process Map</div>
+              <div class="process-map" aria-label="Document processing pipeline">
+                <span class="pm-node pm-live">Database</span><span class="pm-arrow" aria-hidden="true">→</span>
+                <span class="pm-node pm-live">ERP Engine</span><span class="pm-arrow" aria-hidden="true">→</span>
+                <span class="pm-node">Document</span><span class="pm-arrow" aria-hidden="true">→</span>
+                <span class="pm-node">PDF</span>
+              </div>
+              <p class="pm-caption" id="pm-caption">Pipeline idle — open the ERP engine to process a document.</p>
+            </div>
+            <div class="widget-card">
+              <div class="widget-head"><span class="dot" aria-hidden="true"></span>System Health</div>
+              <div class="health-list" id="health-list">
+                <div class="health-item"><span>Storage</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-storage">—</strong></div>
+                <div class="health-item"><span>Database</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-db">—</strong></div>
+                <div class="health-item"><span>Documents</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-docs">—</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right sidebar: Recent Activity feed -->
+        <aside class="hub-side">
+          <div class="activity-card">
+            <div class="activity-head">
+              <h3>Recent Activity</h3>
+              <button type="button" class="activity-clear" id="activity-clear" hidden>Clear</button>
+            </div>
+            <div class="activity-list" id="activity-list">
+              <!-- Activity items rendered by renderActivity() -->
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ══ ALL UTILITIES GRID ═══════════════════════════════ -->
+    <div id="utilities-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="tools" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">All Utilities</h2>
+            <p class="tagline">Standalone micro-calculators — double-click any icon to open it instantly.</p>
+          </div>
+        </div>
+      </section>
+      <div class="utilities-grid" id="utility-slots" role="tablist" aria-label="Standalone calculators">
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="scope-guard">
+          <span class="tool-slot-icon" data-icon="target" aria-hidden="true"></span>
+          <span class="tool-slot-name">Scope Guard</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="qr">
+          <span class="tool-slot-icon" data-icon="ruler" aria-hidden="true"></span>
+          <span class="tool-slot-name">Qty &amp; Rate</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="boq">
+          <span class="tool-slot-icon" data-icon="doc" aria-hidden="true"></span>
+          <span class="tool-slot-name">Quotation</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="pricing">
+          <span class="tool-slot-icon" data-icon="chart" aria-hidden="true"></span>
+          <span class="tool-slot-name">Pricing</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="invoice">
+          <span class="tool-slot-icon" data-icon="invoice" aria-hidden="true"></span>
+          <span class="tool-slot-name">Invoice</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="duty">
+          <span class="tool-slot-icon" data-icon="globe" aria-hidden="true"></span>
+          <span class="tool-slot-name">Import Tax</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="variation">
+          <span class="tool-slot-icon" data-icon="list" aria-hidden="true"></span>
+          <span class="tool-slot-name">Variation</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="breakeven">
+          <span class="tool-slot-icon" data-icon="scale" aria-hidden="true"></span>
+          <span class="tool-slot-name">Breakeven</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="fx">
+          <span class="tool-slot-icon" data-icon="exchange" aria-hidden="true"></span>
+          <span class="tool-slot-name">FX &amp; Fees</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="gpa">
+          <span class="tool-slot-icon" data-icon="grad" aria-hidden="true"></span>
+          <span class="tool-slot-name">GPA Planner</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="retainer">
+          <span class="tool-slot-icon" data-icon="exchange" aria-hidden="true"></span>
+          <span class="tool-slot-name">Retainer</span>
+        </button>
+        <button type="button" class="tool-slot" role="tab" aria-selected="false" data-tool="delay">
+          <span class="tool-slot-icon" data-icon="clock" aria-hidden="true"></span>
+          <span class="tool-slot-name">Delay Impact</span>
+        </button>
+      </div>
+      <div class="card utility-preview" id="utility-preview">
+        <div class="utility-preview-main">
+          <span class="pill pill-accent" id="up-badge">Tool #01</span>
+          <h3 id="up-name">Project Change &amp; Scope Calculator</h3>
+          <p id="up-desc">The client asks for &ldquo;just one more thing.&rdquo; See what it really costs, watch your effective hourly rate drop in real time, and send a professional change order in seconds.</p>
+          <p class="hint" id="up-meta">Private · works offline</p>
+        </div>
+        <div class="utility-preview-side">
+          <button type="button" class="btn btn-primary" id="open-utility-btn">Open Calculator →</button>
+          <p class="hint">Tip: double-click an icon above to jump straight in.</p>
+        </div>
+      </div>
+    </div><!-- /#utilities-view -->
+
+    <!-- ══ TOOL: PROJECT CHANGE & SCOPE CALCULATOR ═════════ -->
+    <div id="tool-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="target" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Project Change &amp; Scope Calculator</h2>
+            <p class="tagline">Know when a project stops being profitable.</p>
+          </div>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+
+      <!-- ── LEFT COLUMN ─────────────────────────────────────── -->
+      <div class="col col-left">
+
+        <!-- 1 · Project Setup -->
+        <section class="card" id="setup-card" aria-labelledby="setup-title">
+          <div class="card-head">
+            <h2 id="setup-title"><span class="step" aria-hidden="true">1</span> Project Setup</h2>
+            <span class="pill pill-muted" id="setup-badge">Saved locally</span>
+          </div>
+
+          <p class="hint" id="setup-hint" hidden>
+            Start here with one fixed-price project. Then track the first
+            &ldquo;one more thing&rdquo; your client asks for.
+          </p>
+
+          <div id="setup-form-wrap">
+            <form id="setup-form" novalidate>
+              <div class="field-grid">
+                <div class="field field-wide">
+                  <label for="p-name">Project name <span class="opt">(optional)</span></label>
+                  <input type="text" id="p-name" placeholder="e.g. Website redesign — Acme Co." autocomplete="off">
+                </div>
+
+                <div class="field">
+                  <label for="p-currency">Currency</label>
+                  <select id="p-currency">
+                    <option value="AED">AED — UAE dirham</option>
+                    <option value="AFN">AFN — Afghan afghani</option>
+                    <option value="ALL">ALL — Albanian lek</option>
+                    <option value="AMD">AMD — Armenian dram</option>
+                    <option value="ANG">ANG — Netherlands Antillean guilder</option>
+                    <option value="AOA">AOA — Angolan kwanza</option>
+                    <option value="ARS">ARS — Argentine peso</option>
+                    <option value="AUD">AUD — Australian dollar</option>
+                    <option value="AWG">AWG — Aruban florin</option>
+                    <option value="AZN">AZN — Azerbaijani manat</option>
+                    <option value="BAM">BAM — Bosnia-Herzegovina convertible mark</option>
+                    <option value="BBD">BBD — Barbadian dollar</option>
+                    <option value="BDT">BDT — Bangladeshi taka</option>
+                    <option value="BGN">BGN — Bulgarian lev</option>
+                    <option value="BHD">BHD — Bahraini dinar</option>
+                    <option value="BIF">BIF — Burundian franc</option>
+                    <option value="BMD">BMD — Bermudian dollar</option>
+                    <option value="BND">BND — Brunei dollar</option>
+                    <option value="BOB">BOB — Bolivian boliviano</option>
+                    <option value="BRL">BRL — Brazilian real</option>
+                    <option value="BSD">BSD — Bahamian dollar</option>
+                    <option value="BTN">BTN — Bhutanese ngultrum</option>
+                    <option value="BWP">BWP — Botswana pula</option>
+                    <option value="BYN">BYN — Belarusian ruble</option>
+                    <option value="BZD">BZD — Belize dollar</option>
+                    <option value="CAD">CAD — Canadian dollar</option>
+                    <option value="CDF">CDF — Congolese franc</option>
+                    <option value="CHF">CHF — Swiss franc</option>
+                    <option value="CLP">CLP — Chilean peso</option>
+                    <option value="CNY">CNY — Chinese yuan</option>
+                    <option value="COP">COP — Colombian peso</option>
+                    <option value="CRC">CRC — Costa Rican colón</option>
+                    <option value="CUP">CUP — Cuban peso</option>
+                    <option value="CVE">CVE — Cape Verdean escudo</option>
+                    <option value="CZK">CZK — Czech koruna</option>
+                    <option value="DJF">DJF — Djiboutian franc</option>
+                    <option value="DKK">DKK — Danish krone</option>
+                    <option value="DOP">DOP — Dominican peso</option>
+                    <option value="DZD">DZD — Algerian dinar</option>
+                    <option value="EGP">EGP — Egyptian pound</option>
+                    <option value="ERN">ERN — Eritrean nakfa</option>
+                    <option value="ETB">ETB — Ethiopian birr</option>
+                    <option value="EUR">EUR — Euro</option>
+                    <option value="FJD">FJD — Fijian dollar</option>
+                    <option value="FKP">FKP — Falkland Islands pound</option>
+                    <option value="GBP">GBP — British pound</option>
+                    <option value="GEL">GEL — Georgian lari</option>
+                    <option value="GHS">GHS — Ghanaian cedi</option>
+                    <option value="GIP">GIP — Gibraltar pound</option>
+                    <option value="GMD">GMD — Gambian dalasi</option>
+                    <option value="GNF">GNF — Guinean franc</option>
+                    <option value="GTQ">GTQ — Guatemalan quetzal</option>
+                    <option value="GYD">GYD — Guyanese dollar</option>
+                    <option value="HKD">HKD — Hong Kong dollar</option>
+                    <option value="HNL">HNL — Honduran lempira</option>
+                    <option value="HTG">HTG — Haitian gourde</option>
+                    <option value="HUF">HUF — Hungarian forint</option>
+                    <option value="IDR">IDR — Indonesian rupiah</option>
+                    <option value="ILS">ILS — Israeli new shekel</option>
+                    <option value="INR">INR — Indian rupee</option>
+                    <option value="IQD">IQD — Iraqi dinar</option>
+                    <option value="IRR">IRR — Iranian rial</option>
+                    <option value="ISK">ISK — Icelandic króna</option>
+                    <option value="JMD">JMD — Jamaican dollar</option>
+                    <option value="JOD">JOD — Jordanian dinar</option>
+                    <option value="JPY">JPY — Japanese yen</option>
+                    <option value="KES">KES — Kenyan shilling</option>
+                    <option value="KGS">KGS — Kyrgyzstani som</option>
+                    <option value="KHR">KHR — Cambodian riel</option>
+                    <option value="KMF">KMF — Comorian franc</option>
+                    <option value="KPW">KPW — North Korean won</option>
+                    <option value="KRW">KRW — South Korean won</option>
+                    <option value="KWD">KWD — Kuwaiti dinar</option>
+                    <option value="KYD">KYD — Cayman Islands dollar</option>
+                    <option value="KZT">KZT — Kazakhstani tenge</option>
+                    <option value="LAK">LAK — Lao kip</option>
+                    <option value="LBP">LBP — Lebanese pound</option>
+                    <option value="LKR">LKR — Sri Lankan rupee</option>
+                    <option value="LRD">LRD — Liberian dollar</option>
+                    <option value="LSL">LSL — Lesotho loti</option>
+                    <option value="LYD">LYD — Libyan dinar</option>
+                    <option value="MAD">MAD — Moroccan dirham</option>
+                    <option value="MDL">MDL — Moldovan leu</option>
+                    <option value="MGA">MGA — Malagasy ariary</option>
+                    <option value="MKD">MKD — Macedonian denar</option>
+                    <option value="MMK">MMK — Myanmar kyat</option>
+                    <option value="MNT">MNT — Mongolian tögrög</option>
+                    <option value="MOP">MOP — Macanese pataca</option>
+                    <option value="MRU">MRU — Mauritanian ouguiya</option>
+                    <option value="MUR">MUR — Mauritian rupee</option>
+                    <option value="MVR">MVR — Maldivian rufiyaa</option>
+                    <option value="MWK">MWK — Malawian kwacha</option>
+                    <option value="MXN">MXN — Mexican peso</option>
+                    <option value="MYR">MYR — Malaysian ringgit</option>
+                    <option value="MZN">MZN — Mozambican metical</option>
+                    <option value="NAD">NAD — Namibian dollar</option>
+                    <option value="NGN">NGN — Nigerian naira</option>
+                    <option value="NIO">NIO — Nicaraguan córdoba</option>
+                    <option value="NOK">NOK — Norwegian krone</option>
+                    <option value="NPR">NPR — Nepalese rupee</option>
+                    <option value="NZD">NZD — New Zealand dollar</option>
+                    <option value="OMR">OMR — Omani rial</option>
+                    <option value="PAB">PAB — Panamanian balboa</option>
+                    <option value="PEN">PEN — Peruvian sol</option>
+                    <option value="PGK">PGK — Papua New Guinean kina</option>
+                    <option value="PHP">PHP — Philippine peso</option>
+                    <option value="PKR">PKR — Pakistani rupee</option>
+                    <option value="PLN">PLN — Polish złoty</option>
+                    <option value="PYG">PYG — Paraguayan guaraní</option>
+                    <option value="QAR">QAR — Qatari riyal</option>
+                    <option value="RON">RON — Romanian leu</option>
+                    <option value="RSD">RSD — Serbian dinar</option>
+                    <option value="RUB">RUB — Russian ruble</option>
+                    <option value="RWF">RWF — Rwandan franc</option>
+                    <option value="SAR">SAR — Saudi riyal</option>
+                    <option value="SBD">SBD — Solomon Islands dollar</option>
+                    <option value="SCR">SCR — Seychellois rupee</option>
+                    <option value="SDG">SDG — Sudanese pound</option>
+                    <option value="SEK">SEK — Swedish krona</option>
+                    <option value="SGD">SGD — Singapore dollar</option>
+                    <option value="SHP">SHP — Saint Helena pound</option>
+                    <option value="SLE">SLE — Sierra Leonean leone</option>
+                    <option value="SOS">SOS — Somali shilling</option>
+                    <option value="SRD">SRD — Surinamese dollar</option>
+                    <option value="SSP">SSP — South Sudanese pound</option>
+                    <option value="STN">STN — São Tomé and Príncipe dobra</option>
+                    <option value="SVC">SVC — Salvadoran colón</option>
+                    <option value="SYP">SYP — Syrian pound</option>
+                    <option value="SZL">SZL — Swazi lilangeni</option>
+                    <option value="THB">THB — Thai baht</option>
+                    <option value="TJS">TJS — Tajikistani somoni</option>
+                    <option value="TMT">TMT — Turkmenistani manat</option>
+                    <option value="TND">TND — Tunisian dinar</option>
+                    <option value="TOP">TOP — Tongan paʻanga</option>
+                    <option value="TRY">TRY — Turkish lira</option>
+                    <option value="TTD">TTD — Trinidad and Tobago dollar</option>
+                    <option value="TWD">TWD — New Taiwan dollar</option>
+                    <option value="TZS">TZS — Tanzanian shilling</option>
+                    <option value="UAH">UAH — Ukrainian hryvnia</option>
+                    <option value="UGX">UGX — Ugandan shilling</option>
+                    <option value="USD" selected>USD — US dollar</option>
+                    <option value="UYU">UYU — Uruguayan peso</option>
+                    <option value="UZS">UZS — Uzbekistani soʻm</option>
+                    <option value="VES">VES — Venezuelan bolívar</option>
+                    <option value="VND">VND — Vietnamese đồng</option>
+                    <option value="VUV">VUV — Vanuatu vatu</option>
+                    <option value="WST">WST — Samoan tālā</option>
+                    <option value="XAF">XAF — Central African CFA franc</option>
+                    <option value="XCD">XCD — East Caribbean dollar</option>
+                    <option value="XOF">XOF — West African CFA franc</option>
+                    <option value="XPF">XPF — CFP franc</option>
+                    <option value="YER">YER — Yemeni rial</option>
+                    <option value="ZAR">ZAR — South African rand</option>
+                    <option value="ZMW">ZMW — Zambian kwacha</option>
+                    <option value="ZWL">ZWL — Zimbabwean dollar</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="p-price">Project price</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="p-price" min="0" step="any" placeholder="e.g. 800" inputmode="decimal" required>
+                </div>
+
+                <div class="field">
+                  <label for="p-hours" id="p-hours-label">Estimated hours</label>
+                  <div class="unit-wrap">
+                    <input type="text" inputmode="decimal" data-numeric="1" id="p-hours" min="0.1" step="any" placeholder="e.g. 10" inputmode="decimal" required>
+                    <select id="p-hours-unit" class="unit-select" aria-label="Time unit">
+                      <option value="hours" selected>Hours</option>
+                      <option value="days">Days</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="p-rate" id="p-rate-label">Target hourly rate <span class="opt">(optional)</span></label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="p-rate" min="0" step="any" placeholder="e.g. 60" inputmode="decimal">
+                </div>
+
+                <div class="field">
+                  <label for="p-revisions">Revisions included</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="p-revisions" min="0" step="1" value="2" inputmode="numeric">
+                </div>
+              </div>
+
+              <p class="error" id="setup-error" role="alert" hidden></p>
+              <div class="actions">
+                <button type="submit" class="btn btn-primary" id="setup-save">Save project</button>
+                <button type="button" class="btn btn-ghost" id="setup-cancel" hidden>Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="setup-summary" hidden></div>
+        </section>
+
+        <!-- Add Request -->
+        <section class="card" id="request-section" aria-labelledby="req-title" hidden>
+          <div class="card-head">
+            <h2 id="req-title"><span class="step" aria-hidden="true">2</span> Add Request</h2>
+            <span class="pill pill-muted">Live results as you type</span>
+          </div>
+
+          <form id="request-form" novalidate>
+            <div class="field-grid">
+              <div class="field field-wide">
+                <label for="r-desc">What did the client ask for?</label>
+                <textarea id="r-desc" rows="2" placeholder="e.g. &quot;Can you also add a login page?&quot;" required></textarea>
+              </div>
+
+              <div class="field">
+                <label for="r-type">Request type</label>
+                <select id="r-type">
+                  <option value="new-feature">New feature</option>
+                  <option value="change">Change to agreed work</option>
+                  <option value="extra-revision">Extra revision</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="r-hours" id="r-hours-label">Extra hours</label>
+                <div class="unit-wrap">
+                  <input type="text" inputmode="decimal" data-numeric="1" id="r-hours" min="0.1" step="any" placeholder="e.g. 5" inputmode="decimal" required>
+                  <select id="r-hours-unit" class="unit-select" aria-label="Time unit">
+                    <option value="hours" selected>Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="r-rate" id="r-rate-label">Charge rate /hr</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="r-rate" min="0" step="any" placeholder="e.g. 80" inputmode="decimal">
+                <small class="field-hint" id="r-rate-hint"></small>
+              </div>
+
+              <div class="field">
+                <label for="r-expenses">Extra expenses <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="r-expenses" min="0" step="any" value="0" inputmode="decimal">
+              </div>
+
+              <fieldset class="field field-radio field-wide">
+                <legend>Scope judgement</legend>
+                <label class="radio"><input type="radio" name="r-scope" value="out" id="r-scope-out" checked>
+                  Out of scope <span class="opt">— should be charged</span></label>
+                <label class="radio"><input type="radio" name="r-scope" value="in" id="r-scope-in">
+                  In scope <span class="opt">— absorb it (still tracked)</span></label>
+              </fieldset>
+            </div>
+
+            <div id="results" hidden>
+              <div class="result-grid">
+                <div class="result">
+                  <span class="result-label">Value of this request</span>
+                  <span class="result-value" id="res-value">—</span>
+                </div>
+                <div class="result">
+                  <span class="result-label">Rate if you say yes</span>
+                  <span class="result-value" id="res-proj-rate">—</span>
+                </div>
+                <div class="result">
+                  <span class="result-label">Drop vs. original</span>
+                  <span class="result-value" id="res-drop">—</span>
+                </div>
+                <div class="result">
+                  <span class="result-label">Break-even charge</span>
+                  <span class="result-value" id="res-breakeven">—</span>
+                </div>
+              </div>
+              <p class="killer killer-advice" id="res-advice"></p>
+              <button type="button" class="btn btn-ghost" id="res-msg">Generate change order →</button>
+            </div>
+
+            <p class="error" id="req-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="submit" class="btn btn-primary" id="r-add">Add request</button>
+              <button type="button" class="btn btn-ghost" id="r-cancel" hidden>Cancel editing</button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <!-- ── RIGHT COLUMN ────────────────────────────────────── -->
+      <div class="col col-right">
+
+        <!-- Live Scope Metrics -->
+        <section class="card" id="dashboard" aria-labelledby="dash-title" hidden>
+          <div class="card-head">
+            <h2 id="dash-title"><span class="step" aria-hidden="true">3</span> Live Scope Metrics</h2>
+            <span class="pill pill-accent" id="dash-count"></span>
+          </div>
+
+          <div class="stat-grid">
+            <div class="stat">
+              <span class="stat-label">Original effective rate</span>
+              <span class="stat-value" id="stat-orig-rate">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Current projected rate</span>
+              <span class="stat-value" id="stat-proj-rate">—</span>
+            </div>
+            <div class="stat" id="stat-drop-box">
+              <span class="stat-label">Effective-rate drop</span>
+              <span class="stat-value" id="stat-drop">0%</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Unbilled work</span>
+              <span class="stat-value" id="stat-unbilled">—</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Extra time committed</span>
+              <span class="stat-value" id="stat-extra-hours">0</span>
+            </div>
+          </div>
+
+          <div class="compare-grid">
+            <div class="cmp-card">
+              <h3>Original scope</h3>
+              <dl>
+                <div><dt>Time</dt><dd id="cmp-o-hours">—</dd></div>
+                <div><dt>Price</dt><dd id="cmp-o-price">—</dd></div>
+                <div><dt>Effective rate</dt><dd id="cmp-o-rate">—</dd></div>
+              </dl>
+            </div>
+            <div class="cmp-arrow" aria-hidden="true">→</div>
+            <div class="cmp-card cmp-card-current">
+              <h3>Current estimate</h3>
+              <dl>
+                <div><dt>Time</dt><dd id="cmp-c-hours">—</dd></div>
+                <div><dt>Price</dt><dd id="cmp-c-price">—</dd></div>
+                <div><dt>Effective rate</dt><dd id="cmp-c-rate">—</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <p class="killer" id="cmp-line" role="status"></p>
+        </section>
+
+        <!-- Request History -->
+        <section class="card" id="history-section" aria-labelledby="hist-title" hidden>
+          <div class="card-head">
+            <h2 id="hist-title"><span class="step" aria-hidden="true">4</span> Request History</h2>
+            <span class="pill pill-muted" id="hist-count"></span>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Added time</th>
+                  <th>Value</th>
+                  <th>Status</th>
+                  <th class="th-actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="req-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Change Order Generator -->
+        <section class="card" id="change-order-section" aria-labelledby="gen-title" hidden>
+          <div class="card-head">
+            <h2 id="gen-title"><span class="step" aria-hidden="true">5</span> Change Order Generator</h2>
+            <span class="pill pill-accent">Editable · copy &amp; paste</span>
+          </div>
+
+          <p class="hint">
+            Click <strong>Generate change order</strong> on any request (or in the live
+            results) to build a professional message here. Replace
+            <code>[Client]</code> and <code>[Your name]</code> before sending.
+          </p>
+
+          <textarea id="msg-text" rows="14" spellcheck="true"
+            placeholder="Your change-order message will appear here when you generate one…"></textarea>
+
+          <div class="actions">
+            <button type="button" class="btn btn-primary" id="msg-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy to Clipboard</button>
+            <button type="button" class="btn btn-ghost" id="msg-close">Close</button>
+          </div>
+        </section>
+      </div>
+    </div>
+    </div><!-- /#tool-view -->
+
+    <!-- ══ TOOL: QUANTITY & RATE CALCULATOR ═════════════════════ -->
+    <div id="qr-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="ruler" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Quantity &amp; Rate Calculator</h2>
+            <p class="tagline">Amount = Quantity × Rate — line items in seconds, no spreadsheet needed.</p>
+          </div>
+          <label class="banner-currency" for="qr-currency">Currency
+            <select id="qr-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <section class="card" aria-labelledby="qr-title">
+        <div class="card-head">
+          <h2 id="qr-title">Line Items</h2>
+          <span class="pill pill-muted" id="qr-count">0 items</span>
+        </div>
+
+        <datalist id="qr-units">
+          <option value="No."></option>
+          <option value="Item"></option>
+          <option value="m"></option>
+          <option value="Meter"></option>
+          <option value="Lot"></option>
+          <option value="kg"></option>
+          <option value="L"></option>
+          <option value="set"></option>
+          <option value="each"></option>
+          <option value="hr"></option>
+          <option value="day"></option>
+          <option value="m²"></option>
+          <option value="m³"></option>
+        </datalist>
+
+        <div class="table-wrap qr-wrap">
+          <table class="qr-table">
+            <thead>
+              <tr>
+                <th>Item / description</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th id="qr-rate-th">Rate</th>
+                <th id="qr-amount-th">Amount</th>
+                <th class="th-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="qr-rows"></tbody>
+          </table>
+        </div>
+
+        <div class="qr-total">
+          <span class="qr-total-label">Total</span>
+          <span class="qr-total-value" id="qr-total-value">0</span>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="qr-add-row"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add row</button>
+          <button type="button" class="btn btn-ghost" id="qr-clear">Clear all</button>
+          <button type="button" class="btn btn-ghost" id="qr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export to PDF</button>
+          <span class="tool-free" id="qr-hint">Tip: press Enter on the last row to add the next one.</span>
+        </div>
+      </section>
+    </div><!-- /#qr-view -->
+
+    <!-- ══ TOOL: ENGINEERING QUOTATION & BOQ GENERATOR ═════════ -->
+    <div id="boq-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="doc" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Quotation</h2>
+            <p class="tagline">Client details, itemized BOQ, discount &amp; VAT — and a formal PDF quotation in one click.</p>
+          </div>
+          <label class="banner-currency" for="boq-currency">Currency
+            <select id="boq-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <!-- 1 · Quotation details -->
+      <section class="card" aria-labelledby="boq-meta-title">
+        <div class="card-head">
+          <h2 id="boq-meta-title"><span class="step" aria-hidden="true">1</span> Quotation Details</h2>
+          <span class="pill pill-muted" id="boq-saved-note">Saved locally</span>
+        </div>
+        <form id="boq-meta-form" novalidate>
+          <div class="field-grid">
+            <div class="field">
+              <label for="bq-client">Client name</label>
+              <input type="text" id="bq-client" placeholder="e.g. R. Perera" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="bq-designation">Designation <span class="opt">(optional)</span></label>
+              <input type="text" id="bq-designation" placeholder="e.g. Facilities Manager" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="bq-company">Company name <span class="opt">(optional)</span></label>
+              <input type="text" id="bq-company" placeholder="e.g. Acme Holdings (Pvt) Ltd" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="bq-address">Address <span class="opt">(optional)</span></label>
+              <input type="text" id="bq-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="bq-date">Date</label>
+              <input type="date" id="bq-date">
+            </div>
+            <div class="field">
+              <label for="bq-ref">Quotation ref number</label>
+              <input type="text" id="bq-ref" placeholder="e.g. MES/QTN/2026/001" autocomplete="off">
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- 2 · Itemized BOQ -->
+      <section class="card" aria-labelledby="boq-items-title">
+        <div class="card-head">
+          <h2 id="boq-items-title"><span class="step" aria-hidden="true">2</span> Bill of Quantities</h2>
+          <span class="pill pill-muted" id="boq-count">0 items</span>
+        </div>
+
+        <datalist id="boq-units">
+          <option value="Nr"></option>
+          <option value="Lot"></option>
+          <option value="m"></option>
+          <option value="Item"></option>
+          <option value="Set"></option>
+          <option value="m²"></option>
+          <option value="m³"></option>
+          <option value="kg"></option>
+          <option value="Day"></option>
+        </datalist>
+
+        <div class="table-wrap">
+          <table class="qr-table boq-table">
+            <thead>
+              <tr>
+                <th>Item description</th>
+                <th>Unit</th>
+                <th>Qty</th>
+                <th id="boq-rate-th">Rate (LKR)</th>
+                <th id="boq-amount-th">Amount (LKR)</th>
+                <th class="th-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="boq-rows"></tbody>
+          </table>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="boq-add-row"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
+          <button type="button" class="btn btn-ghost" id="boq-clear">Clear all</button>
+          <span class="tool-free">Tip: press Enter on the last row to add the next one.</span>
+        </div>
+      </section>
+
+      <!-- 3 · Discounts, VAT & live summary -->
+      <section class="card" aria-labelledby="boq-sum-title">
+        <div class="card-head">
+          <h2 id="boq-sum-title"><span class="step" aria-hidden="true">3</span> Discount, VAT &amp; Summary</h2>
+          <span class="pill pill-accent">Live totals</span>
+        </div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="bq-discount">Discount % <span class="opt">(optional)</span></label>
+            <input type="text" inputmode="decimal" data-numeric="1" id="bq-discount" min="0" max="100" step="any" placeholder="e.g. 5" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="bq-vat">VAT % <span class="opt">(optional — e.g. 18)</span></label>
+            <input type="text" inputmode="decimal" data-numeric="1" id="bq-vat" min="0" max="100" step="any" placeholder="e.g. 18" inputmode="decimal">
+          </div>
+        </div>
+
+        <div class="boq-summary" id="boq-summary">
+          <div class="boq-sum-line"><span>Sub total</span><strong id="bq-sub">LKR0.00</strong></div>
+          <div class="boq-sum-line"><span id="bq-disc-label">Discount</span><strong id="bq-disc">− LKR0.00</strong></div>
+          <div class="boq-sum-line" id="bq-net-line"><span>Net (after discount)</span><strong id="bq-net">LKR0.00</strong></div>
+          <div class="boq-sum-line" id="bq-vat-line"><span id="bq-vat-label">VAT</span><strong id="bq-vat-amt">+ LKR0.00</strong></div>
+          <div class="boq-sum-line boq-final"><span>Final total</span><strong id="bq-final">LKR0.00</strong></div>
+        </div>
+
+        <p class="error" id="boq-error" role="alert" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="boq-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Download Client Quotation PDF</button>
+          <button type="button" class="btn btn-ghost" id="boq-reset">Reset quotation</button>
+        </div>
+      </section>
+    </div><!-- /#boq-view -->
+
+    <!-- ══ TOOL: MARGIN & MARKUP PRICING CALCULATOR ═════════ -->
+    <div id="pricing-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="chart" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Margin &amp; Markup Pricing Calculator</h2>
+            <p class="tagline">Calculate profitable selling prices, overhead allocation, and net profit margins instantly.</p>
+          </div>
+          <label class="banner-currency" for="pr-currency">Currency
+            <select id="pr-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="pr-input-title">
+            <div class="card-head">
+              <h2 id="pr-input-title"><span class="step" aria-hidden="true">1</span> Costs &amp; Profit Target</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="pr-cost">Base direct cost</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="pr-cost" min="0" step="any" placeholder="e.g. 1000" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="pr-overhead">Overhead % <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="pr-overhead" min="0" max="1000" step="any" placeholder="e.g. 15" inputmode="decimal">
+                <small class="field-hint">Rent, utilities, software — allocated as a % on top of direct cost.</small>
+              </div>
+            </div>
+
+            <fieldset class="field field-radio field-wide pr-mode-field">
+              <legend>Profit target</legend>
+              <div class="seg-toggle" role="tablist" aria-label="Profit target mode">
+                <button type="button" class="seg-btn active" id="pr-mode-margin" role="tab" aria-selected="true">Margin %</button>
+                <button type="button" class="seg-btn" id="pr-mode-markup" role="tab" aria-selected="false">Markup %</button>
+              </div>
+              <div class="field">
+                <label for="pr-target"><span id="pr-target-label">Profit margin</span> %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="pr-target" min="0" max="99.9" step="any" placeholder="e.g. 30" inputmode="decimal">
+              </div>
+            </fieldset>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="pr-res-title">
+            <div class="card-head">
+              <h2 id="pr-res-title"><span class="step" aria-hidden="true">2</span> Pricing Result</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Selling price</span>
+                <span class="stat-value" id="pr-price">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Net profit</span>
+                <span class="stat-value" id="pr-profit">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Total cost (incl. overhead)</span>
+                <span class="stat-value" id="pr-total-cost">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Overhead allocation</span>
+                <span class="stat-value" id="pr-overhead-amt">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Actual margin</span>
+                <span class="stat-value" id="pr-margin">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Actual markup</span>
+                <span class="stat-value" id="pr-markup">—</span>
+              </div>
+            </div>
+            <p class="hint" id="pr-note">Margin and markup are two views of the same profit: margin is profit ÷ price, markup is profit ÷ cost.</p>
+            <p class="error" id="pr-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="pr-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Pricing Summary</button>
+              <button type="button" class="btn btn-ghost" id="pr-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#pricing-view -->
+
+    <!-- ══ TOOL: IMPORT DUTY & LANDED COST CALCULATOR ═════════ -->
+    <div id="duty-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="globe" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Import Tax &amp; Landed Cost Calculator</h2>
+            <p class="tagline">Duty, PAL, CESS, SSCL and VAT on one screen — know your true landed cost before you order.</p>
+          </div>
+          <label class="banner-currency" for="duty-currency">Currency
+            <select id="duty-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="dt-input-title">
+            <div class="card-head">
+              <h2 id="dt-input-title"><span class="step" aria-hidden="true">1</span> CIF Value &amp; Tax Rates</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="dt-cif">CIF value <span class="opt">(<span id="dt-cif-cur">LKR</span>)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="dt-cif" min="0" step="any" placeholder="e.g. 250000" inputmode="decimal">
+                <small class="field-hint">Cost + Insurance + Freight — the customs value of the shipment.</small>
+              </div>
+              <div class="field">
+                <label for="dt-units">Units in shipment <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="dt-units" min="0" step="any" placeholder="e.g. 10" inputmode="decimal">
+                <small class="field-hint">Used only to show the landed cost per unit.</small>
+              </div>
+            </div>
+            <fieldset class="field field-wide" id="dt-rates-box">
+              <legend>Tax rates (% — each optional)</legend>
+              <div class="field-grid">
+                <div class="field">
+                  <label for="dt-duty">Customs duty %</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="dt-duty" min="0" max="100" step="any" placeholder="e.g. 15" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label for="dt-pal">PAL %</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="dt-pal" min="0" max="100" step="any" placeholder="e.g. 20" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label for="dt-cess">CESS %</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="dt-cess" min="0" max="100" step="any" placeholder="e.g. 1.5" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label for="dt-sscl">SSCL %</label>
+                  <div class="field">
+                  <label for="dt-sscl">SSCL %</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="dt-sscl" min="0" max="100" step="any" placeholder="e.g. 2.5" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label for="dt-vat">VAT %</label>
+                  <input type="text" inputmode="decimal" data-numeric="1" id="dt-vat" min="0" max="100" step="any" value="18" placeholder="e.g. 18" inputmode="decimal">
+                </div>
+              </div>
+            </fieldset>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="dt-res-title">
+            <div class="card-head">
+              <h2 id="dt-res-title"><span class="step" aria-hidden="true">2</span> Landed Cost Breakdown</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Total tax / duty payable</span>
+                <span class="stat-value" id="dt-tax">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Total landed cost</span>
+                <span class="stat-value" id="dt-landed">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Landed cost per unit</span>
+                <span class="stat-value" id="dt-per-unit">—</span>
+              </div>
+            </div>
+            <div class="boq-summary" id="dt-breakdown">
+              <div class="boq-sum-line"><span>CIF value</span><strong id="dt-cif-amt">—</strong></div>
+              <div class="boq-sum-line"><span>Customs duty</span><strong id="dt-duty-amt">—</strong></div>
+            <div class="boq-sum-line"><span>PAL</span><strong id="dt-pal-amt">—</strong></div>
+              <div class="boq-sum-line"><span>CESS</span><strong id="dt-cess-amt">—</strong></div>
+              <div class="boq-sum-line"><span>SSCL</span><strong id="dt-sscl-amt">—</strong></div>
+              <div class="boq-sum-line"><span>VAT</span><strong id="dt-vat-amt">—</strong></div>
+              <div class="boq-sum-line boq-final"><span>Total tax / duty</span><strong id="dt-tax-line">—</strong></div>
+            </div>
+            <p class="hint">Percentages are applied on the CIF value exactly as you enter them — Nexora Engine does not apply any country- or HS-code-specific rules. Verify current rates with your customs agent.</p>
+            <p class="error" id="dt-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="dt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Breakdown</button>
+              <button type="button" class="btn btn-ghost" id="dt-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#duty-view -->
+
+    <!-- ══ TOOL: VARIATION & CHANGE ORDER GENERATOR ═════════ -->
+    <div id="variation-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="list" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Job Site Scope &amp; Contract Variation Builder</h2>
+            <p class="tagline">Price the extra work, show the contract impact, and export a formal variation for approval.</p>
+          </div>
+          <label class="banner-currency" for="var-currency">Currency
+            <select id="var-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="vr-input-title">
+            <div class="card-head">
+              <h2 id="vr-input-title"><span class="step" aria-hidden="true">1</span> Variation Details</h2>
+              <span class="pill pill-muted">Saved locally</span>
+            </div>
+            <div class="field-grid">
+              <div class="field field-wide">
+                <label for="vr-project">Project name</label>
+                <input type="text" id="vr-project" placeholder="e.g. Warehouse Electrical Fit-out — Acme" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="vr-original">Original contract value</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="vr-original" min="0" step="any" placeholder="e.g. 3500000" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="vr-added">Added material / labor cost</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="vr-added" min="0" step="any" placeholder="e.g. 425000" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="vr-days">Time extension (days)</label>
+              <input type="text" inputmode="decimal" data-numeric="1" id="vr-days" min="0" step="1" placeholder="e.g. 10" inputmode="numeric">
+              </div>
+              <div class="field field-wide">
+                <label for="vr-desc">Proposed additional work description</label>
+                <textarea id="vr-desc" rows="3" placeholder="e.g. Additional 40A distribution board, rewiring of the second-floor lighting circuit, and supply &amp; install of 6 industrial sockets." required></textarea>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="vr-res-title">
+            <div class="card-head">
+              <h2 id="vr-res-title"><span class="step" aria-hidden="true">2</span> Contract Impact</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Revised contract value</span>
+                <span class="stat-value" id="vr-revised">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Increase from original</span>
+                <span class="stat-value" id="vr-increase">—</span>
+              </div>
+            </div>
+            <p class="hint" id="vr-note">The variation PDF includes the work description, cost impact, revised value and a time-extension line — ready for client approval.</p>
+            <p class="error" id="vr-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="vr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export Variation PDF</button>
+              <button type="button" class="btn btn-ghost" id="vr-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#variation-view -->
+
+    <!-- ══ TOOL: FREELANCE RATE & OVERHEAD BREAKEVEN ═════════ -->
+    <div id="breakeven-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="scale" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Billable Hourly &amp; Daily Rate Forecaster</h2>
+            <p class="tagline">Set a rate that actually covers your salary, overhead, taxes — and all the hours you don't bill.</p>
+          </div>
+          <label class="banner-currency" for="bk-currency">Currency
+            <select id="bk-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="bk-input-title">
+            <div class="card-head">
+              <h2 id="bk-input-title"><span class="step" aria-hidden="true">1</span> Income, Overhead &amp; Time</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="bk-net">Target annual net income</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="bk-net" min="0" step="any" placeholder="e.g. 4000000" inputmode="decimal">
+                <small class="field-hint">What you want to take home after tax.</small>
+              </div>
+              <div class="field">
+                <label for="bk-overhead">Annual business overhead <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="bk-overhead" min="0" step="any" placeholder="e.g. 600000" inputmode="decimal">
+                <small class="field-hint">Subscriptions, equipment, rent, insurance…</small>
+              </div>
+              <div class="field">
+                <label for="bk-days">Working days / year</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="bk-days" min="1" step="1" placeholder="e.g. 230" inputmode="numeric">
+              </div>
+              <div class="field">
+                <label for="bk-admin">Unbilled admin hours / week</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="bk-admin" min="0" step="any" placeholder="e.g. 6" inputmode="decimal">
+                <small class="field-hint">Invoicing, emails, marketing — time you can't bill.</small>
+              </div>
+              <div class="field">
+                <label for="bk-dayhours">Billable hours / day</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="bk-dayhours" min="1" max="24" step="any" value="8" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="bk-tax">Tax rate % <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="bk-tax" min="0" max="99" step="any" placeholder="e.g. 15" inputmode="decimal">
+                <small class="field-hint">Effective rate on your gross revenue.</small>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="bk-res-title">
+            <div class="card-head">
+              <h2 id="bk-res-title"><span class="step" aria-hidden="true">2</span> Your Minimum Rates</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Minimum required hourly rate</span>
+                <span class="stat-value" id="bk-hourly">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Required daily rate</span>
+                <span class="stat-value" id="bk-daily">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Total billable hours / year</span>
+                <span class="stat-value" id="bk-hours">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Gross revenue needed / year</span>
+                <span class="stat-value" id="bk-gross">—</span>
+              </div>
+            </div>
+            <div class="boq-summary" id="bk-summary">
+              <div class="boq-sum-line"><span>Net income target</span><strong id="bk-net-line">—</strong></div>
+              <div class="boq-sum-line"><span>+ Business overhead</span><strong id="bk-oh-line">—</strong></div>
+              <div class="boq-sum-line"><span>+ Tax allowance</span><strong id="bk-tax-line">—</strong></div>
+              <div class="boq-sum-line"><span>− Unbilled admin time</span><strong id="bk-admin-line">—</strong></div>
+              <div class="boq-sum-line boq-final"><span>= Billable hours you must sell</span><strong id="bk-hours-line">—</strong></div>
+            </div>
+            <p class="hint" id="bk-note">Breakeven = every cost covered, nothing left over. Price above this to make a profit — the summary shows exactly what each hour must carry.</p>
+            <p class="error" id="bk-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="bk-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-ghost" id="bk-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#breakeven-view -->
+
+    <!-- ══ TOOL: CROSS-BORDER FX & FEE ADJUSTER ═══════════════ -->
+    <div id="fx-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="exchange" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">International Payment Gateway &amp; Currency Fee Counter</h2>
+            <p class="tagline">Invoice the exact amount so you still receive your target after gateway and FX fees.</p>
+          </div>
+          <label class="banner-currency" for="fx-currency">Currency
+            <select id="fx-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="fx-input-title">
+            <div class="card-head">
+              <h2 id="fx-input-title"><span class="step" aria-hidden="true">1</span> Payout Target &amp; Platform</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="fx-target">Target payout amount <span class="opt">(what you want to receive)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="fx-target" min="0" step="any" placeholder="e.g. 1000" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="fx-platform">Payment platform</label>
+                <select id="fx-platform">
+                  <option value="stripe">Stripe — 2.9% + fixed fee</option>
+                  <option value="paypal">PayPal — 3.49% + fixed fee</option>
+                  <option value="wise">Wise — 0.5% + fixed fee</option>
+                  <option value="wire">Direct wire — 0% + fixed fee</option>
+                  <option value="custom">Custom rates</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="fx-pct">Percentage fee %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="fx-pct" min="0" max="100" step="any" placeholder="e.g. 2.9" inputmode="decimal">
+                <small class="field-hint" id="fx-pct-hint">Filled by the platform — override freely.</small>
+              </div>
+              <div class="field">
+                <label for="fx-fixed">Fixed fee <span class="opt">(per transaction)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="fx-fixed" min="0" step="any" placeholder="e.g. 0.30" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="fx-markup">FX markup % <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="fx-markup" min="0" max="100" step="any" placeholder="e.g. 2" inputmode="decimal">
+                <small class="field-hint">Extra spread the gateway takes on currency conversion.</small>
+              </div>
+              <div class="field">
+                <label for="fx-pair">Currency route <span class="opt">(informational)</span></label>
+                <div class="unit-wrap">
+                  <select id="fx-from" class="unit-select" aria-label="Sender currency">
+                    <option value="USD" selected>USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="GBP">GBP</option>
+                    <option value="AUD">AUD</option>
+                    <option value="SGD">SGD</option>
+                    <option value="AED">AED</option>
+                  </select>
+                  <span class="fx-arrow" aria-hidden="true">→</span>
+                  <select id="fx-to" class="unit-select" aria-label="Receiving currency">
+                    <option value="LKR" selected>LKR</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="GBP">GBP</option>
+                    <option value="AED">AED</option>
+                    <option value="AUD">AUD</option>
+                  </select>
+                </div>
+                <small class="field-hint">Nexora Engine does not fetch live exchange rates — the FX markup % models the conversion cost.</small>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="fx-res-title">
+            <div class="card-head">
+              <h2 id="fx-res-title"><span class="step" aria-hidden="true">2</span> Fee Loss Breakdown</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Invoice the client</span>
+                <span class="stat-value" id="fx-invoice">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">You receive</span>
+                <span class="stat-value" id="fx-received">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Total fee loss</span>
+                <span class="stat-value" id="fx-fees">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Effective fee load</span>
+                <span class="stat-value" id="fx-eff">—</span>
+              </div>
+            </div>
+            <div class="boq-summary" id="fx-breakdown">
+              <div class="boq-sum-line"><span>Percentage fee</span><strong id="fx-pct-amt">—</strong></div>
+              <div class="boq-sum-line"><span>Fixed fee</span><strong id="fx-fixed-amt">—</strong></div>
+              <div class="boq-sum-line"><span>FX markup</span><strong id="fx-fx-amt">—</strong></div>
+              <div class="boq-sum-line boq-final"><span>Total fees</span><strong id="fx-total-amt">—</strong></div>
+            </div>
+            <p class="hint" id="fx-note">Example: a $1,000 target through Stripe's 2.9% + $0.30 means invoicing $1,030.18 — the fee is charged on the larger amount, so the gross-up compounds.</p>
+            <p class="error" id="fx-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="fx-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Invoice Amount</button>
+              <button type="button" class="btn btn-ghost" id="fx-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#fx-view -->
+
+    <!-- ══ TOOL: ACADEMIC GPA & TARGET GRADE PLANNER ═════════ -->
+    <div id="gpa-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="grad" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">University Grade &amp; Weighted Target Forecaster</h2>
+            <p class="tagline">Know the average you need in your remaining credits — and the score each assignment must carry.</p>
+          </div>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="gpa-input-title">
+            <div class="card-head">
+              <h2 id="gpa-input-title"><span class="step" aria-hidden="true">1</span> Degree Progress</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="gp-current">Current cumulative GPA <span class="opt">(0–4.0)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-current" min="0" max="4" step="any" placeholder="e.g. 3.1" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="gp-done">Credits completed</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-done" min="0" step="any" placeholder="e.g. 90" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="gp-target">Target GPA at graduation</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-target" min="0" max="4" step="any" placeholder="e.g. 3.5" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="gp-remaining">Remaining credits</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-remaining" min="0" step="any" placeholder="e.g. 30" inputmode="decimal">
+              </div>
+            </div>
+          </section>
+
+          <section class="card" aria-labelledby="gpa-course-title">
+            <div class="card-head">
+              <h2 id="gpa-course-title"><span class="step" aria-hidden="true">2</span> Course Assignment Planner</h2>
+              <span class="pill pill-muted">Weight vs score</span>
+            </div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="gp-course-cur">Current course grade %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-course-cur" min="0" max="100" step="any" placeholder="e.g. 72" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="gp-course-target">Target course grade %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-course-target" min="0" max="100" step="any" placeholder="e.g. 75" inputmode="decimal">
+              </div>
+              <div class="field">
+                <label for="gp-course-weight">Remaining graded weight %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="gp-course-weight" min="0" max="100" step="any" placeholder="e.g. 40" inputmode="decimal">
+                <small class="field-hint">e.g. final exam + remaining assignments = 40% of the course.</small>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="gpa-res-title">
+            <div class="card-head">
+              <h2 id="gpa-res-title"><span class="step" aria-hidden="true">3</span> Forecast</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Required average in remaining credits</span>
+                <span class="stat-value" id="gp-required">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Assignment score needed</span>
+                <span class="stat-value" id="gp-needed">—</span>
+              </div>
+            </div>
+            <p class="killer" id="gp-verdict" role="status"></p>
+            <p class="hint" id="gp-note">Required average = the GPA you must hold across every remaining credit to graduate at your target. The assignment score shows what the remaining graded weight must average.</p>
+            <p class="error" id="gp-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="gp-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-ghost" id="gp-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#gpa-view -->
+
+    <!-- ══ TOOL: RETAINER & SLA PRICING ESTIMATOR ═══════════ -->
+    <div id="retainer-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="handshake" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Retainer &amp; SLA Pricing Estimator</h2>
+            <p class="tagline">Price a monthly client retainer with included hours, overhead, margin and SLA surcharge.</p>
+          </div>
+          <label class="banner-currency" for="rt-currency">Currency
+            <select id="rt-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="rt-input-title">
+            <div class="card-head">
+              <h2 id="rt-input-title"><span class="step" aria-hidden="true">1</span> Retainer Setup</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field field-wide">
+                <label for="rt-client">Client / account name <span class="opt">(optional)</span></label>
+                <input type="text" id="rt-client" placeholder="e.g. Acme Holdings — monthly support" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="rt-hours">Included hours / month</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="rt-hours" min="0" step="any" placeholder="e.g. 20" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="rt-hourly">Blended hourly rate</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="rt-hourly" min="0" step="any" placeholder="e.g. 3500" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="rt-overhead">Monthly overhead allocation <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="rt-overhead" min="0" step="any" placeholder="e.g. 15000" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="rt-margin">Target margin %</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="rt-margin" min="0" max="99.9" step="any" placeholder="e.g. 30" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="rt-sla">SLA surcharge % <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="rt-sla" min="0" step="any" placeholder="e.g. 10" autocomplete="off">
+                <small class="field-hint">Faster response guarantees deserve a premium.</small>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="rt-res-title">
+            <div class="card-head">
+              <h2 id="rt-res-title"><span class="step" aria-hidden="true">2</span> Retainer Pricing</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Monthly retainer price</span>
+                <span class="stat-value" id="rt-price">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Net profit / month</span>
+                <span class="stat-value" id="rt-profit">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Monthly cost</span>
+                <span class="stat-value" id="rt-cost">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Effective rate on included hours</span>
+                <span class="stat-value" id="rt-eff-hourly">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Annual contract value</span>
+                <span class="stat-value" id="rt-annual">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Actual margin</span>
+                <span class="stat-value" id="rt-margin-act">—</span>
+              </div>
+            </div>
+            <p class="hint" id="rt-note">Set the monthly included hours and your blended rate to price the retainer.</p>
+            <p class="error" id="rt-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="rt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-ghost" id="rt-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#retainer-view -->
+
+    <!-- ══ TOOL: PROJECT DELAY & DAMAGES IMPACT ═══════════════ -->
+    <div id="delay-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="clock" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Project Delay &amp; Damages Impact Calculator</h2>
+            <p class="tagline">Milestone delay penalties and extended overhead — know the exposure before you sign.</p>
+          </div>
+          <label class="banner-currency" for="dl-currency">Currency
+            <select id="dl-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+          <section class="card" aria-labelledby="dl-input-title">
+            <div class="card-head">
+              <h2 id="dl-input-title"><span class="step" aria-hidden="true">1</span> Contract &amp; Delay</h2>
+              <span class="pill pill-muted">Live as you type</span>
+            </div>
+            <div class="field-grid">
+              <div class="field field-wide">
+                <label for="dl-project">Project / contract name <span class="opt">(optional)</span></label>
+                <input type="text" id="dl-project" placeholder="e.g. Warehouse Fit-out — Phase 2" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="dl-contract">Contract value</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="dl-contract" min="0" step="any" placeholder="e.g. 5000000" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="dl-penalty">Daily penalty % (of contract)</label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="dl-penalty" min="0" step="any" placeholder="e.g. 0.5" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="dl-cap">Penalty cap % <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="dl-cap" min="0" step="any" placeholder="e.g. 10" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="dl-days">Delay duration (days)</label>
+                <input type="text" inputmode="numeric" data-numeric="1" id="dl-days" min="0" step="1" placeholder="e.g. 15" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="dl-overhead">Extended overhead / day <span class="opt">(optional)</span></label>
+                <input type="text" inputmode="decimal" data-numeric="1" id="dl-overhead" min="0" step="any" placeholder="e.g. 25000" autocomplete="off">
+                <small class="field-hint">Site, team and equipment costs that keep running during the delay.</small>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <section class="card" aria-labelledby="dl-res-title">
+            <div class="card-head">
+              <h2 id="dl-res-title"><span class="step" aria-hidden="true">2</span> Damages Exposure</h2>
+              <span class="pill pill-accent">Live</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Total damages exposure</span>
+                <span class="stat-value" id="dl-total">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Delay penalty</span>
+                <span class="stat-value" id="dl-penalty-amt">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Extended overhead</span>
+                <span class="stat-value" id="dl-overhead-line">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Share of contract</span>
+                <span class="stat-value" id="dl-pct">—</span>
+              </div>
+            </div>
+            <div class="boq-summary" id="dl-breakdown">
+              <div class="boq-sum-line"><span>Penalty cap amount</span><strong id="dl-cap-line">—</strong></div>
+            </div>
+            <p class="hint">Penalty accrues daily on the contract value and is capped when a cap % is set. Nexora Engine does not model grace periods or LD clauses — check your contract.</p>
+            <p class="error" id="dl-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="dl-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-ghost" id="dl-reset">Reset</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#delay-view -->
+
+    <!-- ══ VIEW: HISTORY ═══════════════════════════════════════ -->
+    <div id="history-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="history" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">History &amp; Saved Documents</h2>
+            <p class="tagline">Quotes, invoices, delivery notes and calculation snapshots — reload or re-download any of them.</p>
+          </div>
+        </div>
+        <p class="privacy-note">Saved locally · Never uploaded</p>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Saved entries</h2>
+          <button type="button" class="btn btn-ghost btn-sm" id="history-clear" hidden>Clear all</button>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </section>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="history-back">← Back to Tools Dashboard</button>
+      </div>
+    </div><!-- /#history-view -->
+
+    <!-- ══ VIEW: COMPANY & BRAND SETTINGS ═════════════════════ -->
+    <div id="settings-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="briefcase" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Company &amp; Brand Settings</h2>
+            <p class="tagline">Your letterhead, logo, default terms and bank beneficiary details — stamped onto every document the ERP engine generates.</p>
+          </div>
+        </div>
+      </section>
+      <section class="card" aria-labelledby="brand-title">
+        <div class="card-head">
+          <h2 id="brand-title"><span class="step" aria-hidden="true">1</span> Company Brand (letterhead)</h2>
+          <span class="pill pill-muted" id="brand-status">Saved locally</span>
+        </div>
+        <p class="hint">These details top every document the ERP engine generates. They also pre-fill the standalone Quotation and Invoice builders.</p>
+        <div class="brand-grid">
+          <div class="brand-logo-box">
+            <div class="brand-logo-preview" id="brand-logo-preview">
+              <span class="brand-logo-placeholder">Logo</span>
+            </div>
+            <div class="actions actions-col">
+              <label class="btn btn-ghost btn-sm file-label" for="brand-logo-input"><span class="nav-icon" data-icon="image" aria-hidden="true"></span>Upload logo</label>
+              <input type="file" id="brand-logo-input" accept="image/*" hidden>
+              <button type="button" class="btn btn-ghost btn-sm" id="brand-logo-remove" hidden>Remove logo</button>
+            </div>
+          </div>
+          <div class="brand-fields">
+            <div class="form-grid">
+              <div class="field">
+                <label for="brand-name">Company name</label>
+                <input type="text" id="brand-name" placeholder="e.g. METRIX" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="brand-legal">Legal entity name (documents)</label>
+                <input type="text" id="brand-legal" placeholder="e.g. METRIX ENGINEERING SERVICES (PVT) LTD" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="brand-tag">Tagline / sector</label>
+                <input type="text" id="brand-tag" placeholder="e.g. Engineering · Construction · Maintenance" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="brand-address">Business address</label>
+                <input type="text" id="brand-address" placeholder="e.g. 123 Main Street, Colombo 05, Sri Lanka" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="brand-contact">Contact (phone / email)</label>
+                <input type="text" id="brand-contact" placeholder="e.g. +94 77 123 4567 · hello@company.lk" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="brand-phone">Phone (letterhead)</label>
+                <input type="text" id="brand-phone" placeholder="e.g. +94 11 234 5678" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="brand-email">Email (letterhead)</label>
+                <input type="text" id="brand-email" placeholder="e.g. info@company.lk" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="brand-website">Website</label>
+                <input type="text" id="brand-website" placeholder="e.g. www.company.lk" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="brand-tin">Supplier TIN / VAT Reg No</label>
+                <input type="text" id="brand-tin" placeholder="e.g. TIN 114 567 890" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="brand-spec">Specialization tagline</label>
+                <input type="text" id="brand-spec" placeholder="e.g. Specialized in Construction, Designing, Supplying, Installation &amp; Maintenance of Life &amp; Life Safety Systems" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="brand-terms">Default terms &amp; conditions (used on every PDF)</label>
+                <textarea id="brand-terms" rows="5" placeholder="Payment terms, warranty, mobilization, validity…"></textarea>
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" class="btn btn-ghost" id="brand-reset">Reset brand data</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="card" aria-labelledby="brand-bank-title">
+        <div class="card-head">
+          <h2 id="brand-bank-title"><span class="step" aria-hidden="true">2</span> Bank &amp; Beneficiary (invoice footer)</h2>
+          <span class="pill pill-muted">Optional</span>
+        </div>
+        <p class="hint">Shown in the bottom-left block of ERP invoices, pro-formas and quotations — the formal Beneficiary Details box. Leave blank to keep per-document hand-typed bank fields.</p>
+        <div class="form-grid">
+          <div class="field field-wide">
+            <label for="brand-payterms">Payment terms</label>
+            <input type="text" id="brand-payterms" placeholder="e.g. Full payment by TT" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="brand-beneficiary">Beneficiary name</label>
+            <input type="text" id="brand-beneficiary" placeholder="e.g. Metrix Engineering Services (Pvt) Ltd" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="brand-bankbranch">Bank &amp; branch</label>
+            <input type="text" id="brand-bankbranch" placeholder="e.g. Commercial Bank — Ekala Branch" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="brand-swift">SWIFT code</label>
+            <input type="text" id="brand-swift" placeholder="e.g. CCEYLKLX" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="brand-branchcode">Branch code</label>
+            <input type="text" id="brand-branchcode" placeholder="e.g. 7056" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="brand-accountno">Account number</label>
+            <input type="text" id="brand-accountno" placeholder="e.g. 8001234567" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="brand-accountcur">Account currency</label>
+            <input type="text" id="brand-accountcur" placeholder="e.g. LKR / USD" autocomplete="off">
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Per-tool currencies</h2>
+        </div>
+        <p class="hint">Every tool keeps its own currency (LKR, USD, EUR, GBP, AED, AUD, CAD, SGD). Change them right in each tool's header — totals, table headers and PDF exports update instantly. Individual choices are saved per tool.</p>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Your data</h2>
+        </div>
+        <p class="hint">Everything lives in this browser's local storage only. Resetting clears all tool data and the history.</p>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost" id="reset-link-settings">Reset all data</button>
+        </div>
+      </section>
+    </div><!-- /#settings-view -->
+
+    <!-- ══ VIEW: APPEARANCE SETTINGS ═══════════════════════════ -->
+    <div id="appearance-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="palette" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Appearance Settings</h2>
+            <p class="tagline">Light / dark mode, background presets and accent colors — the whole interface, styled your way.</p>
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">1</span> Light / Dark mode</h2>
+        </div>
+        <p class="hint">Switch the whole site between dark and light — your choice is remembered.</p>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost" id="theme-toggle-settings">Toggle theme</button>
+        </div>
+      </section>
+      <section class="card" id="bg-section">
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">2</span> Background &amp; accent colors</h2>
+        </div>
+        <p class="hint">Pick a background preset (or any custom color) and an accent tint for primary buttons and glows. Reset on either strip restores the built-in look.</p>
+        <div class="card" style="background: rgba(10,10,10,0.55); border-color: var(--border); padding: 18px; border-radius: 12px;">
+          <h3 style="margin-bottom: 14px;">Background color</h3>
+          <div class="bg-row" id="bgrow">
+            <div class="bg-presets" id="bgpresets">
+              <button type="button" class="bg-preset" data-bg="#000000" style="background:#000000" aria-label="Pure black"></button>
+              <button type="button" class="bg-preset" data-bg="#0a0f1d" style="background:#0a0f1d; border-color:#1e2d5a" aria-label="Deep obsidian blue"></button>
+              <button type="button" class="bg-preset" data-bg="#111c38" style="background:#111c38; border-color:#1e2d5a" aria-label="Rich navy"></button>
+              <button type="button" class="bg-preset" data-bg="#162347" style="background:#162347; border-color:#1e2d5a" aria-label="Dark blue"></button>
+              <button type="button" class="bg-preset" data-bg="#111b26" style="background:#111b26; border-color:#1e2d5a" aria-label="Seal blue"></button>
+            </div>
+            <input type="color" id="bgpicker" class="bg-picker" value="#000000" aria-label="Custom background color">
+            <button type="button" class="btn btn-ghost btn-sm" id="bgreset">Reset background</button>
+          </div>
+        </div>
+        </section>
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">3</span> Custom accent color</h2>
+        </div>
+        <p class="hint">Tint the primary buttons and accent glows. Pick a preset or fine-tune with the color picker — Reset restores the classic monochrome look.</p>
+        <div class="accent-row">
+          <div class="accent-swatches" id="accent-swatches">
+            <button type="button" class="accent-swatch active" data-accent="default" style="background:#ffffff" aria-label="Default monochrome"></button>
+            <button type="button" class="accent-swatch" data-accent="#22d3ee" style="background:#22d3ee" aria-label="Cyan"></button>
+            <button type="button" class="accent-swatch" data-accent="#10b981" style="background:#10b981" aria-label="Emerald"></button>
+            <button type="button" class="accent-swatch" data-accent="#3b82f6" style="background:#3b82f6" aria-label="Cobalt"></button>
+            <button type="button" class="accent-swatch" data-accent="#a78bfa" style="background:#a78bfa" aria-label="Violet"></button>
+            <button type="button" class="accent-swatch" data-accent="#f59e0b" style="background:#f59e0b" aria-label="Amber"></button>
+            <button type="button" class="accent-swatch" data-accent="#f43f5e" style="background:#f43f5e" aria-label="Rose"></button>
+          </div>
+          <input type="color" id="accent-picker" class="accent-picker" value="#ffffff" aria-label="Custom accent color">
+          <button type="button" class="btn btn-ghost btn-sm" id="accent-reset">Reset accent</button>
+        </div>
+      </section>
+    </div><!-- /#appearance-view -->
+
+    <!-- ══ VIEW: DATA BACKUP & RESTORE ═════════════════════════ -->
+    <div id="backup-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="archive" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Data Backup &amp; Restore</h2>
+            <p class="tagline">Download a snapshot of everything stored in this browser — database, brand kit, saved records and history — and restore it on any device.</p>
+          </div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">1</span> Back up</h2>
+        </div>
+        <p class="hint">Saves one <strong>.json</strong> file with every entry stored locally on this device. Keep it somewhere safe.</p>
+        <p class="hint" id="backup-summary">Reading local storage…</p>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="backup-download">Download backup (.json)</button>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">2</span> Restore</h2>
+        </div>
+        <p class="hint">Choose a backup file to restore. This <strong>overwrites</strong> the data currently held in this browser, then reloads the app.</p>
+        <div class="actions">
+          <input type="file" id="backup-file" accept="application/json,.json" hidden>
+          <button type="button" class="btn btn-ghost" id="backup-restore-btn">Choose backup file…</button>
+        </div>
+      </section>
+    </div><!-- /#backup-view -->
+
+    <!-- ══ PREMIUM PLANS ═══════════════════════════════════ -->
+    <div id="plans-section" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="star" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Premium Plans</h2>
+            <p class="tagline">Lift the 1-credit ceiling and unlock every calculator, document export and database slot at one flat price.</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="plans-grid">
+        <section class="card plan-card" aria-labelledby="plan-monthly-title">
+          <div class="card-head">
+            <h2 id="plan-monthly-title">Monthly Premium</h2>
+          </div>
+          <p class="plan-price"><strong>$12.99</strong><span class="plan-period">/ monthly</span></p>
+          <ul class="plan-list">
+            <li>Unlimited tool usage</li>
+            <li>All tools are accessible</li>
+            <li>Priority document rendering</li>
+            <li>Unlimited item &amp; client database storage</li>
+            <li>Cancel anytime</li>
+          </ul>
+          <div class="actions">
+            <button type="button" class="btn btn-ghost plan-cta" id="plan-monthly-cta" data-plan="Monthly Premium" data-price="$12.99 / monthly">Subscribe Monthly</button>
+          </div>
+        </section>
+
+        <section class="card plan-card plan-card-featured" aria-labelledby="plan-yearly-title">
+          <span class="plan-badge">Save ~20%</span>
+          <div class="card-head">
+            <h2 id="plan-yearly-title">Yearly Premium</h2>
+          </div>
+          <p class="plan-price"><strong>$125</strong><span class="plan-period">/ yearly</span></p>
+          <ul class="plan-list">
+            <li>Unlimited tool usage</li>
+            <li>All tools are accessible</li>
+            <li>Priority document rendering</li>
+            <li>Unlimited item &amp; client database storage</li>
+            <li>2 months free included</li>
+          </ul>
+          <div class="actions">
+            <button type="button" class="btn btn-primary plan-cta" id="plan-yearly-cta" data-plan="Yearly Premium" data-price="$125 / yearly">Subscribe Yearly</button>
+          </div>
+        </section>
+      </div>
+
+      <p class="hint">Checkout is not wired up in this build — the buttons record the plan you picked and confirm it on screen only.</p>
+    </div><!-- /#plans-section -->
+
+    <!-- ══ TOOL: SMART INVOICE & DOCUMENT BUILDER ═══════════ -->
+    <div id="invoice-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="invoice" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Smart Invoice &amp; Document Builder</h2>
+            <p class="tagline">Quotation, Proforma, Commercial/Tax Invoice and Delivery Note — one letterhead-ready document builder.</p>
+          </div>
+          <label class="banner-currency" for="inv-currency">Currency
+            <select id="inv-currency" class="currency-select" aria-label="Currency">
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="LKR">LKR (Rs.)</option>
+              <option value="AED">AED</option>
+              <option value="INR">INR (₹)</option>
+              <option value="CAD">CAD (C$)</option>
+              <option value="AUD">AUD (A$)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="CHF">CHF (Fr.)</option>
+              <option value="SAR">SAR (SR)</option>
+              <option value="MYR">MYR (RM)</option>
+              <option value="ZAR">ZAR (R)</option>
+              <option value="NZD">NZ$ (NZD)</option>
+            </select>
+          </label>
+        </div>
+        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+      </section>
+
+      <div class="dash-layout">
+        <div class="col col-left">
+
+          <!-- Document type + dynamic fields -->
+          <section class="card" aria-labelledby="inv-doc-title">
+            <div class="card-head">
+              <h2 id="inv-doc-title"><span class="step" aria-hidden="true">1</span> Document</h2>
+              <span class="pill pill-muted" id="inv-doc-badge">Quotation</span>
+            </div>
+            <div class="field">
+              <label for="inv-doctype">Document type</label>
+              <select id="inv-doctype">
+                <option value="quotation">Quotation</option>
+                <option value="proforma">Proforma Invoice</option>
+                <option value="commercial">Commercial / Tax Invoice</option>
+                <option value="delivery">Delivery Note</option>
+              </select>
+            </div>
+            <div id="inv-fields" class="field-grid"></div>
+          </section>
+
+          <!-- Business header customizer -->
+          <section class="card" aria-labelledby="inv-company-title">
+            <div class="card-head">
+              <h2 id="inv-company-title"><span class="step" aria-hidden="true">2</span> Your Business (Letterhead)</h2>
+            </div>
+            <div class="field-grid">
+              <div class="field field-wide">
+                <label for="inv-co-name">Company name</label>
+                <input type="text" id="inv-co-name" placeholder="e.g. Metrix Engineering Services" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="inv-co-address">Address</label>
+                <input type="text" id="inv-co-address" placeholder="e.g. No. 12, Industrial Estate Rd, Colombo 04" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="inv-co-contact">Contact</label>
+                <input type="text" id="inv-co-contact" placeholder="e.g. +94 77 123 4567 · metrix@email.com" autocomplete="off">
+              </div>
+              <div class="field field-wide">
+                <label for="inv-co-logo">Logo <span class="opt">(optional)</span></label>
+                <input type="file" id="inv-co-logo" accept="image/*">
+                <small class="field-hint">Upload a logo — it appears on the document letterhead.</small>
+              </div>
+            </div>
+          </section>
+
+          <!-- Line items -->
+          <section class="card" aria-labelledby="inv-items-title">
+            <div class="card-head">
+              <h2 id="inv-items-title"><span class="step" aria-hidden="true">3</span> Line Items</h2>
+              <span class="pill pill-muted" id="inv-count">0 items</span>
+            </div>
+
+            <datalist id="inv-units">
+              <option value="Nr"></option>
+              <option value="Lot"></option>
+              <option value="m"></option>
+              <option value="Item"></option>
+              <option value="Set"></option>
+              <option value="m²"></option>
+              <option value="m³"></option>
+              <option value="kg"></option>
+              <option value="Day"></option>
+            </datalist>
+
+            <div class="table-wrap">
+              <table class="qr-table inv-table" id="inv-table">
+                <thead>
+                  <tr>
+                    <th>Description</th>
+                    <th>Model</th>
+                    <th>Unit</th>
+                    <th>Qty</th>
+                    <th class="inv-rate-col" id="inv-rate-th">Rate</th>
+                    <th class="inv-amt-col" id="inv-amount-th">Amount</th>
+                    <th class="th-actions"></th>
+                  </tr>
+                </thead>
+                <tbody id="inv-rows"></tbody>
+              </table>
+            </div>
+
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="inv-add-row"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
+              <button type="button" class="btn btn-ghost" id="inv-clear">Clear all</button>
+              <span class="tool-free">Tip: press Enter on the last row to add the next one.</span>
+            </div>
+          </section>
+        </div>
+
+        <div class="col col-right">
+          <!-- Totals + export -->
+          <section class="card" aria-labelledby="inv-tot-title">
+            <div class="card-head">
+              <h2 id="inv-tot-title"><span class="step" aria-hidden="true">4</span> Totals &amp; Export</h2>
+              <span class="pill pill-accent" id="inv-tot-badge">Live</span>
+            </div>
+            <div class="boq-summary" id="inv-summary">
+              <div class="boq-sum-line" id="inv-sub-line"><span>Sub total</span><strong id="inv-sub">—</strong></div>
+              <div class="boq-sum-line boq-final"><span>Total</span><strong id="inv-total">—</strong></div>
+            </div>
+            <p class="error" id="inv-error" role="alert" hidden></p>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="inv-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Generate Document PDF</button>
+              <button type="button" class="btn btn-ghost" id="inv-reset">Reset document</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div><!-- /#invoice-view -->
+    </div><!-- /#main-area -->
+  </main>
+
+  <!-- Offscreen printable documents (PDF sources) — kept in DOM so html2pdf can capture them -->
+  <div id="quotation-doc" class="pdf-offscreen" aria-hidden="true"></div>
+  <div id="erp-doc" class="pdf-offscreen" aria-hidden="true"></div>
+  <div id="qr-doc" class="pdf-offscreen" aria-hidden="true"></div>
+  <div id="inv-doc" class="pdf-offscreen" aria-hidden="true"></div>
+  <div id="variation-doc" class="pdf-offscreen" aria-hidden="true"></div>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <span class="brand-mark footer-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M9 14.5 l2.2 2.2 4 -4.4"/></svg></span>
+          <div>
+            <strong>Nexora Engine</strong>
+            <p>Micro-calculators &amp; estimates for businesses, teams, and professionals.</p>
+          </div>
+        </div>
+        <div class="footer-col">
+          <h3>Legal</h3>
+          <button type="button" class="footer-link" data-legal="terms">Terms of Use</button>
+          <button type="button" class="footer-link" data-legal="privacy">Privacy Policy</button>
+        </div>
+      </div>
+      <p class="footer-copy">© 2026 Nexora Engine. All tools run locally in your browser — no accounts, no tracking.</p>
+    </div>
+  </footer>
+
+  <!-- Auth modal (Login / Sign Up) -->
+  <div class="modal-overlay" id="auth-modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <div class="modal-head">
+        <h2 id="auth-modal-title">Welcome back</h2>
+        <button type="button" class="modal-close" id="auth-modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="auth-tabs" role="tablist" aria-label="Choose login or sign up">
+        <button type="button" class="auth-tab active" id="auth-tab-login" role="tab" aria-selected="true">Login</button>
+        <button type="button" class="auth-tab" id="auth-tab-signup" role="tab" aria-selected="false">Sign Up</button>
+      </div>
+      <form id="auth-form" novalidate>
+        <div id="auth-step-1">
+          <div class="auth-field" id="auth-name-field" hidden>
+            <label for="auth-name">Full name</label>
+            <input type="text" id="auth-name" autocomplete="name" placeholder="e.g. Alex Perera">
+          </div>
+          <div class="auth-field">
+            <label for="auth-email">Email</label>
+            <input type="email" id="auth-email" autocomplete="email" placeholder="you@company.com">
+          </div>
+          <div class="auth-field">
+            <label for="auth-pass">Password</label>
+            <input type="password" id="auth-pass" autocomplete="current-password" placeholder="Minimum 6 characters">
+          </div>
+          <p class="auth-error" id="auth-error" hidden></p>
+          <button type="submit" class="btn btn-primary auth-submit" id="auth-submit">Login</button>
+        </div>
+      </form>
+
+      <!-- Step 2 of Sign Up: Email OTP verification -->
+      <form id="otp-form" novalidate hidden>
+        <p class="otp-sub">We sent a 6-digit verification code to <strong id="otp-email">you@company.com</strong>.</p>
+        <div class="auth-field">
+          <label for="otp-code">6-digit verification code</label>
+          <input type="text" id="otp-code" class="otp-input" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="6" placeholder="••••••" aria-describedby="otp-help otp-timer">
+          <p class="otp-help" id="otp-help">Check your inbox (or dev console during local testing) for your 6-digit verification code.</p>
+        </div>
+        <p class="otp-timer timer-live" id="otp-timer">Code expires in: 02:00</p>
+        <p class="auth-error" id="otp-error" hidden></p>
+        <button type="submit" class="btn btn-primary auth-submit" id="otp-verify">Verify &amp; Create Account</button>
+        <button type="button" class="btn btn-ghost auth-submit otp-resend" id="otp-resend">Resend Code</button>
+      </form>
+
+      <p class="auth-note">Accounts are stored locally in this browser only — each account keeps its own projects, documents, and database.</p>
+    </div>
+  </div>
+
+  <!-- Access / AI-credit gate modal (Authentication Required · AI Credit Limit Reached) -->
+  <div class="modal-overlay" id="gate-modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+      <div class="modal-head">
+        <h2 id="gate-title">Authentication Required</h2>
+        <button type="button" class="modal-close" id="gate-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <p class="gate-msg" id="gate-msg">Please Login or Sign Up to access Nexora Engine AI utilities.</p>
+      <div class="actions gate-actions">
+        <button type="button" class="btn btn-ghost" id="gate-login">Login</button>
+        <button type="button" class="btn btn-primary" id="gate-signup">Sign Up</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-time onboarding modal (How to use) -->
+  <div class="modal-overlay" id="onboarding-modal" hidden>
+    <div class="onboard-card" role="dialog" aria-modal="true" aria-labelledby="onboard-title">
+      <div class="modal-head">
+        <h2 id="onboard-title">How to use</h2>
+        <button type="button" class="modal-close" id="onboard-close" aria-label="Close onboarding">&times;</button>
+      </div>
+      <div class="onboard-steps" id="onboard-steps">
+        <div class="onboard-step" data-step>
+          <h3 class="onboard-step-title">1. Item &amp; Client Database</h3>
+          <p class="onboard-step-body">Save your recurring items, SKUs, hourly rates, and client contact details here. Once stored, typing a SKU or Client Name anywhere in Nexora Engine will auto-complete descriptions, prices, and billing information instantly.</p>
+        </div>
+        <div class="onboard-step" data-step>
+          <h3 class="onboard-step-title">2. Company &amp; Brand Settings</h3>
+          <p class="onboard-step-body">Upload your company logo, set default payment terms, and enter your bank beneficiary details. This information automatically stamps onto every generated invoice, estimate, and PDF header so your documents look client-ready.</p>
+        </div>
+        <div class="onboard-step" data-step>
+          <h3 class="onboard-step-title">3. Master ERP Engine</h3>
+          <p class="onboard-step-body">Your main command center for complex operations. Input primary keys (SKUs) to auto-populate multi-item rows, calculate taxes, apply scope change orders, and export signed PDF documents or CSV/Excel records in seconds.</p>
+        </div>
+        <div class="onboard-step" data-step>
+          <h3 class="onboard-step-title">4. Calculators &amp; Utilities</h3>
+          <p class="onboard-step-body">Access 11 specialized standalone tools—like Scope Guard, Import Tax, Margin, and FX Fee calculators. Run quick calculations on the fly while automatically saving every result to your History log.</p>
+        </div>
+      </div>
+      <div class="onboard-foot">
+        <span class="onboard-count" id="onboard-count">Step 1 of 4</span>
+        <div class="onboard-dots" id="onboard-dots" aria-hidden="true"></div>
+        <div class="onboard-nav">
+          <button type="button" class="btn btn-ghost btn-sm" id="onboard-back">Previous</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="onboard-skip">Skip</button>
+          <button type="button" class="btn btn-primary btn-sm" id="onboard-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ITEM DATABASE DRAWER MODAL ═════════════════════════════ -->
+  <div class="modal-overlay" id="db-items-drawer" hidden>
+    <div class="drawer-card" role="dialog" aria-modal="true" aria-labelledby="db-items-drawer-title">
+      <div class="modal-head">
+        <h2 id="db-items-drawer-title">Master Item Database</h2>
+        <button type="button" class="modal-close" id="db-items-drawer-close" aria-label="Close item database">&times;</button>
+      </div>
+      <div class="drawer-search">
+        <input type="text" id="db-items-search" placeholder="Filter by SKU or item name&hellip;" autocomplete="off">
+      </div>
+      <div class="drawer-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Item name &amp; description</th>
+              <th>Unit</th>
+              <th class="text-right">Default rate</th>
+              <th class="w70">Action</th>
+            </tr>
+          </thead>
+          <tbody id="db-items-drawer-rows"></tbody>
+        </table>
+        <div class="drawer-empty" id="db-items-drawer-empty" hidden>No items match the current filter.</div>
+      </div>
+      <div class="drawer-foot">
+        <span class="drawer-count" id="db-items-drawer-count"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="db-items-drawer-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ CLIENT DATABASE DRAWER MODAL ═══════════════════════════ -->
+  <div class="modal-overlay" id="db-clients-drawer" hidden>
+    <div class="drawer-card" role="dialog" aria-modal="true" aria-labelledby="db-clients-drawer-title">
+      <div class="modal-head">
+        <h2 id="db-clients-drawer-title">Client Database</h2>
+        <button type="button" class="modal-close" id="db-clients-drawer-close" aria-label="Close client database">&times;</button>
+      </div>
+      <div class="drawer-search">
+        <input type="text" id="db-clients-search" placeholder="Filter by client or project name&hellip;" autocomplete="off">
+      </div>
+      <div class="drawer-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Client / project</th>
+              <th>Address</th>
+              <th>Contact person</th>
+              <th>TIN / Reg no</th>
+              <th>PO no</th>
+              <th class="w70">Action</th>
+            </tr>
+          </thead>
+          <tbody id="db-clients-drawer-rows"></tbody>
+        </table>
+        <div class="drawer-empty" id="db-clients-drawer-empty" hidden>No clients match the current filter.</div>
+      </div>
+      <div class="drawer-foot">
+        <span class="drawer-count" id="db-clients-drawer-count"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="db-clients-drawer-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Legal notice modal (Terms / Privacy) -->
+  <div class="modal-overlay" id="legal-modal" hidden>
+    <div class="card modal-card" role="dialog" aria-modal="true" aria-labelledby="legal-modal-title">
+      <h2 id="legal-modal-title">Terms of Use</h2>
+      <p id="legal-modal-text"></p>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="legal-modal-close">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="js/calculations.js"></script>
+  <script src="js/app.js"></script><!-- app.js r7: client/project field standardization -->
+</body>
+</html>
