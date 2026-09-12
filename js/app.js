@@ -319,24 +319,21 @@
       if (Date.now() > window.otpExpiry) stopOtpTimer();
     }, 1000);
   }
-  /* Email delivery hook. Nothing is mailed yet: the dev build writes the
-     code to the console so a local sign-up can be completed, and the
-     production call is staged (commented) against the backend endpoint.
-     Any failure is swallowed — a missing mail service must never block the
-     verification view the user is already looking at. */
-  async function sendVerificationEmail(email, otp) {
-    // Console log backup for dev mode
-    console.log(`[DEV MODE] OTP for ${email}: ${otp}`);
-
-    // Production API Hook Setup
-    /*
-    await fetch('/api/auth/send-otp', {
+ async function sendVerificationEmail(email, otp) {
+  try {
+    const res = await fetch('/api/send-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, otp })
+      body: JSON.stringify({ email, code: otp }),
     });
-    */
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to send email');
+    console.log('Verification email dispatched:', data);
+  } catch (err) {
+    console.error('Email dispatch error:', err);
+    showOtpError(err.message);
   }
+}
   // Swap the modal between the registration form and the verification view.
   function showAuthStep(step) {
     const isOtp = step === 'otp';
@@ -3682,24 +3679,6 @@
     return parseContactPair(brand.contact).email;
   }
 
-  /* The supplier letterhead as printed in the master template.
-     Extracted BYTE-FOR-BYTE from the master PDF's own embedded image XObject
-     (a 4167x368 DeviceRGB band plus its DeviceGray soft mask, i.e. ~494 DPI
-     across the 607pt page box) — never redrawn, resampled, re-proportioned or
-     regenerated, so the logo's artwork, size, position and surrounding
-     whitespace are exactly the master's. It is the DEFAULT document header;
-     a letterhead or logo uploaded in Company & Brand Settings still wins.
-     Re-extract it with:
-       powershell -File .freebuff/extract-letterhead.ps1 \
-         -Path <master.pdf> -Out "<repo>\assets\letterhead-metrix.png" */
-  const MASTER_LETTERHEAD = 'assets/letterhead-metrix.png';
-  function masterLetterheadUrl() {
-    // Absolute, so the same href resolves in the print frame (whose document
-    // is about:blank) as it does on screen and under file://.
-    try { return new URL(MASTER_LETTERHEAD, window.location.href).href; }
-    catch (e) { return MASTER_LETTERHEAD; }
-  }
-
   // Either brand bank field set → the ERP/invoice documents get a formal
   // Beneficiary Details block instead of per-mode hand-typed bank fields.
   function brandHasBank() {
@@ -5340,9 +5319,10 @@
     pageW: 612, pageH: 792,
     margin: 46.08, contentW: 519.84,
     bannerH: 54.05, frameGap: 0.94,   // full-bleed letterhead band + gap
-    // master's letterhead image box (PDF cm operator), page coords
-    // Master's letterhead image box, verbatim from the PDF's cm operator
-    // (607.208 0 0 52.7361 2.39618 735.32 — y from the page top = 3.944).
+    // The master's full-width letterhead image box, verbatim from the PDF's
+    // cm operator (607.208 0 0 52.7361 2.39618 735.32 — y from the page top
+    // = 3.944). Used only if the supplier uploads their OWN full-width
+    // letterhead; the region is fixed by the master and never recomputed.
     banner: { x: 2.39618, y: 3.944, w: 607.208, h: 52.7361 },
     titleBandH: 62.27, titleSize: 23.5, titlePadB: 6.36,
     bandH: 19.2,                      // Date-of-Invoice band / Additional info
@@ -5384,13 +5364,14 @@
       nameM: -1.13, nameH: 16.74, nameSize: 15.5,
       addrM: -0.53, conM: 2.68, ruleM: 3.76, ruleH: 1.17, tagM: 1.90,
       lineH: 9.8, smallSize: 8.2, tagSize: 6.7,
-      // Two-cell header: logo hugs the left (the master's own 27.9pt logo
-      // inset), details run to the right content margin. The logo is
-      // CONTAINED in a 150x55px box (see generatePrintHTML) rather than given
-      // a fixed height, so an odd-shaped upload scales instead of distorting.
-      logoX: 27.9, logoPadTop: 3,
-      logoMaxW: 150, logoMaxH: 55,
-      detailsW: '75%', logoW: '25%'
+      // LOGO REGION — a FIXED placeholder, measured from the master's own
+      // letterhead raster: the sample logo's ink box is px 190-642 x 58-254
+      // of that 4167x368 image, which covers 607.208 x 52.7361pt at page
+      // origin 2.39618 / 3.944. That converts to 66.01 x 28.23pt at
+      // 30.08 / 12.26. The master defines this REGION, not the logo: a
+      // supplied logo is contained and centred inside it (see logoBox) and
+      // can never change the region, its position, or the header height.
+      logoArea: { x: 30.08, y: 12.26, w: 66.01, h: 28.23 }
     }
   };
 
@@ -5426,52 +5407,57 @@
        holding the supplier's logo (left) and their own name / address /
        contact / tagline block on the master's measured baselines. */
     const H = MXPT.hdr;
-    /* Shared line builder for the lines that follow a stack (the company
-       name/address/contact live inside their own cell now, so each carries
-       its own alignment). */
+    /* Shared line builder for the lines that follow the stack. */
     const hdrLine = function (marginTop, text, extra) {
       return '<div style="margin-top:' + marginTop + 'pt;line-height:' + H.lineH +
         'pt;box-sizing:border-box;overflow-wrap:anywhere;' + extra + '">' + text + '</div>';
     };
-    /* Two-cell company header. Left cell (22%): the logo, inset by the
-       master's own 27.9pt and CONTAINED in a 22% x 140x48px box so it scales
-       with its own aspect ratio instead of being pinned to a fixed height
-       (the old `height: 28.93pt` rendered ~39px tall, and a wide logo could
-       run straight into the company name). Right cell (78%): company name,
-       registered address and contact, right-aligned so the block ends flush
-       on the right content margin (page width minus the 46.08pt margin).
-       Both cells are `vertical-align: top`, so the logo's top edge sits level
-       with the top of the company name. */
+    /* Company name / registered address / contact.
+       Vertical offsets are the master's measured baselines. HORIZONTALLY the
+       master CENTRES all three on the page — its own ink centres are 306.42,
+       306.49 and 306.27 against a page centre of 306 — so the block is
+       full-width and `text-align: center`. Right-aligning it, or boxing it
+       into a 75% column, moves it off the master's position (a 75% column
+       would centre it at 0.625 x page width, not 0.5). */
     const detailsBlock =
       '<div style="margin-top:' + H.nameM + 'pt;min-height:' + H.nameH + 'pt;line-height:' + H.nameH +
-        'pt;text-align:right;font-family:\'Times New Roman\', Times, serif;font-weight:700;font-size:' + H.nameSize +
+        'pt;text-align:center;font-family:\'Times New Roman\', Times, serif;font-weight:700;font-size:' + H.nameSize +
         'pt;color:' + MXPT.blue + ';box-sizing:border-box;overflow-wrap:anywhere;">' + supplierName + '</div>' +
-      hdrLine(H.addrM, (supplierAddress ? 'Reg. Address: ' + supplierAddress : ''), 'text-align:right;font-size:' + H.smallSize + 'pt;color:#000;') +
-      hdrLine(H.conM, supplierContact, 'text-align:right;font-size:' + H.smallSize + 'pt;color:#000;');
-    // Only used for the COMPOSED header (supplier's own uploaded logo).
+      hdrLine(H.addrM, (supplierAddress ? 'Reg. Address: ' + supplierAddress : ''), 'text-align:center;font-size:' + H.smallSize + 'pt;color:#000;') +
+      hdrLine(H.conM, supplierContact, 'text-align:center;font-size:' + H.smallSize + 'pt;color:#000;');
+    /* LOGO PLACEHOLDER — the logo REGION is fixed by the master; only the
+       logo inside it changes. The master's own logo is a SAMPLE and is never
+       copied into a document, so with nothing uploaded the region stays
+       empty. A supplied logo is filled into the region with `object-fit:
+       contain`, which scales it proportionally (aspect ratio preserved, never
+       stretched or squashed) and `object-position: center` centres it, at
+       whatever size fits — so a differently-shaped logo simply leaves more
+       whitespace rather than changing the region.
+       The region is ABSOLUTELY positioned, so no logo can ever grow, shrink,
+       push, or reposition the header, the company name, the divider or any
+       other element: it is out of flow by construction. */
+    /* The logo is sized by its own intrinsic ratio under `max-width` and
+       `max-height` — the browser scales it uniformly to the largest size that
+       fits BOTH, so the aspect ratio cannot change and it can never exceed
+       the region. (`object-fit: contain` inside a 100%-sized box would work
+       too, but there the element box always measures as the region and the
+       fitted artwork is invisible to measurement.) The flex box centres it on
+       both axes, and `overflow: hidden` is a hard guarantee that nothing can
+       escape the region even under a rounding difference. */
     const logoTag = (data.logoUrl && !data.bannerUrl)
-      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="width:auto;max-width:' + H.logoMaxW +
-        'px;height:auto;max-height:' + H.logoMaxH + 'px;object-fit:contain;display:block;">'
+      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain;">'
       : '';
-    const companyTable =
-      '<table style="width:' + MXPT.pageW + 'pt;max-width:100%;border-collapse:collapse;table-layout:fixed;box-sizing:border-box;">' +
-        '<tr>' +
-          '<td style="vertical-align:top;width:' + H.logoW + ';padding:' + H.logoPadTop + 'pt 0 0 ' + H.logoX +
-            'pt;box-sizing:border-box;overflow-wrap:anywhere;">' + logoTag + '</td>' +
-          /* Explicit FOUR-SIDE padding on both cells: a table cell carries a
-             1px UA default on every side, and the stray 1px top/bottom would
-             grow the row by 1.5pt and push the whole frame (and everything
-             below it) off the master's measured 54.99pt top. */
-          '<td style="vertical-align:top;width:' + H.detailsW + ';padding:0 ' + MXPT.margin +
-            'pt 0 0;box-sizing:border-box;overflow-wrap:anywhere;">' + detailsBlock + '</td>' +
-        '</tr>' +
-      '</table>';
-    /* The rule and the tagline stay FULL WIDTH below the two cells (that is
-       how the master draws them), so a long tagline keeps spanning the page
-       instead of wrapping inside the 78% column. */
+    const logoBox = data.bannerUrl ? '' :
+      '<div style="position:absolute;left:' + H.logoArea.x + 'pt;top:' + H.logoArea.y + 'pt;width:' + H.logoArea.w +
+        'pt;height:' + H.logoArea.h +
+        'pt;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;">' + logoTag + '</div>';
+    /* The rule and the tagline stay FULL WIDTH below the block (that is how
+       the master draws them), so a long tagline keeps spanning the page
+       instead of wrapping inside a column. */
     const textHeader =
       '<div style="display:flow-root;min-height:' + MXPT.bannerH + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
-      companyTable +
+      logoBox +
+      detailsBlock +
       '<div style="margin-top:' + H.ruleM + 'pt;height:' + H.ruleH + 'pt;background:#000;"></div>' +
       hdrLine(H.tagM, tagline, 'text-align:center;font-style:italic;font-size:' + H.tagSize + 'pt;color:' + MXPT.blue + ';') +
       '</div>';
@@ -5993,12 +5979,12 @@
     pdfPreviewHtml =
       '<div class="quo-doc mx-doc">' +
         generatePrintHTML({
-          /* Header artwork, in precedence order: a full-width letterhead the
-             supplier uploaded, then their own uploaded logo (which composes
-             the header from the brand name/address/contact text), and failing
-             both, the master template's locked letterhead image. Never more
-             than one of the three, so nothing is drawn twice. */
-          bannerUrl: brand.banner || (brand.logo ? '' : masterLetterheadUrl()),
+          /* Only the supplier's OWN artwork is ever drawn: an uploaded
+             full-width letterhead replaces the header, otherwise their logo
+             fills the master's fixed logo region and the header text is
+             composed from the brand. The master template's own logo and
+             letterhead are SAMPLES — they are never copied into a document. */
+          bannerUrl: brand.banner || '',
           logoUrl: brand.logo || '',
           supplierName: esc(mxLegalName()),
           supplierAddress: esc(brand.address || ''),
