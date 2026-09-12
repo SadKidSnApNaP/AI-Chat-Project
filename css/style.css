@@ -53,6 +53,10 @@
   --glow: 0 0 22px rgba(255, 255, 255, 0.16);
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);   /* springy hover curve */
+
+  /* Fixed sidebar rail width — the main column reserves exactly this much
+     space, so the collapsed/expanded transition has a single source of truth. */
+  --sidebar-w: 270px;
 }
 
 * { box-sizing: border-box; }
@@ -137,7 +141,8 @@ body::before {
 /* ── Sidebar + main layout ───────────────────────────────── */
 main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0; }
 .sidebar {
-  flex: 0 0 240px;
+  flex: 0 0 var(--sidebar-w);
+  width: var(--sidebar-w);
   position: fixed;
   left: 0;
   top: 0;
@@ -225,6 +230,9 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 }
 .sidebar-toggle:hover { color: var(--text-strong); border-color: var(--border-strong); }
 .sidebar-close { display: none; }
+/* Collapsed-rail handle: appears only while the desktop sidebar is hidden,
+   so there is always a way to bring the navigation back. */
+.sidebar-reopen { display: none; }
 /* Sidebar footer: Home / theme / auth — the old top navbar's controls */
 .sidebar-foot {
   display: flex;
@@ -318,9 +326,72 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 .menu-btn:hover { color: var(--text-strong); border-color: var(--border-strong); }
 .main-area { flex: 1 1 auto; min-width: 0; padding: 4px 24px 40px 24px; }
 
+/* Desktop: the fixed rail reserves its own column, and the main column
+   slides across to fill the freed space when the rail is collapsed. Both
+   the padding and the max-width animate, so the content stays optically
+   centred in whichever space is left rather than snapping to a new spot. */
 @media (min-width: 1025px) {
-  body.sidebar-collapsed .sidebar { display: none; }
-  body.sidebar-collapsed .main-area { padding-left: 0; }
+  .sidebar {
+    transition: transform 0.34s var(--ease), opacity 0.34s var(--ease),
+      border-color 0.34s var(--ease);
+  }
+  .sidebar.collapsed,
+  body.sidebar-collapsed .sidebar {
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+    border-right-color: transparent;
+  }
+  main.container {
+    max-width: calc(1240px + var(--sidebar-w));
+    padding-left: var(--sidebar-w);
+    transition: padding-left 0.34s var(--ease), max-width 0.34s var(--ease);
+  }
+  body.sidebar-collapsed main.container {
+    max-width: 1240px;
+    padding-left: 20px;
+  }
+  body.sidebar-collapsed .sidebar-reopen {
+    display: inline-flex;
+    position: fixed;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    z-index: 41;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 78px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: none;
+    border-radius: 0 10px 10px 0;
+    background: rgba(22, 28, 45, 0.72);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    color: #8b949e;
+    cursor: pointer;
+    transition: color 0.25s var(--ease), box-shadow 0.25s var(--ease),
+      background 0.25s var(--ease);
+  }
+  body.sidebar-collapsed .sidebar-reopen:hover {
+    color: #ffffff;
+    background: rgba(35, 45, 75, 0.85);
+    box-shadow: 0 0 22px rgba(99, 102, 241, 0.3);
+  }
+  body.sidebar-collapsed .sidebar-reopen:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.4);
+  }
+  body.sidebar-collapsed .sidebar-reopen .nav-icon { width: 18px; height: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  main.container,
+  body.sidebar-collapsed .sidebar-reopen {
+    transition: none;
+  }
 }
 
 @media (max-width: 1024px) {

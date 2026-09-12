@@ -703,17 +703,68 @@
     if (bp) bp.value = savedBg || '#000000';
   }
 
-  /* ── Sidebar (collapsible; overlay under 1024px) ── */
+  /* ── Sidebar (collapsible rail on desktop; overlay drawer under 1025px) ──
+     Two states, two mechanisms: on desktop the rail is taken out of the way
+     with `sidebar-collapsed` (the main column animates across to fill the
+     gap); under 1025px it is an off-canvas drawer driven by `sidebar-open`.
+     The collapsed/expanded choice is remembered across reloads. */
+  const SIDEBAR_KEY = 'cm-sidebar-v1';
+
+  function isDesktopNav() {
+    return !!(window.matchMedia && window.matchMedia('(min-width: 1025px)').matches);
+  }
+
+  /* Paints everything that depends on the collapsed state: the body class
+     (which drives the CSS), the rail's own `.collapsed` class, the toggle's
+     label + aria state, and `inert` so a hidden rail cannot take focus. */
+  function syncSidebarState() {
+    const desktop = isDesktopNav();
+    const collapsed = desktop && document.body.classList.contains('sidebar-collapsed');
+    const sb = $('sidebar');
+    if (sb) {
+      sb.classList.toggle('collapsed', collapsed);
+      if ('inert' in sb) sb.inert = collapsed;
+      if (collapsed) sb.setAttribute('aria-hidden', 'true');
+      else sb.removeAttribute('aria-hidden');
+    }
+    const toggle = $('sidebar-collapse');
+    if (toggle) toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    const label = $('sidebar-collapse-label');
+    if (label) {
+      label.textContent = desktop
+        ? (collapsed ? 'Expand menu' : 'Collapse menu')
+        : 'Close menu';
+    }
+    const reopen = $('sidebar-reopen');
+    if (reopen) reopen.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
+  }
+
   function toggleSidebar() {
-    if (window.matchMedia && window.matchMedia('(min-width: 1025px)').matches) {
-      document.body.classList.toggle('sidebar-collapsed');
+    if (isDesktopNav()) {
+      const next = !document.body.classList.contains('sidebar-collapsed');
+      document.body.classList.toggle('sidebar-collapsed', next);
+      try { localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0'); } catch (e) { /* ignore */ }
     } else {
       document.body.classList.toggle('sidebar-open');
     }
+    syncSidebarState();
   }
 
   function closeSidebar() {
     document.body.classList.remove('sidebar-open');
+  }
+
+  /* Restore the remembered rail state and keep it honest across resizes
+     (a rail collapsed on desktop must not leave the drawer inert on mobile). */
+  function initSidebarState() {
+    let saved = '';
+    try { saved = localStorage.getItem(SIDEBAR_KEY) || ''; } catch (e) { /* ignore */ }
+    document.body.classList.toggle('sidebar-collapsed', saved === '1');
+    syncSidebarState();
+    window.addEventListener('resize', function () {
+      if (isDesktopNav()) closeSidebar();
+      syncSidebarState();
+    });
   }
 
   /* ── Comma formatting for numeric inputs (display only) ── */
@@ -3761,6 +3812,7 @@
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.3 a2.8 2.8 0 1 1 3.9 2.9 c-0.8 0.4 -1.2 0.9 -1.2 1.9"/><circle cx="12" cy="17.3" r="0.6" fill="currentColor" stroke="none"/>',
     menu: '<path d="M4 6.5 h16 M4 12 h16 M4 17.5 h16"/>',
     close: '<path d="M6 6 l12 12 M18 6 l-12 12"/>',
+    'chevron-right': '<path d="M9.5 5.5 L16 12 L9.5 18.5"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15 H4.5 A1.5 1.5 0 0 1 3 13.5 v-9 A1.5 1.5 0 0 1 4.5 3 h9 A1.5 1.5 0 0 1 15 4.5 V5"/>',
     pdf: '<path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M8.5 14.2 h1.4 a1.2 1.2 0 0 1 0 2.4 h-1.4 v-4.7 M13 16.6 v-4.7 h1.3 a1.7 1.7 0 0 1 1.7 1.7 v1.3 a1.7 1.7 0 0 1 -1.7 1.7 Z"/>',
     sheet: '<rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M4 9 h16 M4 14.5 h16 M9.3 9 v11.5 M14.6 9 v11.5"/>',
@@ -5361,7 +5413,13 @@
        rather than being clipped (margins chosen to land on the exact same
        page offsets the master's banner uses). */
     hdr: {
-      nameM: -1.13, nameH: 16.74, nameSize: 15.5,
+      /* nameM carries the whole block's offset. Measured against the master's
+         own letterhead raster (the divider is font-free evidence): the
+         divider sits at page y 44.07 and the block's cap tops at 5.09 /
+         19.56 / 31.60. Before this offset the block sat ~3pt high — the
+         divider landed at 41.10. A single +2.97 here lands the divider on
+         44.07 exactly and the three cap tops within 0.45pt. */
+      nameM: 1.84, nameH: 16.74, nameSize: 15.5,
       addrM: -0.53, conM: 2.68, ruleM: 3.76, ruleH: 1.17, tagM: 1.90,
       lineH: 9.8, smallSize: 8.2, tagSize: 6.7,
       // LOGO REGION — a FIXED placeholder, measured from the master's own
@@ -5436,26 +5494,35 @@
        The region is ABSOLUTELY positioned, so no logo can ever grow, shrink,
        push, or reposition the header, the company name, the divider or any
        other element: it is out of flow by construction. */
-    /* The logo is sized by its own intrinsic ratio under `max-width` and
-       `max-height` — the browser scales it uniformly to the largest size that
-       fits BOTH, so the aspect ratio cannot change and it can never exceed
-       the region. (`object-fit: contain` inside a 100%-sized box would work
-       too, but there the element box always measures as the region and the
-       fitted artwork is invisible to measurement.) The flex box centres it on
-       both axes, and `overflow: hidden` is a hard guarantee that nothing can
-       escape the region even under a rounding difference. */
+    /* The supplied logo is CONTAIN-fitted into the region: the image element
+       fills the region and `object-fit: contain` scales the artwork
+       proportionally to the largest size that fits inside it. Contain scales
+       UP as well as down, so a small logo is enlarged to use the space (it is
+       never left unnecessarily small) and an oversized one is reduced — the
+       aspect ratio is preserved in both directions and the artwork is never
+       stretched, squashed or cropped. `object-position: center center`
+       centres it, so a logo with a different aspect ratio simply leaves
+       whitespace inside the region instead of changing it. The element's box
+       is exactly the region, so its size can never be driven by the artwork. */
     const logoTag = (data.logoUrl && !data.bannerUrl)
-      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain;">'
+      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:100%;height:100%;object-fit:contain;object-position:center center;">'
       : '';
     const logoBox = data.bannerUrl ? '' :
       '<div style="position:absolute;left:' + H.logoArea.x + 'pt;top:' + H.logoArea.y + 'pt;width:' + H.logoArea.w +
         'pt;height:' + H.logoArea.h +
         'pt;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;">' + logoTag + '</div>';
-    /* The rule and the tagline stay FULL WIDTH below the block (that is how
-       the master draws them), so a long tagline keeps spanning the page
-       instead of wrapping inside a column. */
+    /* The letterhead is a FIXED-height band, exactly as the master draws it
+       (`height`, not `min-height`): the name / address / contact / divider /
+       tagline are painted inside 54.05pt and the next block starts at 54.05
+       no matter how long that copy is. With `min-height` a filled-in tagline
+       (or a wrapped address) grew the band and moved the title, the metadata
+       grid and every position below it — the master's own tagline already
+       overshoots the band into the empty top of the title band, and a fixed
+       band reproduces that instead of re-flowing the document.
+       The rule and the tagline stay FULL WIDTH (that is how the master draws
+       them), so a long tagline spans the page instead of wrapping. */
     const textHeader =
-      '<div style="display:flow-root;min-height:' + MXPT.bannerH + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
+      '<div style="display:flow-root;height:' + MXPT.bannerH + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
       logoBox +
       detailsBlock +
       '<div style="margin-top:' + H.ruleM + 'pt;height:' + H.ruleH + 'pt;background:#000;"></div>' +
@@ -6278,12 +6345,33 @@
       });
     }
     $('menu-btn').addEventListener('click', function () {
-      if (window.matchMedia && window.matchMedia('(min-width: 1025px)').matches) {
+      if (isDesktopNav()) {
         toggleSidebar();
       } else {
         document.body.classList.add('sidebar-open');
       }
     });
+    // In-sidebar Menu toggle: collapses the desktop rail, closes the drawer
+    // on mobile. The left-edge handle reopens a collapsed rail.
+    const sidebarToggleBtn = $('sidebar-collapse');
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.addEventListener('click', function () {
+        if (isDesktopNav()) toggleSidebar();
+        else closeSidebar();
+      });
+    }
+    const sidebarReopenBtn = $('sidebar-reopen');
+    if (sidebarReopenBtn) {
+      sidebarReopenBtn.addEventListener('click', function () {
+        document.body.classList.remove('sidebar-collapsed');
+        try { localStorage.setItem(SIDEBAR_KEY, '0'); } catch (e) { /* ignore */ }
+        closeSidebar();
+        syncSidebarState();
+        const firstNav = document.querySelector('.sidebar-nav .sidebar-link');
+        if (firstNav) firstNav.focus();
+      });
+    }
+    initSidebarState();
     $('theme-toggle-settings').addEventListener('click', function () {
       applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
     });

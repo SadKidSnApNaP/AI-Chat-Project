@@ -815,6 +815,147 @@ per-test-account snapshot keys (`u:gate-test@…`, `u:normal@example.com`,
 `u:otp.test@…`, `u:refactor.tester@…`, `u:style@example.com`,
 `u:second.tester@…`). Remove them for a true first-run guest state.
 
+### Master template header: fixed logo region, centred header, no sample logo (2026-09-12)
+
+**What the master's header actually is.** The master PDF embeds the WHOLE
+letterhead as one raster: a 4167x368 DeviceRGB image plus its DeviceGray soft
+mask (~494 DPI across the 607.208 x 52.7361pt page box). `pdftotext` returns no
+header text at all, confirming the logo, company name, address, contact, the
+divider and the tagline are all pixels, not text. It was extracted
+byte-for-byte (both streams inflated to exactly their declared sizes) with:
+
+```
+powershell -File .freebuff/extract-letterhead.ps1 \
+  -Path "C:\Users\User\Downloads\ACCESS EKALA SERVICE INV648 (1).pdf" \
+  -Out "<repo>\.freebuff\master-letterhead.png"
+```
+
+`.freebuff/master-letterhead.png` (96,763 bytes) is a MEASUREMENT REFERENCE
+ONLY. **Never ship it as a document asset**: the master's logo is a SAMPLE and
+must not appear on a generated invoice (explicit user instruction). It must
+never be put back into `assets/` or wired into `bannerUrl`.
+
+**Geometry measured off that raster** (page pt, page origin = top-left):
+logo ink box px 190-642 x 58-254 -> **66.01 x 28.23pt at x 30.08 / y 12.26**.
+Header text = three lines, all page-centred (ink centres 306.42, 306.49,
+306.27 against a page centre of 306): name ink y 5.09-19.28, address
+19.56-27.45, contact 31.60-39.77. Divider y 42.93-45.08. Tagline y 47.65-55.39
+(centre 303.07).
+
+**Changes in `js/app.js` (`generatePrintHTML` / `MXPT.hdr`):**
+- `H.logoArea = { x: 30.08, y: 12.26, w: 66.01, h: 28.23 }` — the logo REGION.
+  The master defines the region, not the logo. The old two-cell header table
+  (25%/75% with `logoW`/`detailsW`/`logoX`/`logoPadTop`/`logoMaxW`/`logoMaxH`)
+  is gone, and with it the 1px UA cell padding trap.
+- The logo region is `position: absolute` inside the header's positioning
+  context, so no logo can ever grow, shrink, push or reposition the header.
+  Inside it the img is `width: 100%; height: 100%` with
+  `object-fit: contain; object-position: center center`, i.e. the browser
+  scales the artwork uniformly to the largest size that fits and centres it.
+  Contain scales UP as well as down, so a small logo is enlarged to use the
+  space rather than being left small, an oversized one is reduced, the aspect
+  ratio holds in both directions, and `overflow: hidden` on the region is a
+  hard guarantee that nothing escapes. Empty until a logo is uploaded.
+  NOTE on measurement: with this method the element box IS the region, so the
+  *drawn* size is not directly readable from the DOM. The ratio-preservation
+  numbers in "Verified" below were taken with an earlier intrinsic-ratio
+  sizing method (`width/height: auto` under `max-width/max-height: 100%`),
+  which never upscales; the shipped method relies on the spec-defined contain
+  algorithm instead.
+- The company name / address / contact block is now full-width and
+  `text-align: center`. It had been right-aligned inside a 75% column, which
+  centres on 0.625 x page width and therefore did NOT sit on the master's
+  position.
+- `bannerUrl` is back to `brand.banner || ''`. Only the supplier's OWN artwork
+  is ever drawn; the `MASTER_LETTERHEAD` default and `masterLetterheadUrl()`
+  were removed.
+
+**Header vertical offset fixed (a real ~3pt error found this turn).** The
+master's letterhead raster gives FONT-FREE targets: its divider is a solid bar
+(meanAlpha 255, full width) occupying page y **44.07 .. 45.22**, and its three
+text lines have ink (cap) tops at **5.09 / 19.56 / 31.60**. Measured against
+those, the composed header sat ~3pt high — the divider landed at **41.10**,
+and independent cap tops measured 2.00 / 16.61 / 29.08. So an earlier note in
+this file claiming "every measured baseline lands within 0.1px" was WRONG; it
+had compared line boxes, not ink, and the header block was consistently high.
+A single `nameM: -1.13 -> 1.84` (+2.97pt on the block's first element) fixes
+it. Re-measured cap tops: **4.96 / 19.57 / 32.04** against 5.09 / 19.56 /
+31.60, and the divider at **44.06** against 44.07.
+
+**The header band is now a FIXED height** (`height: 54.05pt`, was
+`min-height`). With `min-height`, a filled-in tagline grew the band and pushed
+the title, the metadata grid and every position below it; the master's own
+tagline already overshoots the band (its ink ends at 55.39 vs a 54.05 band)
+into the empty top of the title band. Verified with the brand tagline filled
+in: band stays **54.05**, content top stays **54.98**, date band top **117.25**,
+table top **314.81** — nothing moves, the tagline simply overflows into the
+title band's whitespace exactly as the master's does.
+
+**Verified** (sheet-relative pt, master reference in brackets): page
+612x792, header band 54.05 [54.05], logo region 66.00x28.22 at (30.07, 12.26)
+[66.01x28.23 at (30.08, 12.26)], date band top 117.25 [117.26] at x 46.08
+[46.08], metadata boxes top 142.79 [142.82] with equal heights in both
+columns, Additional Information y 275.94, table top 314.81, header row 28.43
+[28.44], item rows 32.64 [32.64], total rows 17.75 [17.76]. Logo containment
+measured for 1:1, 1.5:1, 4:1, 8:1 and 1:3 artwork (see the measurement note
+above): the drawn ratio equalled the natural ratio exactly in every case, each
+was centred on the region centre and inside the region, and the header band
+plus everything below it did not move in any case — `touchedHeader` was false
+for all five.
+
+**Address double-count fixed.** The master's Address cell owns TWO row slots
+(its own value wraps over two lines) and has no separate blank line. The code
+modelled it as `Address + blankRow`, which is the same 38.4pt only while the
+address fits one line — as soon as it wrapped, the address added its own line
+ON TOP of the blank row and the whole document moved down 19.2pt. It is now one
+`row(..., { tall: true })` owning 2 x 19.2pt: identical for a one-line address,
+and a two-line address stays inside its existing area.
+
+**The one remaining deviation, and why.** The brand's own legal name
+(`METRIX ENGINEERING SERVICES (PVT) LTD`) and a long purchaser name wrap to two
+lines in a ~157pt value column, where the master's shorter one-line values fit.
+Each wrapped Name row grows 19.2 -> 29.32pt, so the metadata boxes measure
+126.8 instead of 118.71 (+8.1pt) and everything below shifts by the same
+(+8.04 measured on the additional-information band and the table top). The box
+grows rather than overlapping or clipping. It was NOT forced back because the
+only ways to hold 118.71 are clipping the second line or shrinking the text,
+and both were declined.
+
+**Page size note:** the master is US Letter 612x792pt, NOT A4 (595x842).
+"Keep the dimensions identical to the master" was taken as authoritative over
+the word "A4", so `@page` stays `612pt 792pt`; an A4-only printer will scale
+the sheet.
+
+**Brand/local state:** `brand.logo` cleared (test SVGs removed — empty region),
+`brand.banner` empty, `brand.spec` restored to empty, ERP draft reset to empty.
+The fabricated logged-in admin session and per-test-account keys listed in the
+section above are still there and still NOT touched. No `assets/` directory is
+shipped — nothing from the master template is served to the app.
+
+**Tooling added (all under `.freebuff/`, none of it shipped):**
+- `pdf-images.ps1` — lists a PDF's embedded image XObjects with their
+  dictionaries and stream sizes. This is how the letterhead was identified.
+- `extract-letterhead.ps1` — inflates those streams and packs them to PNG at
+  original resolution (RGB + soft mask -> 32bppArgb via a small inline C#
+  helper, so 1.5M pixels never round-trip through PowerShell).
+- `letterhead-profile.ps1` — per-row ink profile of the reference PNG, for
+  measuring line weights and gaps (this is what proved the divider is a single
+  1.146pt bar at y 44.07 and not a double rule).
+
+Two gotchas worth keeping: Windows PowerShell 5.1 reads a BOM-less .ps1 as
+ANSI, so an em dash or arrow in the source breaks parsing — keep these scripts
+ASCII-only. And `.freebuff/` is not served by the preview server, so any raster
+used for measurement has to be temporarily copied to the project root to be
+viewable, then deleted (`_ref-letterhead.png` was used for exactly that and is
+gone).
+
+**Environment notes (2026-09-12):** `preview_screenshot` worked for two frames
+and then went stale — it kept returning the old frame and even reported the new
+URL while showing the previous page, so visual verification is unreliable and
+numeric measurement is the fallback. `api/send-code.js` (16:28) and a `.git`
+directory appeared during this work; both are somebody else's changes and were
+left strictly alone.
+
 ## Why the two top-level html files exist
 
 - `index.html` — canonical app the user opens/distributes.

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sidebar states probe</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0b0d17; font: 11px/1.4 Arial, sans-serif; color: #8b949e; }
+  .slot { width: 614px; height: 432px; overflow: hidden; margin: 6px 0 0 6px; position: relative; }
+  .slot iframe { width: 1280px; height: 900px; border: 0; transform: scale(0.48); transform-origin: top left; position: absolute; top: 0; left: 0; }
+  .cap { margin: 4px 0 0 6px; font-weight: 700; color: #fff; }
+</style>
+</head>
+<body>
+  <div class="cap">EXPANDED</div>
+  <div class="slot"><iframe id="ex" src="/index.html"></iframe></div>
+  <div class="cap">COLLAPSED (rail hidden + left-edge handle)</div>
+  <div class="slot"><iframe id="co" src="/index.html"></iframe></div>
+  <script>
+    // Force the lower frame into the collapsed state once it has booted.
+    document.getElementById('co').addEventListener('load', function () {
+      var w = this.contentWindow, d = this.contentDocument;
+      w.localStorage.setItem('cm-sidebar-v1', '0');
+      d.getElementById('sidebar-collapse').click();
+    });
+    document.getElementById('ex').addEventListener('load', function () {
+      var w = this.contentWindow, d = this.contentDocument;
+      w.localStorage.setItem('cm-sidebar-v1', '0');
+      if (d.body.classList.contains('sidebar-collapsed')) d.getElementById('sidebar-reopen').click();
+    });
+  </script>
+</body>
+</html>

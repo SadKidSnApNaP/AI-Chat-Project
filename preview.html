@@ -12191,7 +12191,13 @@ body {
        rather than being clipped (margins chosen to land on the exact same
        page offsets the master's banner uses). */
     hdr: {
-      nameM: -1.13, nameH: 16.74, nameSize: 15.5,
+      /* nameM carries the whole block's offset. Measured against the master's
+         own letterhead raster (the divider is font-free evidence): the
+         divider sits at page y 44.07 and the block's cap tops at 5.09 /
+         19.56 / 31.60. Before this offset the block sat ~3pt high — the
+         divider landed at 41.10. A single +2.97 here lands the divider on
+         44.07 exactly and the three cap tops within 0.45pt. */
+      nameM: 1.84, nameH: 16.74, nameSize: 15.5,
       addrM: -0.53, conM: 2.68, ruleM: 3.76, ruleH: 1.17, tagM: 1.90,
       lineH: 9.8, smallSize: 8.2, tagSize: 6.7,
       // LOGO REGION — a FIXED placeholder, measured from the master's own
@@ -12266,26 +12272,35 @@ body {
        The region is ABSOLUTELY positioned, so no logo can ever grow, shrink,
        push, or reposition the header, the company name, the divider or any
        other element: it is out of flow by construction. */
-    /* The logo is sized by its own intrinsic ratio under `max-width` and
-       `max-height` — the browser scales it uniformly to the largest size that
-       fits BOTH, so the aspect ratio cannot change and it can never exceed
-       the region. (`object-fit: contain` inside a 100%-sized box would work
-       too, but there the element box always measures as the region and the
-       fitted artwork is invisible to measurement.) The flex box centres it on
-       both axes, and `overflow: hidden` is a hard guarantee that nothing can
-       escape the region even under a rounding difference. */
+    /* The supplied logo is CONTAIN-fitted into the region: the image element
+       fills the region and `object-fit: contain` scales the artwork
+       proportionally to the largest size that fits inside it. Contain scales
+       UP as well as down, so a small logo is enlarged to use the space (it is
+       never left unnecessarily small) and an oversized one is reduced — the
+       aspect ratio is preserved in both directions and the artwork is never
+       stretched, squashed or cropped. `object-position: center center`
+       centres it, so a logo with a different aspect ratio simply leaves
+       whitespace inside the region instead of changing it. The element's box
+       is exactly the region, so its size can never be driven by the artwork. */
     const logoTag = (data.logoUrl && !data.bannerUrl)
-      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain;">'
+      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:100%;height:100%;object-fit:contain;object-position:center center;">'
       : '';
     const logoBox = data.bannerUrl ? '' :
       '<div style="position:absolute;left:' + H.logoArea.x + 'pt;top:' + H.logoArea.y + 'pt;width:' + H.logoArea.w +
         'pt;height:' + H.logoArea.h +
         'pt;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;">' + logoTag + '</div>';
-    /* The rule and the tagline stay FULL WIDTH below the block (that is how
-       the master draws them), so a long tagline keeps spanning the page
-       instead of wrapping inside a column. */
+    /* The letterhead is a FIXED-height band, exactly as the master draws it
+       (`height`, not `min-height`): the name / address / contact / divider /
+       tagline are painted inside 54.05pt and the next block starts at 54.05
+       no matter how long that copy is. With `min-height` a filled-in tagline
+       (or a wrapped address) grew the band and moved the title, the metadata
+       grid and every position below it — the master's own tagline already
+       overshoots the band into the empty top of the title band, and a fixed
+       band reproduces that instead of re-flowing the document.
+       The rule and the tagline stay FULL WIDTH (that is how the master draws
+       them), so a long tagline spans the page instead of wrapping. */
     const textHeader =
-      '<div style="display:flow-root;min-height:' + MXPT.bannerH + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
+      '<div style="display:flow-root;height:' + MXPT.bannerH + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
       logoBox +
       detailsBlock +
       '<div style="margin-top:' + H.ruleM + 'pt;height:' + H.ruleH + 'pt;background:#000;"></div>' +
