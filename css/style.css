@@ -881,6 +881,18 @@ textarea { resize: vertical; min-height: 44px; line-height: 1.55; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 540px; }
 
 /* ── Database full-width grid cards (Item & Client DB) ─────────── */
+/* Item / Client DB save row, sitting between the form fields and the table.
+   Its buttons start at the card's left edge — the same edge the table header's
+   first column starts from — so with no bottom margin the button lands flush on
+   the header and covers the "SKU" / "Client" label. The margin keeps it clear
+   of both the inputs above and the header below, while staying left-aligned
+   with the input fields (no extra indent on either side). */
+.actions.db-form-actions {
+  margin: 18px 0 18px;
+  padding-left: 0;
+}
+.actions.db-form-actions .btn { flex: 0 0 auto; }
+
 .db-list { display: flex; flex-direction: column; }
 .db-list-head {
   padding: 0 12px 8px;
@@ -1334,6 +1346,43 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .tool-card-meta { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--faint); }
 .tool-card-meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-card-meta strong { color: var(--muted); font-weight: 600; }
+/* What the tool actually does, so a first-time user does not have to launch
+   it to find out. Clamped to two lines so every card in the row stays the
+   same height however long the sentence is. */
+.tool-card-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* "Advanced tools" — a native disclosure so the secondary calculators are
+   one click away without twelve equal-weight cards on first load. */
+.tools-more { grid-column: 1 / -1; }
+.tools-more-summary {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+  cursor: pointer; list-style: none;
+  padding: 12px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 13px; font-weight: 700; color: var(--text-strong);
+  transition: border-color 0.25s var(--ease), background 0.25s var(--ease);
+}
+.tools-more-summary::-webkit-details-marker { display: none; }
+.tools-more-summary::after {
+  content: '\25be';
+  margin-left: auto; color: var(--faint); font-size: 11px;
+  transition: transform 0.2s var(--ease);
+}
+.tools-more[open] .tools-more-summary::after { transform: rotate(180deg); }
+.tools-more-summary:hover { border-color: var(--accent-line); background: rgba(255, 255, 255, 0.04); }
+.tools-more-summary:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.tools-more-hint { font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.tools-grid-advanced { margin-top: 14px; }
 .tool-launch {
   margin-top: auto;
   width: 100%;
@@ -1398,9 +1447,14 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .pm-arrow { color: var(--faint); font-size: 12px; flex: none; }
 .pm-caption { margin: 10px 0 0; font-size: 11.5px; color: var(--faint); }
 .health-list { display: flex; flex-direction: column; gap: 9px; }
-.health-item { display: grid; grid-template-columns: 92px 1fr 44px; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
-.health-item strong { text-align: right; color: var(--text-strong); font-variant-numeric: tabular-nums; }
-.health-bar { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+/* The value column was a fixed 44px, which clipped anything wider than a
+   couple of digits — "11.4 KB / 5 MB" lost its unit. It is sized to its
+   content now (never wrapping), the bar takes the slack, and the label
+   column is trimmed instead. */
+.health-item { display: grid; grid-template-columns: 76px minmax(40px, 1fr) auto; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.health-item > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.health-item strong { text-align: right; color: var(--text-strong); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.health-bar { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; min-width: 40px; }
 .health-fill { height: 100%; border-radius: 999px; background: var(--accent); box-shadow: 0 0 10px rgba(255, 255, 255, 0.45); transition: width 0.6s var(--ease-out); }
 
 /* Recent Activity feed */
@@ -1444,6 +1498,16 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .activity-text { font-size: 12.5px; color: var(--text); line-height: 1.4; overflow-wrap: anywhere; }
 .activity-text strong { color: var(--text-strong); font-weight: 600; }
 .activity-time { font-size: 11px; color: var(--faint); margin-top: 2px; }
+/* Second line of a document entry: which document it was (reference) and
+   what it was worth. */
+.activity-doc { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 3px; }
+.activity-ref {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px; padding: 1px 6px;
+}
+.activity-amount { font-size: 12px; font-weight: 700; color: var(--text-strong); font-variant-numeric: tabular-nums; }
 .activity-empty { color: var(--faint); font-size: 12.5px; padding: 8px 2px; }
 .activity-clear {
   background: none; border: none; padding: 0;
@@ -1758,7 +1822,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .pdf-preview-canvas { width: 816px; }
 .pdf-preview-canvas > #pdf-preview-container { width: 816px; }
-#pdf-preview-container { background: #ffffff; color: #000000; cursor: text; }
+#pdf-preview-container { background: #ffffff; color: #000000; cursor: default; }
 
 /* ── Premium Plans view ─────────────────────────────────────
    Two glass subscription cards on the shared .card surface; the yearly
@@ -1831,132 +1895,63 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .plan-card .actions { margin-top: auto; }
 .plan-cta { width: 100%; justify-content: center; font-weight: 600; }
 
-/* ── PDF editor toolbar ───────────────────────────────────────
-   Sticky so it stays reachable while the sheet scrolls; every control is
-   hidden in @media print, so nothing here can reach a printed page. */
-.pdf-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 7;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  background: rgba(17, 20, 34, 0.94);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+/* ── Editable document fields ─────────────────────────────────
+   There is no editing toolbar. The ONLY interactive parts of the sheet
+   are the elements the renderer tagged with `data-edit`, and they are the
+   only things that ever get an affordance — `cursor: text`, a hover tint
+   and a focus ring. Locked template furniture (letterhead, column
+   headers, section labels, footer wording) gets nothing at all, which is
+   what tells the user where they may type without any instructions.
+   All of this is SCREEN ONLY, so no hover tint or focus ring can reach a
+   printed page. */
+@media screen {
+  #pdf-preview-container [data-edit] {
+    cursor: text;
+    border-radius: 3px;
+    transition: background-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+  }
+  #pdf-preview-container [data-edit]:hover {
+    background-color: rgba(99, 102, 241, 0.12);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.45);
+  }
+  #pdf-preview-container [data-edit]:focus {
+    outline: none;
+    background-color: rgba(99, 102, 241, 0.09);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.75);
+  }
+  /* Rejected input: flashed briefly, then the field is restored from the
+     single source of truth. */
+  #pdf-preview-container [data-edit].pdf-invalid {
+    background-color: rgba(239, 68, 68, 0.16) !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.75) !important;
+  }
+  #pdf-preview-container ::selection { background: rgba(99, 102, 241, 0.25); }
 }
-.pdf-tb-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-right: 10px;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-.pdf-tb-group:last-of-type { border-right: none; padding-right: 0; }
-.pdf-tb-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #8b949e;
-  white-space: nowrap;
-}
-.pdf-tb-select,
-.pdf-tb-num,
-.pdf-tb-btn {
+
+/* The native date picker used by the date fields: an overlay input so the
+   document's own layout never shifts while it is open. */
+.pdf-date-input {
+  z-index: 60;
   font: inherit;
   font-size: 12px;
-  color: var(--text-strong);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 7px;
-  padding: 4px 7px;
-  cursor: pointer;
-  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
-}
-.pdf-tb-select { max-width: 150px; }
-.pdf-tb-num { width: 52px; text-align: center; cursor: text; }
-.pdf-tb-btn { min-width: 28px; text-align: center; }
-.pdf-tb-select:hover,
-.pdf-tb-num:hover,
-.pdf-tb-btn:hover { background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.5); }
-.pdf-tb-toggle[aria-pressed="true"] {
-  background: rgba(99, 102, 241, 0.28);
-  border-color: rgba(99, 102, 241, 0.65);
-  color: #c7d2fe;
-  font-weight: 600;
-}
-.pdf-tb-color {
-  width: 34px;
-  height: 26px;
-  padding: 0 2px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 7px;
-  cursor: pointer;
-}
-.pdf-tb-range { width: 112px; accent-color: #6366f1; cursor: pointer; }
-.pdf-tb-readout,
-.pdf-tb-target {
-  font-size: 11px;
-  color: #8b949e;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.pdf-tb-target { margin-left: auto; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
-
-/* Selection outline + move-mode affordances — SCREEN ONLY. */
-@media screen {
-  #pdf-preview-container .pdf-selected {
-    outline: 2px solid #3b82f6 !important;
-    outline-offset: 1px;
-  }
-  #pdf-preview-container.pdf-move-mode [data-pdf-block] { cursor: move; }
-  #pdf-preview-container.pdf-move-mode [data-pdf-block]:hover {
-    outline: 1px dashed rgba(59, 130, 246, 0.8) !important;
-    outline-offset: 1px;
-  }
+  color: #0b0d17;
+  background: #ffffff;
+  border: 1px solid #6366f1;
+  border-radius: 6px;
+  padding: 0 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-/* Print: no toolbar, no selection ring — not even mid-drag. */
 @media print {
-  .pdf-toolbar,
-  .pdf-tb-target { display: none !important; }
-  #pdf-preview-container .pdf-selected,
-  #pdf-preview-container.pdf-move-mode [data-pdf-block]:hover { outline: none !important; }
-}
-body.pdf-printing .pdf-toolbar { display: none !important; }
-body.pdf-printing #pdf-preview-container .pdf-selected { outline: none !important; }
-
-/* Edit affordance — SCREEN ONLY, so no hover tint or outline can ever
-   reach a printed page. (#pdf-preview-container is itself the
-   contenteditable element; the leaf rule below lights up the individual
-   text block under the pointer, which is what actually feels editable.) */
-@media screen {
-  #pdf-preview-container [contenteditable="true"]:hover,
-  #pdf-preview-container td:hover,
-  #pdf-preview-container th:hover { background-color: rgba(13, 27, 110, 0.04); cursor: text; }
-  #pdf-preview-container :hover:not(:has(*)) { background-color: rgba(13, 27, 110, 0.06); }
-  #pdf-preview-container :focus { outline: none; background-color: rgba(13, 27, 110, 0.08); }
-  #pdf-preview-container ::selection { background: rgba(13, 27, 110, 0.22); }
-}
-@media print {
-  #pdf-preview-container,
-  #pdf-preview-container [contenteditable],
-  #pdf-preview-container [contenteditable]:hover,
-  #pdf-preview-container td:hover,
-  #pdf-preview-container th:hover,
-  #pdf-preview-container :focus {
+  #pdf-preview-container [data-edit],
+  #pdf-preview-container [data-edit]:hover,
+  #pdf-preview-container [data-edit]:focus {
     background: transparent !important;
     outline: none !important;
     box-shadow: none !important;
     cursor: auto !important;
   }
+  .pdf-date-input { display: none !important; }
 }
 
 /* Offscreen printable quotation (PDF source). Fixed width = A4 @96dpi;
@@ -2893,12 +2888,16 @@ body.pdf-printing #pdf-preview-container .pdf-selected { outline: none !importan
   /* Kill the browser's default URL/date header & footer: zero page margin
      (Chrome/Edge hide their print chrome at margin 0). */
   @page { size: A4 portrait; margin: 0; }
+  /* The desktop rail reserves a padding column; printing hides the rail, so
+     the reserved space must go with it or every page keeps a 270px indent. */
+  main.container { padding-left: 0 !important; max-width: 1240px !important; }
   .site-header,
   .sidebar,
   .site-footer,
   #menu-btn,
   .menu-btn,
   .sidebar-close,
+  .sidebar-reopen,
   .sidebar-foot,
   .tool-banner,
   .actions,

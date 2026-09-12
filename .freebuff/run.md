@@ -561,96 +561,129 @@ buttons wired to a shared listener that records the choice in
 `nexora_plan_interest` and calls `showToast(...)`; no payment provider is
 connected in this build, and the view says so in a `hint` under the cards.
 
-## Editable document preview + PDF editor toolbar (2026-09-12)
+## Editable document preview — field whitelist model (2026-09-12, supersedes the toolbar)
 
-There was no on-screen PDF preview before this: the document existed only as
-the offscreen `#erp-doc` (`.pdf-offscreen`, `left:-10000px`) and the print
+There was no on-screen PDF preview until recently: the document existed only
+as the offscreen `#erp-doc` (`.pdf-offscreen`, `left:-10000px`) and the print
 frame. The ERP view now carries a `Document preview` card holding an
 EDITABLE sheet that **is the print source**: `exportErpPdf()` copies this DOM
-instead of re-running the template, so text retyped by hand (or restyled with
-the toolbar) survives into the PDF.
+instead of re-running the template, so what the user edited is what prints.
+
+**The generic editor toolbar is GONE** (font / size / colour / zoom /
+line-height / Move mode / "Nothing selected" readout, plus`#pdf-toolbar`,
+`.pdf-tb-*`, `.pdf-selected`, `data-pdf-block`, `pdfSelect`, `pdfTextNodes`,
+`pdfDrag`, `pdfMoveMode`, the `pdfPreviewEdited` pin and the zoom transform
+compensation). Do not reintroduce any of it: the edit affordance is now the
+field whitelist below, and a toolbar would contradict it.
 
 ### Structure
 
 ```
 .pdf-preview-card
-├─ .card-head  (#pdf-preview-state pill)
-├─ .pdf-toolbar  (#pdf-toolbar, position: sticky)
+├─ .card-head  (h2 + #pdf-preview-state pill + #pdf-preview-rebuild)
 └─ .pdf-preview-shell (overflow:auto, max-height 74vh)
    └─ .pdf-preview-canvas (width: 816px = 612pt @96dpi)
-      └─ #pdf-preview-container  contenteditable="true"  ← the print source
+      └─ #pdf-preview-container   ← the print source
 ```
 
 The canvas is pinned to 816px so the sheet lays out at its true 612pt; the
 shell scrolls on narrower viewports instead of letting the doc root's
 `max-width:100%` squeeze (and reflow) the master grid.
 
-### State machine
+### Single source of truth
 
-`pdfPreviewHtml` (last template output) · `pdfPreviewEdited` (pins the
-preview) · `pdfPreviewTimer` (260ms debounce) · `pdfSelected` · `pdfMoveMode`
-· `pdfDrag`.
+There is ONE invoice object: `erpState`, the same object the form binds to.
+The preview holds no copy of any value.
 
 - `buildErpDoc()` → writes `#erp-doc` **and** `paintPdfPreview()`.
-- `paintPdfPreview()` → resets selection/drag, repaints from
-  `pdfPreviewHtml`, clears the pin, re-tags blocks, resyncs the toolbar.
-- `schedulePdfPreview(force)` → debounced; **no-ops while pinned** so a form
-  edit can never silently discard a hand correction. `force` (the Rebuild
-  button, `resetErp`, `resetAll`) unpins.
 - Form hooks: one delegated `input`/`change` listener on `#erp-view` covers
-  every field incl. mode fields and item rows; `renderErp()` also schedules,
-  so mode switches / record loads / imports stay in step. Rebuilding only
-  rewrites the preview, never the form, so typing focus is kept.
+every field incl. mode fields and item rows; `renderErp()` also schedules.
+- Preview → form: `pdfCommitField()` writes into `erpState` **and** the
+matching form input in the same breath (`PDF_FIELD_MAP` is the only table of
+what maps where, so the two views cannot disagree about a field's meaning).
+- Form → preview: the same delegated `#erp-view` listener schedules a repaint.
+- **"Rebuild from form" is only "re-render from `erpState`"** — after an edit
+  that state already holds the new value, so it cannot discard one. The old
+  `pdfPreviewEdited` pin (and the "blocked/unpinned" states) is gone with it.
 
-### Toolbar controls
+### Editable fields — the whitelist
 
-`#pdf-toolbar` (sticky, `z-index: 7`): font family (Arial / Times New Roman /
-Courier / Calibri), font size −/+ (0.5pt steps, numeric box, 4–48pt clamp),
-`<input type="color">`, zoom range 0.8–1.2 (`#pdf-tb-scale` +
-`#pdf-tb-scale-out` readout), line-height select (1.2/1.4/1.6), **Move mode**
-toggle, **Reset layout**, and a `#pdf-tb-target` readout naming the selection.
+`data-edit` is the ONLY thing that makes anything interactive. The renderer
+tags exactly these (`editAttr()` / `row(..., {edit})` / `bodyRow` /
+`totalRow(..., editKey)`):
 
-- **Selection** — clicking inside the container rings the element
-  (`.pdf-selected`, 2px `#3b82f6`, `outline-offset: 1px`) and syncs the
-  controls. `pdfSyncToolbar()` reads through to the first text-bearing
-  descendant when the wrapper has no text of its own, otherwise the controls
-  would snap back to the page defaults after formatting.
-- **Formatting** is written as **inline CSS**, because the template sets
-  colour/size/family per node — a style on a wrapper would change nothing.
-  `pdfTextNodes()` collects the descendants that actually hold text and styles
-  those. With NO selection the target is the sheet root (`.mx-doc > div`), not
-  the container — the container's own inline style is stripped from the
-  payload.
-- **Zoom** uses `transform: scale()` with `transform-origin: top left` and
-  compensates the canvas box by hand (a transform does not change layout
-  size). Preview-only: it is stripped from the print payload, since scaling
-  the sheet would break the page geometry.
-- **Move mode** tags the 9 top-level sections (`data-pdf-block`), sets
-  `contenteditable="false"` so the pointer cannot select text mid-drag, and
-  drags with **margins** (flow, not absolute) at 1 screen px = 0.75pt ÷ zoom.
-  Sections nudge past each other without overlapping.
-- **Reset layout** repaints the untouched template and returns every control
-  (selection, zoom, colour, line height, font, move mode) to its default.
+| field | `data-edit` | kind | writes to |
+|---|---|---|---|
+| Date of Invoice | `date` | date | `erpState.date` + `#erp-date` |
+| Date of Supply | `supplyDate` | date | `erpState.supplyDate` (no form input; falls back to the invoice date) |
+| Tax Invoice No / Quotation No | `docNo` | text | `erpState.ref` + `#erp-ref` |
+| Purchaser's TIN | `clientTin` | text | `erpState.clientTin` + `#erp-clienttin` |
+| Purchaser's Name | `client` | text | `erpState.client` + `#erp-client` |
+| Address (purchaser) | `clientAddress` | text | `erpState.address` + `#erp-address` |
+| Telephone No (purchaser) | `clientPhone` | text | rewrites only the phone token in `erpState.contact` + `#erp-contact` (`pdfSetPurchaserPhone`) |
+| Place of Supply | `placeOfSupply` | text | `erpState.placeOfSupply` + `#erp-posupply` |
+| Additional Information | `projectName` | text | `erpState.project` + `#erp-project` |
+| item N Description / Unit / Qty / Rate | `item:N:desc\|unit\|qty\|rate` | text / text / number / number | `erpState.lines[N]` + the matching `.erp-*` input in `#erp-rows` |
+| Discount amount | `discount` | number | stored as a PERCENTAGE in `erpState.discount` + `#erp-discount` |
+
+LOCKED (no `data-edit`, `cursor: default`, no hover tint, not focusable):
+company header/letterhead/logo, all six column headers, the row numbers, the
+Amount cells, the Sub Total / net / VAT / TOTAL labels **and** figures,
+"Due amount in words", the courtesy line, "On Behalf of", "Authorized
+Signatory", and every supplier-side metadata value.
+
+Amount is never editable: it is Quantity × Rate and recalculates.
+
+### Validation
+
+- Qty / Rate / Discount are `kind: "number"`. `pdfNumeric()` accepts
+  `^[+-]?(\d+(\.\d*)?|\.\d+)$` (commas stripped, so `2,500.00` is fine) and
+  returns null for anything else. Letters are also blocked at `keydown`, so
+  invalid characters never even land.
+- A rejected value is reverted from `erpState` and the field flashes red
+  (`.pdf-invalid`, ~1.3s) — the document can never hold a broken number.
+- Qty may not be negative. Discount needs a non-zero sub total.
+- Dates get **no** `contenteditable` at all: they are `role="button"` and open
+  the app's own native `<input type="date">` overlay (`pdfOpenDatePicker`),
+  pre-filled with the stored ISO value, so a date can never become free text.
+  Click or Enter/Space opens it; the value is committed through the same
+  `pdfCommitField` path and must match `^\d{4}-\d{2}-\d{2}$`.
+
+### Refocus across a repaint
+
+`pdfCaptureFocus()` / `pdfRestoreFocus()` save the caret key + offset before
+repainting and put them back, so typing is not interrupted by the debounced
+rebuild.
+
+**Re-entrancy (fixed 2026-09-12).** Repainting replaces every node, which
+blurs the field being typed in. That blur is the app's own teardown, not a
+user action, and if the `focusout` handler treated it as a real blur it would
+run a second, nested repaint from inside the outer `innerHTML` write —
+`NotFoundError: Failed to set the 'innerHTML' property on 'Element': The node
+to be removed is no longer a child of this node`. Two guards, both needed:
+
+1. the `focusout` handler ignores `!el.isConnected` (removed by our own
+   repaint), which kills the recursion at its source;
+2. `paintPdfPreview()` carries `pdfPainting` / `pdfPaintQueued` flags so a
+   nested paint is deferred to after the outer write instead of racing it.
+
+Symptom to watch for if either is removed: an uncaught exception on every
+REJECTED edit, and the `.pdf-invalid` flash silently not appearing.
 
 ### Print hygiene
 
 `pdfPreviewPayload()` clones the live sheet and strips **editor** state only:
-`contenteditable`, `spellcheck`, `aria-label`, `.pdf-selected`,
-`data-pdf-block`, `.pdf-move-mode`, and the zoom `transform`/`transform-origin`
-from the host's inline style (other host inline formatting is PRESERVED —
-that is why the transform is cleared property-by-property rather than by
-dropping the whole `style` attribute). The user's own inline formatting and
-drag margins are kept, because those are the edit.
+`contenteditable`, `spellcheck`, `role`, `inputmode`, `tabindex`,
+`aria-label`, `aria-haspopup`, `data-edit`, `data-edit-kind`,
+`data-edit-label`, `.pdf-editable`, `.pdf-invalid`. The VALUES are untouched —
+they are the document. `beforeprint`/`afterprint` still toggle
+`body.pdf-printing`, and all hover/tint/focus rules live inside
+`@media screen` with a `@media print` reset, so no affordance can reach paper.
 
-`beforeprint`/`afterprint` toggle `body.pdf-printing`, and `@media print`
-hides `.pdf-toolbar` / `.pdf-tb-target` and kills every selection ring — so
-an app-level Ctrl+P cannot print the chrome either. All hover/tint rules live
-inside `@media screen`.
-
-Verified end-to-end in the print frame: Courier + `#cc0000` formatting, a
-`margin-left: 37.65pt` drag and the item text all present; `contenteditable`,
-`spellcheck`, `pdf-selected`, `data-pdf-block`, `pdf-move-mode`,
-`transform: scale` and every `pdf-tb-*` node all absent.
+Verified in the real print frame after a session of preview edits: the edited
+Purchaser's Name / TIN / ref / date / qty / rate present, Sub Total → VAT →
+TOTAL consistent with the edits, all six column headers and the footer block
+intact, and ZERO occurrences of every hook string above.
 
 ### Two-cell company header & logo containment (2026-09-12)
 
@@ -955,6 +988,282 @@ URL while showing the previous page, so visual verification is unreliable and
 numeric measurement is the fallback. `api/send-code.js` (16:28) and a `.git`
 directory appeared during this work; both are somebody else's changes and were
 left strictly alone.
+
+## Collapsible sidebar (2026-09-12)
+
+The left rail has two independent mechanisms, and conflating them is the trap:
+
+- **Desktop (>= 1025px)** — `body.sidebar-collapsed` + `.sidebar.collapsed`.
+  `main.container` animates `padding-left` 270px -> 20px and `max-width`
+  1510px -> 1240px over 0.34s, and the rail itself slides out
+  (`translateX(-100%)`, opacity 0, `pointer-events: none`). Both sides move on
+  the same easing so the content re-centres instead of snapping.
+- **Under 1025px** — unchanged off-canvas drawer: `body.sidebar-open` +
+  `.sidebar { transform: translateX(-105%) }`. The collapsed rules live inside
+  the `min-width: 1025px` media query, so they cannot fight the drawer.
+
+`--sidebar-w: 270px` in `:root` is the single source of truth. It was measured,
+not guessed: before this change the rail had `position: fixed` with `flex: 0 0
+240px`, and since a fixed element is not a flex item the 240px was ignored —
+the width came from content (the profile card, 270px). It is now pinned.
+
+**Two things the CSS alone cannot do**, both handled in `syncSidebarState()`:
+`inert` on a hidden rail (otherwise Tab still walks into invisible buttons), and
+clearing that `inert` when a resize crosses back under 1025px. `js/app.js` also
+persists the choice in `cm-sidebar-v1` (`'1'` collapsed) and restores it at
+boot. `syncSidebarState()` is the only place that touches label/aria/inert —
+call it after any state change rather than editing those by hand.
+
+**Two entry points by design:** `#sidebar-collapse` in the sidebar footer (next
+to "Toggle theme") collapses the rail on desktop / closes the drawer on mobile;
+`#sidebar-reopen`, a 30x78px tab on the left edge, is the only way back once
+the rail is hidden and is visible *only* while collapsed. It uses the
+`chevron-right` icon added to the `TOOL_ICONS` map.
+
+**Layout trap to remember:** `#menu-btn`, `#sidebar` and `.main-area` are all
+children of `main.container` (`display: flex`). Showing `#menu-btn` at desktop
+would make it a flex *item* and shove the whole content column sideways — which
+is why it stays `display: none` above 1025px and the edge tab exists instead.
+
+Print: `@media print` hides `.sidebar-reopen` and resets
+`main.container { padding-left: 0 }`, otherwise an app-level Ctrl+P would carry
+the 270px rail indent onto the page.
+
+**Verifying desktop layout from this environment:** the Preview tab viewport is
+~645px, so the desktop media queries never match in it. Load the app inside a
+fixed-width `<iframe>` instead — an iframe has its own viewport, so it *does*
+match, and being same-origin it is still readable via `preview_evaluate`. The
+throwaway probes used for this were deleted afterwards; recreate one on demand
+rather than trusting a mobile-width measurement.
+
+Verified: expanded rail 270px with no content overlap (main column 270->1403 at
+1440px, `scrollWidth` 1423 <= 1425 so no horizontal overflow); collapse
+animates padding 270 -> 213 -> 98 -> 37 -> 22 -> 20 in lockstep with the rail
+sliding to -270; reopen handle appears at x 0 y 411 (no overlap with content
+starting at x 112); collapse survives a reload; shrinking the window while
+collapsed clears `inert` and drops the label back to "Close menu"; mobile
+drawer still opens/closes and leaves "Toggle theme" / "How to use" intact.
+
+## DB add/update button row (2026-09-12)
+
+The `.actions` row between the Item / Client DB form and its table carries
+`db-form-actions`. It needs its bottom margin to keep working: the header's
+first column starts at the card's left edge, the same edge the buttons start
+from, so the row is measured against the header. With only `margin-top: 18px`
+the gap measured **exactly 0px** and the button (99-107px wide) sat over the
+"SKU" / "Client" label — the header appeared to start at "Item" / "Address".
+`margin: 18px 0` fixes it without indenting the row, which would break its
+alignment with the input fields above.
+
+Measured after: button x == input x (both cards, desktop and 645px), 18px above
+the last input, 18px below to the header, 0 labels under the button, all four
+header labels rendered. Don't add left padding to this row and don't drop the
+bottom margin — both reintroduce the same overlap.
+
+The header (`.db-list-head`) is still inset 12px (it shares `.db-row`'s 12px
+padding) while the form sits at 0, so the table is a touch narrower than the
+form. That is deliberate and was left alone: the request was for the buttons to
+follow the form's left edge, not for the table to move.
+
+## Invoice logo container — fixed 90x90px (2026-09-12)
+
+`MXPT.hdr.logoBox = { size: 90, left: 20 }` (CSS px). The container is
+generated by `generatePrintHTML` and is absolutely positioned with explicit
+width/height in absolute units (never %, never `auto`), so no parent flex/grid
+rule and no amount of invoice text can resize it. `object-fit: contain` +
+`object-position: center center` scale the artwork proportionally inside it.
+
+**Vertical placement — and the one spec that could not be honoured.** The
+request asked BOTH for "top edge at a fixed 20px" AND for the container to be
+vertically centred on the 3-line header block. Those are mutually exclusive:
+the text block starts at the top of the page (`H.nameM` pt down, ~2.5px) and
+its midpoint is only ~28.1px from the page edge, so a 90px box centred on it
+must start at `top: -16.89px`. Pinning the top at 20px would put the box centre
+~37px BELOW the text block — the opposite of centring. Centring wins, because
+it is the stated purpose of the requirement and it is what makes the logo read
+as balanced. The top offset is derived from the `H.*` line metrics, not
+hard-coded, so it tracks them.
+
+### The artwork cap is GONE — the rule as it stands now (2026-09-12, revised)
+
+**Applied rule on the `<img>`** (literal, emitted by `generatePrintHTML`):
+
+```
+display:block;width:90px;height:90px;max-width:none;max-height:none;object-fit:contain;object-position:center center;
+```
+
+**Container**:
+
+```
+position:absolute;left:20px;top:0px;width:90px;height:90px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;
+```
+
+No `max-width`, no `max-height`, no percentage anywhere on the logo or its
+container. `MXPT.hdr.logoBox = { size: 90, left: 20, top: 0 }` is the single
+source; `size` is used for BOTH the container and the image so they cannot
+divide.
+
+**What used to "keep reverting to a smaller size" — the three culprits, all
+removed or overridden:**
+
+1. `artMaxPx = min(2*textMid, 2*(bannerH - textMid)) * 4/3` = 56.22px, emitted
+   as `max-height` on the image. `generatePrintHTML` runs on EVERY
+   `buildErpDoc()`, i.e. every form keystroke, mode switch, record load and
+   preview rebuild — so the cap was re-applied constantly and any hand-edited
+   size was wiped on the next render.
+2. `width:100%;height:100%` on the image — percentage sizing, dependent on the
+   parent.
+3. `.mx-doc img { max-width: 100% }` (css/style.css) — a shared rule for every
+   image in the sheet. A no-op while the parent square is exactly 90px (100% ==
+   90px), but exactly the kind of global rule that starts constraining the logo
+   after an unrelated CSS change. The image now sets `max-width:none` inline.
+
+**`top` is 0px, and that is why centring was dropped.** Centring is what
+caused the cap: a 90px box centred on a text block whose midpoint is ~28px from
+the page edge must start at -16.89px, i.e. 17px of the logo above the paper,
+cropped in print. The box is therefore pinned flush to the page's top edge —
+the highest position that shows all 90px.
+
+**The band and the divider move only when a logo exists.** A 90px square ends
+at 67.5pt and the master's divider sits at 44.07pt, so the rule and tagline are
+pushed below the square whenever a logo is present (`ruleMarginPt`, with a 3pt
+clear gap; band becomes `textBandH` = 83.37pt). With NO logo uploaded the
+master's own 54.05pt band and 3.76pt rule margin are used untouched, so the
+verified baselines are preserved for brands that have no logo. Everything below
+the letterhead shifts down by the band's growth (54.05 → 83.37pt = 39.1px) in
+the logo case — unavoidable, since the master's own logo is 28.23pt (37.6px)
+tall precisely because that is what fits above its divider.
+
+Measured (relative to the sheet's top-left; square 1:1 logo):
+
+| case | box | artwork | artwork top | band | rule top | rule below logo |
+|---|---|---|---|---|---|---|
+| no logo | not rendered | — | — | 54.05pt | 44.06pt | — |
+| square 1:1 @120px | 90x90 @ (20, 0) | 90 x 90 | 0 | 83.37pt | 70.48pt | yes |
+
+Rendered aspect ratio equals natural aspect ratio (1.000 vs 1.000), so the
+artwork is not distorted. Verified in the PRINT FRAME too — the payload that
+generates the PDF carries the same inline rule, computed 90px x 90px with
+`max-width/height: none`.
+
+Still capped ELSEWHERE (different documents, not the ERP invoice — report
+before touching): `.quo-logo-img { width:64px; height:64px; ... }` (standalone
+Quotation letterhead, css/style.css + PRINT_DOC_CSS), `.mx-logo { max-height:
+65px; width:auto; ... }` (the `.mx-*` template), and `.brand-logo-preview img {
+width:100%; height:100% }` in a 96px box (Brand settings thumbnail — a preview,
+not a document).
+
+## Home dashboard pass — 2026-09-12
+
+Seven fixes on the Insights Hub. Each one is behavioural, so the notes below
+are the rules, not the code.
+
+### 1. KPI percentage badges are real or absent
+
+`applyKpiDelta()` is the only place a badge is written, and it now compares the
+last 30 days against the 30 days before that (`KPI_WINDOW_MS`, `kpiWindowOf`,
+`kpiTrends`). Sources are real timestamps: `history[].at`, ERP
+`erpRecords[].savedAt`, database `addedAt`.
+
+**If the earlier window has no events the badge is hidden** (`[hidden]`, which
+style.css rules with `display:none !important`). There is no "+100% when the
+previous period was empty" and no "0% when both are empty" — both were
+placeholders that read as statistics. A genuine 0% (baseline exists, nothing
+changed) still shows, in the neutral grey pill.
+
+Gone with it: the whole `nexora_kpi_snapshots` mechanism (`KPI_SNAPSHOT_KEY`,
+`kpiMonthKey`, `kpiPrevMonthKey`, `readKPISnapshots`, `writeKPISnapshots`) and
+the always-hidden `#kpi-val-cached` debug span. Nothing reads or writes that
+localStorage key now; an existing key is simply left behind.
+
+The badge counts FLOWS, not levels: new records added / documents generated /
+value processed in each window. A total cannot have a 30-day delta; the new
+events in the window can. The `title` tooltip spells out both windows, e.g.
+"Documents generated: 2 in the last 30 days vs 1 in the 30 days before that".
+
+### 2. Processed Value is labelled money
+
+Headline is the compact form with the invoice currency's symbol ("Rs 257.8K");
+the sub-line spells it out ("LKR 257,830 across 2 documents"). Currency comes
+from `erpCurrencyCode()` (the ERP document's currency, guarded against unknown
+codes). If `history[].total` strings carry more than one symbol the sub-line
+says "· mixed currencies" rather than silently summing across them.
+
+### 3. Tool cards explain themselves
+
+Every `TOOLS` entry has a `blurb` — one plain sentence rendered as
+`.tool-card-desc`, clamped to two lines so a row of cards stays even. The
+longer `desc` is untouched and still used by the tool page and Utilities hub.
+
+### 4. Priority grid + collapsed "Advanced tools"
+
+`TOOLS_PRIMARY = ['invoice', 'boq', 'pricing']` renders first; the other nine go
+inside a native `<details class="tools-more">`, **collapsed by default**, so
+Home opens with three cards instead of twelve equal-weight ones. `details` is
+used deliberately: no JS state, keyboard operable, accessible. The card click
+handler is delegated on `#tools-grid` and matches `closest('.tool-card')`, so
+cards inside the disclosure still launch and clicking the summary only
+toggles. `toolsMoreOpen` remembers the open state across re-renders (launching
+a tool from inside force-renders the grid) but is never persisted — a fresh
+load is always collapsed.
+
+### 5. Activity entries name the document
+
+`pushHistory()` stores `client` and `ref` alongside the existing `title`/
+`total`, filled by the four ERP call sites. `renderActivity()` renders document
+rows as: client in bold, then `Ref <ref>` pill + amount, then the timestamp.
+**The tool name is no longer printed on activity rows** — it was identical on
+every row ("Master ERP Engine — Tax / Commercial Invoice") and told the reader
+nothing; the icon already encodes the event kind and History keeps the full
+detail. Rows logged before these fields existed fall back to `title`.
+
+### 6. System Health storage line
+
+The value column was `grid-template-columns: … 44px`, so "11.4 KB / 5 MB" was
+clipped to "11.4 KB / 5 ". It is now `76px minmax(40px,1fr) auto` with a
+`nowrap` value, so the unit is always visible and the bar absorbs the slack.
+The label reads `1.4 KB / ~5 MB` — the `~` is honest, the 5 MB figure is the
+browsers' usual localStorage allowance, not a spec — and the exact count plus
+percentage lives in the `title` tooltip on the value.
+
+### 7. Routing (see the next section for the mechanism)
+
+Confirmed: `DEFAULT_VIEW = 'home'` and boot is `showView(viewFromHash() ||
+DEFAULT_VIEW)`. The only three `showView('erp')` calls left are user actions
+(history "open draft" for an ERP document, the sidebar Master ERP Engine item,
+and the footer ERP link). `'sidebar-erp'` in `navIds` only drives the active
+pill. The sole writer of `erp-view.hidden` in the whole file is `showView()`,
+so there is no second path that can reveal the ERP view on load.
+
+## View routing (fragment-based) — added 2026-09-12
+
+Root cause of "refresh lands on Master ERP Engine": boot called
+`showView('erp')` unconditionally and there was no routing at all — no hash,
+no persistence, no URL reading. Every reload therefore jumped to ERP whatever
+the user had been looking at.
+
+Fixed by mirroring the active view into the URL fragment (#/erp, #/home, …):
+
+- `VIEW_NAMES` is the single list of valid views; `DEFAULT_VIEW = 'home'`.
+- `viewFromHash()` reads the fragment (`#/erp`, `#erp` and case variants all
+  normalise); anything unrecognised returns `''` and is treated as "no view".
+- `showView(name)` validates against `VIEW_NAMES`, sets `currentView`, then
+  calls `syncViewHash()`, which uses `history.replaceState` (NOT a hash
+  assignment) so switching views does not bury the page under history
+  entries. `replaceState` can throw on `file://` URLs, hence the
+  `location.hash` fallback in the catch.
+- Boot: `showView(viewFromHash() || DEFAULT_VIEW)`.
+- A `hashchange` listener handles back/forward, hand-edited fragments and
+  external deep links. It is a no-op when the fragment matches
+  `currentView`, so the write in `showView` cannot loop. An unrecognised
+  fragment is rejected AND normalised back to the on-screen view.
+
+The Escape key that dismisses the History view now returns to `DEFAULT_VIEW`
+(Home) instead of jumping to ERP.
+
+Behaviour: a cold visit with no fragment opens Home (matching the HTML's own
+initial state — `#home-view` is the only section without `hidden`); reloading
+keeps the current page; deep links like `#/invoice` open that view directly.
 
 ## Why the two top-level html files exist
 

@@ -64,6 +64,10 @@
   --glow: 0 0 22px rgba(255, 255, 255, 0.16);
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);   /* springy hover curve */
+
+  /* Fixed sidebar rail width — the main column reserves exactly this much
+     space, so the collapsed/expanded transition has a single source of truth. */
+  --sidebar-w: 270px;
 }
 
 * { box-sizing: border-box; }
@@ -148,7 +152,8 @@ body::before {
 /* ── Sidebar + main layout ───────────────────────────────── */
 main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0; }
 .sidebar {
-  flex: 0 0 240px;
+  flex: 0 0 var(--sidebar-w);
+  width: var(--sidebar-w);
   position: fixed;
   left: 0;
   top: 0;
@@ -236,6 +241,9 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 }
 .sidebar-toggle:hover { color: var(--text-strong); border-color: var(--border-strong); }
 .sidebar-close { display: none; }
+/* Collapsed-rail handle: appears only while the desktop sidebar is hidden,
+   so there is always a way to bring the navigation back. */
+.sidebar-reopen { display: none; }
 /* Sidebar footer: Home / theme / auth — the old top navbar's controls */
 .sidebar-foot {
   display: flex;
@@ -329,9 +337,72 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 .menu-btn:hover { color: var(--text-strong); border-color: var(--border-strong); }
 .main-area { flex: 1 1 auto; min-width: 0; padding: 4px 24px 40px 24px; }
 
+/* Desktop: the fixed rail reserves its own column, and the main column
+   slides across to fill the freed space when the rail is collapsed. Both
+   the padding and the max-width animate, so the content stays optically
+   centred in whichever space is left rather than snapping to a new spot. */
 @media (min-width: 1025px) {
-  body.sidebar-collapsed .sidebar { display: none; }
-  body.sidebar-collapsed .main-area { padding-left: 0; }
+  .sidebar {
+    transition: transform 0.34s var(--ease), opacity 0.34s var(--ease),
+      border-color 0.34s var(--ease);
+  }
+  .sidebar.collapsed,
+  body.sidebar-collapsed .sidebar {
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+    border-right-color: transparent;
+  }
+  main.container {
+    max-width: calc(1240px + var(--sidebar-w));
+    padding-left: var(--sidebar-w);
+    transition: padding-left 0.34s var(--ease), max-width 0.34s var(--ease);
+  }
+  body.sidebar-collapsed main.container {
+    max-width: 1240px;
+    padding-left: 20px;
+  }
+  body.sidebar-collapsed .sidebar-reopen {
+    display: inline-flex;
+    position: fixed;
+    top: 50%;
+    left: 0;
+    transform: translateY(-50%);
+    z-index: 41;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 78px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: none;
+    border-radius: 0 10px 10px 0;
+    background: rgba(22, 28, 45, 0.72);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    color: #8b949e;
+    cursor: pointer;
+    transition: color 0.25s var(--ease), box-shadow 0.25s var(--ease),
+      background 0.25s var(--ease);
+  }
+  body.sidebar-collapsed .sidebar-reopen:hover {
+    color: #ffffff;
+    background: rgba(35, 45, 75, 0.85);
+    box-shadow: 0 0 22px rgba(99, 102, 241, 0.3);
+  }
+  body.sidebar-collapsed .sidebar-reopen:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.4);
+  }
+  body.sidebar-collapsed .sidebar-reopen .nav-icon { width: 18px; height: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  main.container,
+  body.sidebar-collapsed .sidebar-reopen {
+    transition: none;
+  }
 }
 
 @media (max-width: 1024px) {
@@ -821,6 +892,18 @@ textarea { resize: vertical; min-height: 44px; line-height: 1.55; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 540px; }
 
 /* ── Database full-width grid cards (Item & Client DB) ─────────── */
+/* Item / Client DB save row, sitting between the form fields and the table.
+   Its buttons start at the card's left edge — the same edge the table header's
+   first column starts from — so with no bottom margin the button lands flush on
+   the header and covers the "SKU" / "Client" label. The margin keeps it clear
+   of both the inputs above and the header below, while staying left-aligned
+   with the input fields (no extra indent on either side). */
+.actions.db-form-actions {
+  margin: 18px 0 18px;
+  padding-left: 0;
+}
+.actions.db-form-actions .btn { flex: 0 0 auto; }
+
 .db-list { display: flex; flex-direction: column; }
 .db-list-head {
   padding: 0 12px 8px;
@@ -1274,6 +1357,43 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .tool-card-meta { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--faint); }
 .tool-card-meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-card-meta strong { color: var(--muted); font-weight: 600; }
+/* What the tool actually does, so a first-time user does not have to launch
+   it to find out. Clamped to two lines so every card in the row stays the
+   same height however long the sentence is. */
+.tool-card-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* "Advanced tools" — a native disclosure so the secondary calculators are
+   one click away without twelve equal-weight cards on first load. */
+.tools-more { grid-column: 1 / -1; }
+.tools-more-summary {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+  cursor: pointer; list-style: none;
+  padding: 12px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 13px; font-weight: 700; color: var(--text-strong);
+  transition: border-color 0.25s var(--ease), background 0.25s var(--ease);
+}
+.tools-more-summary::-webkit-details-marker { display: none; }
+.tools-more-summary::after {
+  content: '\25be';
+  margin-left: auto; color: var(--faint); font-size: 11px;
+  transition: transform 0.2s var(--ease);
+}
+.tools-more[open] .tools-more-summary::after { transform: rotate(180deg); }
+.tools-more-summary:hover { border-color: var(--accent-line); background: rgba(255, 255, 255, 0.04); }
+.tools-more-summary:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.tools-more-hint { font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.tools-grid-advanced { margin-top: 14px; }
 .tool-launch {
   margin-top: auto;
   width: 100%;
@@ -1338,9 +1458,14 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .pm-arrow { color: var(--faint); font-size: 12px; flex: none; }
 .pm-caption { margin: 10px 0 0; font-size: 11.5px; color: var(--faint); }
 .health-list { display: flex; flex-direction: column; gap: 9px; }
-.health-item { display: grid; grid-template-columns: 92px 1fr 44px; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
-.health-item strong { text-align: right; color: var(--text-strong); font-variant-numeric: tabular-nums; }
-.health-bar { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+/* The value column was a fixed 44px, which clipped anything wider than a
+   couple of digits — "11.4 KB / 5 MB" lost its unit. It is sized to its
+   content now (never wrapping), the bar takes the slack, and the label
+   column is trimmed instead. */
+.health-item { display: grid; grid-template-columns: 76px minmax(40px, 1fr) auto; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.health-item > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.health-item strong { text-align: right; color: var(--text-strong); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.health-bar { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; min-width: 40px; }
 .health-fill { height: 100%; border-radius: 999px; background: var(--accent); box-shadow: 0 0 10px rgba(255, 255, 255, 0.45); transition: width 0.6s var(--ease-out); }
 
 /* Recent Activity feed */
@@ -1384,6 +1509,16 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .activity-text { font-size: 12.5px; color: var(--text); line-height: 1.4; overflow-wrap: anywhere; }
 .activity-text strong { color: var(--text-strong); font-weight: 600; }
 .activity-time { font-size: 11px; color: var(--faint); margin-top: 2px; }
+/* Second line of a document entry: which document it was (reference) and
+   what it was worth. */
+.activity-doc { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 3px; }
+.activity-ref {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px; padding: 1px 6px;
+}
+.activity-amount { font-size: 12px; font-weight: 700; color: var(--text-strong); font-variant-numeric: tabular-nums; }
 .activity-empty { color: var(--faint); font-size: 12.5px; padding: 8px 2px; }
 .activity-clear {
   background: none; border: none; padding: 0;
@@ -1698,7 +1833,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 }
 .pdf-preview-canvas { width: 816px; }
 .pdf-preview-canvas > #pdf-preview-container { width: 816px; }
-#pdf-preview-container { background: #ffffff; color: #000000; cursor: text; }
+#pdf-preview-container { background: #ffffff; color: #000000; cursor: default; }
 
 /* ── Premium Plans view ─────────────────────────────────────
    Two glass subscription cards on the shared .card surface; the yearly
@@ -1771,132 +1906,63 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .plan-card .actions { margin-top: auto; }
 .plan-cta { width: 100%; justify-content: center; font-weight: 600; }
 
-/* ── PDF editor toolbar ───────────────────────────────────────
-   Sticky so it stays reachable while the sheet scrolls; every control is
-   hidden in @media print, so nothing here can reach a printed page. */
-.pdf-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 7;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  background: rgba(17, 20, 34, 0.94);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+/* ── Editable document fields ─────────────────────────────────
+   There is no editing toolbar. The ONLY interactive parts of the sheet
+   are the elements the renderer tagged with `data-edit`, and they are the
+   only things that ever get an affordance — `cursor: text`, a hover tint
+   and a focus ring. Locked template furniture (letterhead, column
+   headers, section labels, footer wording) gets nothing at all, which is
+   what tells the user where they may type without any instructions.
+   All of this is SCREEN ONLY, so no hover tint or focus ring can reach a
+   printed page. */
+@media screen {
+  #pdf-preview-container [data-edit] {
+    cursor: text;
+    border-radius: 3px;
+    transition: background-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+  }
+  #pdf-preview-container [data-edit]:hover {
+    background-color: rgba(99, 102, 241, 0.12);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.45);
+  }
+  #pdf-preview-container [data-edit]:focus {
+    outline: none;
+    background-color: rgba(99, 102, 241, 0.09);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.75);
+  }
+  /* Rejected input: flashed briefly, then the field is restored from the
+     single source of truth. */
+  #pdf-preview-container [data-edit].pdf-invalid {
+    background-color: rgba(239, 68, 68, 0.16) !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.75) !important;
+  }
+  #pdf-preview-container ::selection { background: rgba(99, 102, 241, 0.25); }
 }
-.pdf-tb-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-right: 10px;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-.pdf-tb-group:last-of-type { border-right: none; padding-right: 0; }
-.pdf-tb-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #8b949e;
-  white-space: nowrap;
-}
-.pdf-tb-select,
-.pdf-tb-num,
-.pdf-tb-btn {
+
+/* The native date picker used by the date fields: an overlay input so the
+   document's own layout never shifts while it is open. */
+.pdf-date-input {
+  z-index: 60;
   font: inherit;
   font-size: 12px;
-  color: var(--text-strong);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 7px;
-  padding: 4px 7px;
-  cursor: pointer;
-  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
-}
-.pdf-tb-select { max-width: 150px; }
-.pdf-tb-num { width: 52px; text-align: center; cursor: text; }
-.pdf-tb-btn { min-width: 28px; text-align: center; }
-.pdf-tb-select:hover,
-.pdf-tb-num:hover,
-.pdf-tb-btn:hover { background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.5); }
-.pdf-tb-toggle[aria-pressed="true"] {
-  background: rgba(99, 102, 241, 0.28);
-  border-color: rgba(99, 102, 241, 0.65);
-  color: #c7d2fe;
-  font-weight: 600;
-}
-.pdf-tb-color {
-  width: 34px;
-  height: 26px;
-  padding: 0 2px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 7px;
-  cursor: pointer;
-}
-.pdf-tb-range { width: 112px; accent-color: #6366f1; cursor: pointer; }
-.pdf-tb-readout,
-.pdf-tb-target {
-  font-size: 11px;
-  color: #8b949e;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.pdf-tb-target { margin-left: auto; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
-
-/* Selection outline + move-mode affordances — SCREEN ONLY. */
-@media screen {
-  #pdf-preview-container .pdf-selected {
-    outline: 2px solid #3b82f6 !important;
-    outline-offset: 1px;
-  }
-  #pdf-preview-container.pdf-move-mode [data-pdf-block] { cursor: move; }
-  #pdf-preview-container.pdf-move-mode [data-pdf-block]:hover {
-    outline: 1px dashed rgba(59, 130, 246, 0.8) !important;
-    outline-offset: 1px;
-  }
+  color: #0b0d17;
+  background: #ffffff;
+  border: 1px solid #6366f1;
+  border-radius: 6px;
+  padding: 0 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-/* Print: no toolbar, no selection ring — not even mid-drag. */
 @media print {
-  .pdf-toolbar,
-  .pdf-tb-target { display: none !important; }
-  #pdf-preview-container .pdf-selected,
-  #pdf-preview-container.pdf-move-mode [data-pdf-block]:hover { outline: none !important; }
-}
-body.pdf-printing .pdf-toolbar { display: none !important; }
-body.pdf-printing #pdf-preview-container .pdf-selected { outline: none !important; }
-
-/* Edit affordance — SCREEN ONLY, so no hover tint or outline can ever
-   reach a printed page. (#pdf-preview-container is itself the
-   contenteditable element; the leaf rule below lights up the individual
-   text block under the pointer, which is what actually feels editable.) */
-@media screen {
-  #pdf-preview-container [contenteditable="true"]:hover,
-  #pdf-preview-container td:hover,
-  #pdf-preview-container th:hover { background-color: rgba(13, 27, 110, 0.04); cursor: text; }
-  #pdf-preview-container :hover:not(:has(*)) { background-color: rgba(13, 27, 110, 0.06); }
-  #pdf-preview-container :focus { outline: none; background-color: rgba(13, 27, 110, 0.08); }
-  #pdf-preview-container ::selection { background: rgba(13, 27, 110, 0.22); }
-}
-@media print {
-  #pdf-preview-container,
-  #pdf-preview-container [contenteditable],
-  #pdf-preview-container [contenteditable]:hover,
-  #pdf-preview-container td:hover,
-  #pdf-preview-container th:hover,
-  #pdf-preview-container :focus {
+  #pdf-preview-container [data-edit],
+  #pdf-preview-container [data-edit]:hover,
+  #pdf-preview-container [data-edit]:focus {
     background: transparent !important;
     outline: none !important;
     box-shadow: none !important;
     cursor: auto !important;
   }
+  .pdf-date-input { display: none !important; }
 }
 
 /* Offscreen printable quotation (PDF source). Fixed width = A4 @96dpi;
@@ -2833,12 +2899,16 @@ body.pdf-printing #pdf-preview-container .pdf-selected { outline: none !importan
   /* Kill the browser's default URL/date header & footer: zero page margin
      (Chrome/Edge hide their print chrome at margin 0). */
   @page { size: A4 portrait; margin: 0; }
+  /* The desktop rail reserves a padding column; printing hides the rail, so
+     the reserved space must go with it or every page keeps a 270px indent. */
+  main.container { padding-left: 0 !important; max-width: 1240px !important; }
   .site-header,
   .sidebar,
   .site-footer,
   #menu-btn,
   .menu-btn,
   .sidebar-close,
+  .sidebar-reopen,
   .sidebar-foot,
   .tool-banner,
   .actions,
@@ -3471,6 +3541,7 @@ body {
         <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
       </nav>
       <div class="sidebar-foot">
+        <button type="button" class="sidebar-link sidebar-link-sm" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the navigation menu"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span><span id="sidebar-collapse-label">Collapse menu</span></button>
         <button type="button" class="sidebar-link sidebar-link-sm" id="theme-toggle" aria-label="Toggle light or dark theme"><span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Toggle theme</span></button>
         <button type="button" class="sidebar-help-btn" id="sidebar-help" aria-label="Open the How to use guide"><span class="nav-icon" data-icon="help" aria-hidden="true"></span><span>How to use</span></button>
         <div class="sidebar-profile" id="auth-guest">
@@ -3501,6 +3572,7 @@ body {
         </div>
       </div>
     </aside>
+    <button type="button" class="sidebar-reopen" id="sidebar-reopen" aria-controls="sidebar" aria-expanded="false" aria-label="Expand the navigation menu" title="Expand menu"><span class="nav-icon" data-icon="chevron-right" aria-hidden="true"></span></button>
     <div class="main-area" id="main-area">
     <noscript>
       <div class="card">
@@ -3716,59 +3788,14 @@ body {
           <h2 id="pdf-preview-title">Document preview</h2>
           <span class="pill pill-muted" id="pdf-preview-state">Live</span>
         </div>
-        <p class="hint">Click any text on the sheet to edit it — corrections are kept and printed exactly as shown. Editing pins the preview, so form changes stop regenerating it until you press <strong>Rebuild from form</strong>.</p>
+        <p class="hint">Click a highlighted field on the sheet to change it — the form on this page updates with it, and the two can never drift apart. Quantity and rate recalculate the amounts, VAT and total as you type. Everything else on the sheet is fixed template furniture.</p>
         <div class="actions">
           <button type="button" class="btn btn-ghost btn-sm" id="pdf-preview-rebuild"><span class="nav-icon" data-icon="history" aria-hidden="true"></span>Rebuild from form</button>
         </div>
 
-        <!-- PDF editor toolbar — floats above the sheet. Every control acts
-             on the element you clicked (outlined in blue); nothing here is
-             ever printed (see .pdf-toolbar in @media print). -->
-        <div class="pdf-toolbar" id="pdf-toolbar" role="toolbar" aria-label="Document editor">
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-font">Font</label>
-            <select class="pdf-tb-select" id="pdf-tb-font">
-              <option value="Arial, Helvetica, sans-serif">Arial</option>
-              <option value="'Times New Roman', Times, serif">Times New Roman</option>
-              <option value="'Courier New', Courier, monospace">Courier</option>
-              <option value="Calibri, 'Segoe UI', Arial, sans-serif">Calibri</option>
-            </select>
-          </div>
-          <div class="pdf-tb-group">
-            <span class="pdf-tb-label">Size</span>
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-size-down" aria-label="Decrease font size">&minus;</button>
-            <input type="text" inputmode="decimal" class="pdf-tb-num" id="pdf-tb-size" value="9.8" aria-label="Font size in points">
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-size-up" aria-label="Increase font size">+</button>
-          </div>
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-color">Colour</label>
-            <input type="color" class="pdf-tb-color" id="pdf-tb-color" value="#000000" aria-label="Text colour">
-          </div>
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-scale">Zoom</label>
-            <input type="range" class="pdf-tb-range" id="pdf-tb-scale" min="0.8" max="1.2" step="0.05" value="1" aria-label="Preview scale">
-            <span class="pdf-tb-readout" id="pdf-tb-scale-out">1.00x</span>
-          </div>
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-lh">Line</label>
-            <select class="pdf-tb-select" id="pdf-tb-lh">
-              <option value="1.2">1.2</option>
-              <option value="1.4">1.4</option>
-              <option value="1.6">1.6</option>
-            </select>
-          </div>
-          <div class="pdf-tb-group">
-            <button type="button" class="pdf-tb-btn pdf-tb-toggle" id="pdf-tb-move" aria-pressed="false" title="Drag whole sections of the page">Move mode</button>
-          </div>
-          <div class="pdf-tb-group">
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-reset">Reset layout</button>
-          </div>
-          <span class="pdf-tb-target" id="pdf-tb-target">Nothing selected</span>
-        </div>
-
         <div class="pdf-preview-shell">
           <div class="pdf-preview-canvas">
-            <div id="pdf-preview-container" contenteditable="true" spellcheck="false" aria-label="Editable document preview" style="outline: none; box-sizing: border-box;"></div>
+            <div id="pdf-preview-container" spellcheck="false" aria-label="Editable document preview" style="outline: none; box-sizing: border-box;"></div>
           </div>
         </div>
       </section>
@@ -3818,7 +3845,7 @@ body {
                 <input type="text" inputmode="decimal" data-numeric="1" id="db-item-rate" placeholder="e.g. 1,500" autocomplete="off">
               </div>
             </div>
-            <div class="actions">
+            <div class="actions db-form-actions">
               <button type="button" class="btn btn-primary btn-sm" id="db-item-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-item-cancel" hidden>Cancel edit</button>
             </div>
@@ -3895,7 +3922,7 @@ body {
               <label for="db-client-hscode">HS code</label>
               <input type="text" id="db-client-hscode" placeholder="e.g. 8536.69" autocomplete="off">
             </div>
-            <div class="actions">
+            <div class="actions db-form-actions">
               <button type="button" class="btn btn-primary btn-sm" id="db-client-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add client</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-client-cancel" hidden>Cancel edit</button>
             </div>
@@ -3943,7 +3970,6 @@ body {
           </div>
           <span class="kpi-value" id="kpi-val">0</span>
           <span class="kpi-sub" id="kpi-val-sub">Totals across all documents</span>
-          <span class="kpi-cached" id="kpi-val-cached" hidden></span>
         </div>
       </div>
 
@@ -7533,17 +7559,68 @@ body {
     if (bp) bp.value = savedBg || '#000000';
   }
 
-  /* ── Sidebar (collapsible; overlay under 1024px) ── */
+  /* ── Sidebar (collapsible rail on desktop; overlay drawer under 1025px) ──
+     Two states, two mechanisms: on desktop the rail is taken out of the way
+     with `sidebar-collapsed` (the main column animates across to fill the
+     gap); under 1025px it is an off-canvas drawer driven by `sidebar-open`.
+     The collapsed/expanded choice is remembered across reloads. */
+  const SIDEBAR_KEY = 'cm-sidebar-v1';
+
+  function isDesktopNav() {
+    return !!(window.matchMedia && window.matchMedia('(min-width: 1025px)').matches);
+  }
+
+  /* Paints everything that depends on the collapsed state: the body class
+     (which drives the CSS), the rail's own `.collapsed` class, the toggle's
+     label + aria state, and `inert` so a hidden rail cannot take focus. */
+  function syncSidebarState() {
+    const desktop = isDesktopNav();
+    const collapsed = desktop && document.body.classList.contains('sidebar-collapsed');
+    const sb = $('sidebar');
+    if (sb) {
+      sb.classList.toggle('collapsed', collapsed);
+      if ('inert' in sb) sb.inert = collapsed;
+      if (collapsed) sb.setAttribute('aria-hidden', 'true');
+      else sb.removeAttribute('aria-hidden');
+    }
+    const toggle = $('sidebar-collapse');
+    if (toggle) toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    const label = $('sidebar-collapse-label');
+    if (label) {
+      label.textContent = desktop
+        ? (collapsed ? 'Expand menu' : 'Collapse menu')
+        : 'Close menu';
+    }
+    const reopen = $('sidebar-reopen');
+    if (reopen) reopen.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
+  }
+
   function toggleSidebar() {
-    if (window.matchMedia && window.matchMedia('(min-width: 1025px)').matches) {
-      document.body.classList.toggle('sidebar-collapsed');
+    if (isDesktopNav()) {
+      const next = !document.body.classList.contains('sidebar-collapsed');
+      document.body.classList.toggle('sidebar-collapsed', next);
+      try { localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0'); } catch (e) { /* ignore */ }
     } else {
       document.body.classList.toggle('sidebar-open');
     }
+    syncSidebarState();
   }
 
   function closeSidebar() {
     document.body.classList.remove('sidebar-open');
+  }
+
+  /* Restore the remembered rail state and keep it honest across resizes
+     (a rail collapsed on desktop must not leave the drawer inert on mobile). */
+  function initSidebarState() {
+    let saved = '';
+    try { saved = localStorage.getItem(SIDEBAR_KEY) || ''; } catch (e) { /* ignore */ }
+    document.body.classList.toggle('sidebar-collapsed', saved === '1');
+    syncSidebarState();
+    window.addEventListener('resize', function () {
+      if (isDesktopNav()) closeSidebar();
+      syncSidebarState();
+    });
   }
 
   /* ── Comma formatting for numeric inputs (display only) ── */
@@ -7620,6 +7697,7 @@ body {
       badge: 'Tool #01',
       icon: 'target',
       short: 'Scope Guard',
+      blurb: 'Price the extra work a client asks for and send a change order.',
       name: 'Project Change & Scope Calculator',
       desc: 'The client asks for \u201cjust one more thing.\u201d See what it really costs, watch your effective hourly rate drop in real time, and send a professional change order in seconds.',
       meta: 'Private · works offline',
@@ -7629,6 +7707,7 @@ body {
       badge: 'Tool #02',
       icon: 'ruler',
       short: 'Qty & Rate',
+      blurb: 'Turn quantities and rates into line amounts and a running total.',
       name: 'Quantity & Rate Calculator',
       desc: 'Enter quantity, unit and rate for each line item — amounts and the running total update instantly. Built for businesses and teams who are tired of doing this in Excel.',
       meta: 'Private · works offline',
@@ -7638,6 +7717,7 @@ body {
       badge: 'Tool #03',
       icon: 'doc',
       short: 'Quotation',
+      blurb: 'Build an itemised quotation with discount and VAT, then export a PDF.',
       name: 'Quotation',
       desc: 'Build a client quotation with an itemized bill of quantities, discount and VAT, then download it as a formal PDF. Made for businesses, teams, and independent professionals.',
       meta: 'Private · works offline',
@@ -7647,6 +7727,7 @@ body {
       badge: 'Tool #04',
       icon: 'chart',
       short: 'Pricing',
+      blurb: 'Work out a profitable selling price from cost and margin.',
       name: 'Margin & Markup Pricing Calculator',
       desc: 'Base cost plus overhead allocation, a margin or markup target, and the profitable selling price — with a copyable summary. Price with confidence instead of gut feel.',
       meta: 'Private · works offline',
@@ -7656,6 +7737,7 @@ body {
       badge: 'Tool #05',
       icon: 'invoice',
       short: 'Invoice',
+      blurb: 'Create quotations, invoices and delivery notes with your letterhead.',
       name: 'Smart Invoice & Document Builder',
       desc: 'Build Quotations, Proforma Invoices, Commercial/Tax Invoices and Delivery Notes with your own letterhead and a one-click PDF.',
       meta: 'Private · works offline',
@@ -7665,6 +7747,7 @@ body {
       badge: 'Tool #06',
       icon: 'globe',
       short: 'Import Tax',
+      blurb: 'Work out duty, taxes and landed cost per unit on an import.',
       name: 'Import Tax & Landed Cost Calculator',
       desc: 'Enter the CIF value and your duty, PAL, CESS, SSCL and VAT percentages — get the total tax payable, full component breakdown and landed cost per unit instantly.',
       meta: 'Private · works offline',
@@ -7674,6 +7757,7 @@ body {
       badge: 'Tool #07',
       icon: 'list',
       short: 'Variation',
+      blurb: 'Log site extras and see the revised contract value.',
       name: 'Variation & Change Order Generator',
       desc: 'Log additional site work with material and labor costs, see the revised contract value and % increase, then export a formal variation PDF for client approval.',
       meta: 'Private · works offline',
@@ -7683,6 +7767,7 @@ body {
       badge: 'Tool #08',
       icon: 'scale',
       short: 'Breakeven',
+      blurb: 'Find the hourly rate that covers your costs and target income.',
       name: 'Freelance Rate & Overhead Breakeven Calculator',
       desc: 'Target income plus overhead and taxes, minus every unbilled admin hour — get the minimum hourly and daily rate that keeps you out of the red.',
       meta: 'Private · works offline',
@@ -7692,6 +7777,7 @@ body {
       badge: 'Tool #09',
       icon: 'exchange',
       short: 'FX & Fees',
+      blurb: 'Invoice enough to still receive your target after transfer fees.',
       name: 'Cross-Border FX & Fee Adjuster',
       desc: 'Invoice the exact amount so you still receive your target payout after Stripe, PayPal, Wise or wire fees — with the full fee-loss breakdown.',
       meta: 'Private · works offline',
@@ -7701,6 +7787,7 @@ body {
       badge: 'Tool #10',
       icon: 'grad',
       short: 'GPA Planner',
+      blurb: 'See the grades you still need to hit your target GPA.',
       name: 'Academic GPA & Target Grade Planner',
       desc: 'See the average you must hold across remaining credits to graduate at your target GPA — and the score each weighted assignment needs.',
       meta: 'Private · works offline',
@@ -7710,6 +7797,7 @@ body {
       badge: 'Tool #11',
       icon: 'handshake',
       short: 'Retainer',
+      blurb: 'Price a monthly retainer with hours, margin and SLA.',
       name: 'Retainer & SLA Pricing Estimator',
       desc: 'Price a monthly client retainer: included hours, blended rate, overhead, target margin and an SLA surcharge — with the annual contract value.',
       meta: 'Private · works offline',
@@ -7719,6 +7807,7 @@ body {
       badge: 'Tool #12',
       icon: 'clock',
       short: 'Delay Impact',
+      blurb: 'Estimate delay penalties and overhead exposure before you sign.',
       name: 'Project Delay & Damages Impact Calculator',
       origName: 'Project Delay & Damages Impact Calculator',
       navName: 'Delay Impact',
@@ -7755,8 +7844,43 @@ body {
     btn.textContent = t.available ? 'Open Calculator \u2192' : 'Coming soon';
   }
 
-  /* ── View switching (Home ↔ tool) ────────────────────────── */
+  /* ── View switching (Home ↔ tool) ──────────────────────────
+     The active view is mirrored into the URL fragment (#/erp, #/home, …)
+     so it is part of the browser's own state rather than a variable that
+     dies on reload. That is what makes F5 land on the page you were
+     actually looking at. No fragment at all → Home; an unrecognised one
+     is ignored rather than blanking every view. */
+  const VIEW_NAMES = ['home', 'erp', 'db', 'utilities', 'tool', 'qr', 'boq', 'pricing',
+    'invoice', 'duty', 'variation', 'breakeven', 'fx', 'gpa', 'retainer', 'delay',
+    'history', 'settings', 'appearance', 'backup', 'plans'];
+  const DEFAULT_VIEW = 'home';
+  let currentView = '';
+
+  function viewFromHash(hash) {
+    const raw = String(hash === undefined ? window.location.hash : hash)
+      .replace(/^#\/?/, '').trim().toLowerCase();
+    return VIEW_NAMES.indexOf(raw) !== -1 ? raw : '';
+  }
+
+  /* Reflect the view in the URL. replaceState, not a hash assignment, so
+     moving between views does not bury the previous page under a stack of
+     history entries — the fragment is a bookmark of where you are, not a
+     trail. Some browsers refuse replaceState on file:// URLs, hence the
+     fallback. */
+  function syncViewHash(name) {
+    const want = '#/' + name;
+    if (window.location.hash === want) return;
+    try {
+      window.history.replaceState(null, '', want);
+    } catch (e) {
+      try { window.location.hash = want; } catch (e2) { /* ignore */ }
+    }
+  }
+
   function showView(name) {
+    if (VIEW_NAMES.indexOf(name) === -1) name = DEFAULT_VIEW;
+    currentView = name;
+    syncViewHash(name);
     $('erp-view').hidden = name !== 'erp';
     $('db-view').hidden = name !== 'db';
     $('utilities-view').hidden = name !== 'utilities';
@@ -10170,6 +10294,12 @@ body {
       toolName: entry.toolName || 'Nexora Engine',
       title: entry.title || '\u2014',
       total: entry.total || '',
+      /* Document entries carry the client and the reference so the activity
+         feed can name WHICH document it was. Repeating the document type for
+         every row told the reader nothing; rows logged before these fields
+         existed simply fall back to title/total. */
+      client: entry.client || '',
+      ref: entry.ref || '',
       at: Date.now()
     });
     if (history.length > 60) history = history.slice(0, 60);
@@ -10591,6 +10721,7 @@ body {
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.3 a2.8 2.8 0 1 1 3.9 2.9 c-0.8 0.4 -1.2 0.9 -1.2 1.9"/><circle cx="12" cy="17.3" r="0.6" fill="currentColor" stroke="none"/>',
     menu: '<path d="M4 6.5 h16 M4 12 h16 M4 17.5 h16"/>',
     close: '<path d="M6 6 l12 12 M18 6 l-12 12"/>',
+    'chevron-right': '<path d="M9.5 5.5 L16 12 L9.5 18.5"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15 H4.5 A1.5 1.5 0 0 1 3 13.5 v-9 A1.5 1.5 0 0 1 4.5 3 h9 A1.5 1.5 0 0 1 15 4.5 V5"/>',
     pdf: '<path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M8.5 14.2 h1.4 a1.2 1.2 0 0 1 0 2.4 h-1.4 v-4.7 M13 16.6 v-4.7 h1.3 a1.7 1.7 0 0 1 1.7 1.7 v1.3 a1.7 1.7 0 0 1 -1.7 1.7 Z"/>',
     sheet: '<rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M4 9 h16 M4 14.5 h16 M9.3 9 v11.5 M14.6 9 v11.5"/>',
@@ -10659,24 +10790,55 @@ body {
   }
 
   // Tools grid — 4-column structured cards on the Insights Hub.
+  /* The everyday three, in the order they are reached for. Everything else
+     lives behind "Advanced tools" so Home does not open with twelve
+     identical-weight cards. Ordered explicitly rather than by the TOOLS key
+     order, which is just the order the file happens to define them in. */
+  const TOOLS_PRIMARY = ['invoice', 'boq', 'pricing'];
+  /* Remembered so launching a tool from inside the disclosure does not slam
+     it shut behind you (recordUsage re-renders the grid). Still collapsed on
+     a fresh load — this is session state, not a persisted preference. */
+  let toolsMoreOpen = false;
+
+  function toolCardHtml(id) {
+    const t = TOOLS[id];
+    const u = toolUsage[id] || { count: 0, last: 0 };
+    return '<button type="button" class="tool-card" data-tool="' + id + '">' +
+      '<div class="tool-card-top">' +
+        '<span class="tool-cat-icon"><span class="tool-emoji" aria-hidden="true">' + (TOOL_EMOJI[id] || '\uD83D\uDD0D') + '</span></span>' +
+      '</div>' +
+      '<span class="tool-card-name">' + esc(t.short || t.name) + '</span>' +
+      (t.blurb ? '<span class="tool-card-desc">' + esc(t.blurb) + '</span>' : '') +
+      '<div class="tool-card-meta">' +
+        '<span>Last used: <strong>' + timeAgo(u.last) + '</strong></span>' +
+        '<span>Usage: <strong>' + u.count + '×</strong></span>' +
+      '</div>' +
+      '<span class="tool-launch">Launch Tool \u2192</span>' +
+    '</button>';
+  }
+
   function renderToolsGrid() {
     const grid = $('tools-grid');
     if (!grid) return;
-    grid.innerHTML = Object.keys(TOOLS).map(function (id) {
-      const t = TOOLS[id];
-      const u = toolUsage[id] || { count: 0, last: 0 };
-      return '<button type="button" class="tool-card" data-tool="' + id + '">' +
-        '<div class="tool-card-top">' +
-          '<span class="tool-cat-icon"><span class="tool-emoji" aria-hidden="true">' + (TOOL_EMOJI[id] || '\uD83D\uDD0D') + '</span></span>' +
-        '</div>' +
-        '<span class="tool-card-name">' + esc(t.short || t.name) + '</span>' +
-        '<div class="tool-card-meta">' +
-          '<span>Last used: <strong>' + timeAgo(u.last) + '</strong></span>' +
-          '<span>Usage: <strong>' + u.count + '×</strong></span>' +
-        '</div>' +
-        '<span class="tool-launch">Launch Tool \u2192</span>' +
-      '</button>';
-    }).join('');
+    const all = Object.keys(TOOLS);
+    const primary = TOOLS_PRIMARY.filter(function (id) { return all.indexOf(id) !== -1; });
+    const rest = all.filter(function (id) { return primary.indexOf(id) === -1; });
+    /* "Advanced tools" is a native <details> so it is collapsed by default,
+       keyboard operable and needs no state of its own. The card click
+       handler is delegated on #tools-grid and matches closest('.tool-card'),
+       so a card inside the disclosure still launches normally and clicking
+       the summary itself does nothing but toggle. */
+    grid.innerHTML =
+      primary.map(toolCardHtml).join('') +
+      '<details class="tools-more"' + (toolsMoreOpen ? ' open' : '') + '>' +
+        '<summary class="tools-more-summary">' +
+          '<span class="tools-more-label">Advanced tools</span>' +
+          '<span class="tools-more-hint">' + rest.length + ' more calculators \u2014 scope, duty, variations, FX and more</span>' +
+        '</summary>' +
+        '<div class="tools-grid tools-grid-advanced">' + rest.map(toolCardHtml).join('') + '</div>' +
+      '</details>';
+    const more = grid.querySelector('details.tools-more');
+    if (more) more.addEventListener('toggle', function () { toolsMoreOpen = more.open; });
   }
 
   // KPI row — live counts from the local data stores.
@@ -10686,32 +10848,64 @@ body {
     if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
     return String(Math.round(n));
   }
-  const KPI_SNAPSHOT_KEY = 'nexora_kpi_snapshots';
+  /* ── KPI trend windows ──────────────────────────────────────────
+     The badge is a REAL comparison or it is absent. It compares the last
+     30 days of activity against the 30 days before that, built from the
+     timestamps the records actually carry (history rows, ERP `savedAt`,
+     database `addedAt`).
 
-  function kpiMonthKey() {
-    const d = new Date();
-    const parts = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0')];
-    return parts.join('-');
+     It previously compared this month's snapshot against last month's and,
+     finding no last month, printed "+100%" whenever the current value was
+     non-zero and "0%" when both were zero — a placeholder dressed as a
+     statistic. There is no such fallback now: with no events in the earlier
+     window the badge is hidden (`[hidden]` in style.css). The old
+     `nexora_kpi_snapshots` store is no longer written or read. */
+  const KPI_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+  // 'now' = last 30 days, 'prev' = the 30 days before that, 'old' = ignored.
+  function kpiWindowOf(ts) {
+    const age = Date.now() - ts;
+    if (!isFinite(age) || age < 0) return 'now'; // clock skew: treat as current
+    if (age <= KPI_WINDOW_MS) return 'now';
+    if (age <= 2 * KPI_WINDOW_MS) return 'prev';
+    return 'old';
   }
 
-  function kpiPrevMonthKey() {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    const parts = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0')];
-    return parts.join('-');
+  // The numeric part of a stored money string ('Rs358,720' → 358720).
+  function kpiTotalNumber(total) {
+    const v = parseFloat(String(total === null || total === undefined ? '' : total).replace(/[^0-9.]/g, ''));
+    return isFinite(v) ? v : 0;
   }
 
-  function readKPISnapshots() {
-    try {
-      const raw = localStorage.getItem(KPI_SNAPSHOT_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    } catch (e) { return {}; }
-  }
-
-  function writeKPISnapshots(snaps) {
-    try { localStorage.setItem(KPI_SNAPSHOT_KEY, JSON.stringify(snaps)); } catch (e) { /* ignore */ }
+  /* Flows per window, not levels: "documents generated", "records saved",
+     "value processed". A count of ALL records cannot have a 30-day delta,
+     but the new records in each window can — and that is what a growth
+     percentage means. */
+  function kpiTrends() {
+    const blank = function () { return { now: 0, prev: 0 }; };
+    const acc = { est: blank(), db: blank(), doc: blank(), val: blank() };
+    const bump = function (slot, ts, amount) {
+      if (!ts) return;
+      const w = kpiWindowOf(ts);
+      if (w === 'old') return;
+      acc[slot][w] += (amount === undefined ? 1 : amount);
+    };
+    // Active estimates — every saved record carries `savedAt` (ISO string).
+    for (const id in erpRecords) {
+      const rec = erpRecords[id];
+      if (rec && rec.savedAt) bump('est', Date.parse(rec.savedAt));
+    }
+    /* Database records — `addedAt` is only set from now on, so records saved
+       before it existed are counted in the headline total but deliberately
+       left out of the trend (an undated record belongs to no window). */
+    for (let i = 0; i < db.items.length; i++) if (db.items[i]) bump('db', db.items[i].addedAt);
+    for (let i = 0; i < db.clients.length; i++) if (db.clients[i]) bump('db', db.clients[i].addedAt);
+    // Documents and processed value — every history row is timestamped.
+    for (let i = 0; i < history.length; i++) {
+      bump('doc', history[i].at);
+      bump('val', history[i].at, kpiTotalNumber(history[i].total));
+    }
+    return acc;
   }
 
   function currentKPIValues() {
@@ -10719,10 +10913,7 @@ body {
     const dbCount = db.items.length + db.clients.length;
     const docCount = history.length;
     let procVal = 0;
-    for (let i = 0; i < history.length; i++) {
-      const m = parseFloat(String(history[i].total || '').replace(/[^0-9.]/g, ''));
-      if (isFinite(m)) procVal += m;
-    }
+    for (let i = 0; i < history.length; i++) procVal += kpiTotalNumber(history[i].total);
     if (erpDocType()) procVal += erpTotals().final;
     procVal += state.requests.reduce(function (s, r) { return s + (r.value || 0); }, 0);
     return { activeEst: activeEst, dbCount: dbCount, docCount: docCount, procVal: procVal };
@@ -10733,48 +10924,38 @@ body {
     return (val > 0 ? '+' : '') + val.toFixed(1).replace(/\.0$/, '') + '%';
   }
 
-  function applyKpiDelta(deltaEl, cur, prev) {
+  /* `fmt` renders a window figure for the tooltip (money vs a plain count).
+     No earlier-window events ⇒ no baseline ⇒ the badge is hidden, never
+     faked. A genuine 0% (a baseline exists but nothing changed) is shown,
+     in the neutral pill. */
+  function applyKpiDelta(deltaEl, cur, prev, what, fmt) {
     if (!deltaEl) return;
-    let pct = 0, cls = 'kpi-flat', text = '0%';
-    if (cur > 0 && prev === 0) {
-      pct = 100;
-      cls = 'kpi-up';
-      text = '+100%';
-    } else if (cur === 0 && prev === 0) {
-      pct = 0;
-      cls = 'kpi-flat';
-      text = '0%';
-    } else if (prev > 0) {
-      pct = ((cur - prev) / prev) * 100;
-      if (pct > 0) { cls = 'kpi-up'; text = fmtPctShort(pct); }
-      else if (pct < 0) { cls = 'kpi-down'; text = fmtPctShort(pct); }
-      else { cls = 'kpi-flat'; text = '0%'; }
+    if (!(prev > 0)) {
+      deltaEl.hidden = true;
+      deltaEl.textContent = '';
+      deltaEl.className = 'kpi-delta';
+      deltaEl.removeAttribute('title');
+      return;
     }
+    const pct = ((cur - prev) / prev) * 100;
+    let cls = 'kpi-flat';
+    if (pct > 0.0001) cls = 'kpi-up';
+    else if (pct < -0.0001) cls = 'kpi-down';
+    const show = fmt || function (v) { return String(v); };
+    deltaEl.hidden = false;
     deltaEl.className = 'kpi-delta ' + cls;
-    deltaEl.textContent = text;
+    deltaEl.textContent = fmtPctShort(pct);
+    deltaEl.title = what + ': ' + show(cur) + ' in the last 30 days vs ' + show(prev) +
+      ' in the 30 days before that';
   }
 
   function updateKPICards() {
-    const cur = currentKPIValues();
-    const snap = readKPISnapshots();
-    const month = kpiMonthKey();
-    if (!snap[month] || typeof snap[month] !== 'object') snap[month] = {};
-    snap[month].activeEst = cur.activeEst;
-    snap[month].dbCount = cur.dbCount;
-    snap[month].docCount = cur.docCount;
-    snap[month].procVal = cur.procVal;
-    writeKPISnapshots(snap);
-
-    const prev = snap[kpiPrevMonthKey()] || {};
-    applyKpiDelta($('kpi-est-delta'), cur.activeEst, prev.activeEst || 0);
-    applyKpiDelta($('kpi-db-delta'), cur.dbCount, prev.dbCount || 0);
-    applyKpiDelta($('kpi-doc-delta'), cur.docCount, prev.docCount || 0);
-    applyKpiDelta($('kpi-val-delta'), cur.procVal, prev.procVal || 0);
-
-    if ($('kpi-val-cached')) {
-      $('kpi-val-cached').textContent = 'cached: ' + JSON.stringify(prev);
-      $('kpi-val-cached').hidden = true;
-    }
+    const t = kpiTrends();
+    applyKpiDelta($('kpi-est-delta'), t.est.now, t.est.prev, 'Records saved');
+    applyKpiDelta($('kpi-db-delta'), t.db.now, t.db.prev, 'Database entries added');
+    applyKpiDelta($('kpi-doc-delta'), t.doc.now, t.doc.prev, 'Documents generated');
+    const money = function (v) { return Calc.fmtToolMoney(v, erpCurrencyCode()); };
+    applyKpiDelta($('kpi-val-delta'), t.val.now, t.val.prev, 'Value processed', money);
   }
 
   // Wire live KPI refresh on save/delete of ERP records and DB writes.
@@ -10825,25 +11006,46 @@ body {
     est.textContent = String(cur.activeEst);
     $('kpi-db').textContent = String(cur.dbCount);
     $('kpi-doc').textContent = String(cur.docCount);
-    $('kpi-val').textContent = fmtCompact(cur.procVal);
+    /* Processed Value is money, so it carries the currency the documents are
+       written in: the compact form in the headline ("Rs 9.9M") and the exact
+       figure spelled out underneath. If the history mixes currencies the
+       sum is flagged rather than silently passed off as one currency. */
+    const curCode = erpCurrencyCode();
+    const curSym = Calc.TOOL_CURRENCIES[curCode].symbol.trim();
+    $('kpi-val').textContent = curSym + ' ' + fmtCompact(cur.procVal);
     $('kpi-est-sub').textContent = cur.activeEst === 1 ? '1 active project baseline' : 'Projects with tracked changes';
     $('kpi-db-sub').textContent = db.items.length + ' items · ' + db.clients.length + ' clients';
     $('kpi-doc-sub').textContent = cur.docCount === 1 ? '1 saved entry' : cur.docCount + ' saved entries';
+    const valSub = $('kpi-val-sub');
+    if (valSub) {
+      const exact = curCode + ' ' + Number(cur.procVal).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      valSub.textContent = exact + ' across ' + (cur.docCount === 1 ? '1 document' : cur.docCount + ' documents') +
+        (kpiMixedCurrencies() ? ' · mixed currencies' : '');
+    }
     const pm = $('pm-caption');
     if (pm) pm.textContent = cur.dbCount > 0 || cur.docCount > 0
       ? 'Pipeline active — ' + cur.dbCount + ' DB records and ' + cur.docCount + ' documents ready.'
       : 'Pipeline idle — open the ERP engine to process a document.';
-    const setBar = function (id, val, cap, label) {
-      const bar = $(id).closest('.health-item').querySelector('.health-fill');
+    const setBar = function (id, val, cap, label, title) {
       const strong = $(id);
+      const bar = strong.closest('.health-item').querySelector('.health-fill');
       const pct = Math.min(100, cap > 0 ? (val / cap) * 100 : 0);
       bar.style.width = pct.toFixed(1) + '%';
       strong.textContent = label;
+      if (title) strong.setAttribute('title', title);
     };
+    /* Storage reads as an approximate share of the browser's ~5 MB
+       localStorage allowance; the exact byte count goes in the tooltip so the
+       line can stay short enough to fit. */
     const usedBytes = storageUsedBytes();
-    setBar('hl-storage', usedBytes, STORAGE_QUOTA_BYTES, fmtBytes(usedBytes) + ' / 5 MB');
-    setBar('hl-db', cur.dbCount, 200, String(cur.dbCount) + ' / 200');
-    setBar('hl-docs', cur.activeEst, 60, String(cur.activeEst) + ' / 60');
+    setBar('hl-storage', usedBytes, STORAGE_QUOTA_BYTES,
+      fmtBytes(usedBytes) + ' / ~5 MB',
+      Math.round(usedBytes).toLocaleString('en-US') + ' bytes of about 5 MB (' +
+      ((usedBytes / STORAGE_QUOTA_BYTES) * 100).toFixed(2) + '% used)');
+    setBar('hl-db', cur.dbCount, 200, String(cur.dbCount) + ' / 200',
+      cur.dbCount + ' database records (items + clients)');
+    setBar('hl-docs', cur.activeEst, 60, String(cur.activeEst) + ' / 60',
+      cur.activeEst + ' saved project records');
   }
 
   // Recent Activity feed — mirrors the history log with ERP-style events.
@@ -10862,14 +11064,25 @@ body {
     }
     list.innerHTML = history.slice(0, 12).map(function (h) {
       const kind = h.type === 'db' ? 'db' : (h.tool === 'erp' ? 'erp' : (h.type === 'copy' ? 'copy' : 'pdf'));
-      const text = h.type === 'db'
-        ? '<strong>' + esc(h.toolName) + '</strong> — ' + esc(h.title)
-        : '<strong>' + esc(h.title) + '</strong> · ' + esc(h.toolName);
+      let head, bits = [];
+      if (h.type === 'db') {
+        // Database events have no client/reference — they name what changed.
+        head = '<strong>' + esc(h.toolName) + '</strong> — ' + esc(h.title);
+      } else {
+        /* Document rows lead with the CLIENT. The tool name is deliberately
+           NOT repeated here: it was identical on every row and told the
+           reader nothing. The subtitle carries the reference and the amount,
+           and the icon already shows what kind of event it was. */
+        head = '<strong>' + esc(h.client || h.title) + '</strong>';
+        if (h.ref) bits.push('<span class="activity-ref">Ref ' + esc(h.ref) + '</span>');
+        if (h.total) bits.push('<span class="activity-amount">' + esc(h.total) + '</span>');
+      }
       return '<div class="activity-item">' +
         '<span class="activity-ico">' + activityIconSvg(kind) + '</span>' +
         '<div class="activity-body">' +
-          '<div class="activity-text">' + text + '</div>' +
-          '<div class="activity-time">' + timeAgo(h.at) + (h.total ? ' · ' + esc(h.total) : '') + '</div>' +
+          '<div class="activity-text">' + head + '</div>' +
+          (bits.length ? '<div class="activity-doc">' + bits.join('') + '</div>' : '') +
+          '<div class="activity-time">' + timeAgo(h.at) + '</div>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -11106,7 +11319,12 @@ body {
       sku: sku,
       name: name,
       unit: $('db-item-unit').value.trim() || 'Nr',
-      rate: num($('db-item-rate').value)
+      rate: num($('db-item-rate').value),
+      /* The only timestamp a database record has, and the only way the KPI
+         trend can tell when something was added. Edits preserve the original
+         through the Object.assign below; records created before this existed
+         simply have no `addedAt` and are left out of the trend. */
+      addedAt: Date.now()
     };
     if (editIdx > -1 && db.items[editIdx]) {
       // Update in place — never append a duplicate row.
@@ -11154,7 +11372,8 @@ body {
       shipTo: $('db-client-shipto').value.trim(),
       hsCode: $('db-client-hscode').value.trim(),
       // stored as-is; ERP auto-converts to a canonical code when used
-      currency: $('db-client-currency').value
+      currency: $('db-client-currency').value,
+      addedAt: Date.now() // see addDbItem — the KPI trend's only time source here
     };
     if (editIdx > -1 && db.clients[editIdx]) {
       // Update in place — never append a duplicate row.
@@ -11212,6 +11431,11 @@ body {
     return {
       mode: 'quotation',
       project: '', client: '', address: '', ref: '', date: '', currency: 'LKR',
+      // Date of Supply is its own field on the document. It has no input in
+      // the form (the form's single date drives both), so an explicit value
+      // only ever arrives from the sheet — but it still lives here, in the
+      // one data object, rather than in a preview-side copy.
+      supplyDate: '',
       // Consignee / order-detail block (formal invoice layout)
       contact: '', clientTin: '', placeOfSupply: '', poNo: '', deliveryTerms: '', shipTo: '', hsCode: '',
       meta: {},
@@ -11244,6 +11468,28 @@ body {
   }
 
   function erpMoney(v) { return Calc.fmtToolMoney(v, erpState.currency); }
+
+  /* The currency the invoice is written in, guarded against a stale/unknown
+     code so money labels never fall back to an empty symbol. */
+  function erpCurrencyCode() {
+    const c = erpState && erpState.currency;
+    return Calc.TOOL_CURRENCIES[c] ? c : 'LKR';
+  }
+
+  /* History totals are stored as ready-formatted strings ('Rs358,720'), so a
+     sum of them can only be labelled with one currency as long as they all
+     share it. This reports whether more than one symbol is in play. */
+  function kpiMixedCurrencies() {
+    const seen = {};
+    let n = 0;
+    for (let i = 0; i < history.length; i++) {
+      const m = String(history[i] && history[i].total || '').match(/^[^0-9\s-]+/);
+      if (!m) continue;
+      if (!seen[m[0]]) { seen[m[0]] = 1; n++; }
+      if (n > 1) return true;
+    }
+    return false;
+  }
 
   function erpLineAmount(row) {
     return Calc.boqAmount(row.qty, row.rate);
@@ -11630,6 +11876,8 @@ body {
       type: 'copy', tool: 'erp', toolName: 'ERP record saved',
       title: id + (erpState.client ? ' — ' + erpState.client : ''),
       total: erpDocType() ? erpMoney(erpTotals().final) : '',
+      client: erpState.client || '',
+      ref: id,
       draft: { tool: 'erp' }
     });
     renderActivity();
@@ -11990,11 +12238,13 @@ body {
   // A wide brand.logo renders as a high-res banner image at the top.
   // Document date string (DD/MM/YYYY). Falls back to today when the
   // user hasn't picked a date so "Date of Invoice" never prints empty.
-  function erpDateStr() {
-    const d = erpState.date ? new Date(erpState.date + 'T00:00:00') : new Date();
+  function erpFormatDate(iso) {
+    const d = iso ? new Date(iso + 'T00:00:00') : new Date();
     if (isNaN(d.getTime())) return '';
     return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
   }
+
+  function erpDateStr() { return erpFormatDate(erpState.date); }
 
   // (The previous mxLetterhead / mxMetaGrid class-based builders were
   // replaced by the inline-styled generatePrintHTML() document head —
@@ -12129,6 +12379,8 @@ body {
       type: 'copy', tool: 'erp', toolName: 'Master ERP Engine — Excel export',
       title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
       total: erpDocType() ? erpMoney(erpTotals().final) : '',
+      client: erpState.client || '',
+      ref: erpState.ref || '',
       draft: { tool: 'erp' }
     });
   }
@@ -12200,14 +12452,29 @@ body {
       nameM: 1.84, nameH: 16.74, nameSize: 15.5,
       addrM: -0.53, conM: 2.68, ruleM: 3.76, ruleH: 1.17, tagM: 1.90,
       lineH: 9.8, smallSize: 8.2, tagSize: 6.7,
-      // LOGO REGION — a FIXED placeholder, measured from the master's own
-      // letterhead raster: the sample logo's ink box is px 190-642 x 58-254
-      // of that 4167x368 image, which covers 607.208 x 52.7361pt at page
-      // origin 2.39618 / 3.944. That converts to 66.01 x 28.23pt at
-      // 30.08 / 12.26. The master defines this REGION, not the logo: a
-      // supplied logo is contained and centred inside it (see logoBox) and
-      // can never change the region, its position, or the header height.
-      logoArea: { x: 30.08, y: 12.26, w: 66.01, h: 28.23 }
+      /* LOGO CONTAINER — a FIXED 90x90 CSS-px square whose left edge sits
+         20px in from the page's left edge. Both figures are hard-coded
+         absolute units; the container is absolutely positioned with an
+         explicit width and height, never a percentage and never `auto`, so no
+         parent flex/grid rule can resize it and no amount of invoice text
+         (document number, dates, line items) can change it.
+         The master defines the logo AREA, not the logo: a supplied logo is
+         contain-fitted inside this square (see logoBox) and can never change
+         the container, its position, or the letterhead height.
+         Vertical placement is not stored here — `logoTop()` derives it from
+         the three header line metrics below so it keeps tracking them. */
+      /* `top: 0` is deliberate and hard-coded, not derived. The container is
+         centred on the header text block ONLY while that keeps it on the
+         paper: a 90px box centred on a text block whose midpoint is ~28px
+         from the page edge starts ~17px ABOVE the page, which crops the top
+         of the logo in print. It is therefore pinned flush to the page's top
+         edge, the highest position that shows the whole 90px.
+         No `max-height` on the artwork ANYWHERE: the image is exactly the
+         container size and `object-fit: contain` does the fitting, so the
+         rendered logo is never capped. (It was: a computed `artMaxPx`
+         clamped it to 56.22px and was re-applied on every re-render, which
+         is the "it keeps reverting to a smaller size" symptom.) */
+      logoBox: { size: 90, left: 20, top: 0 }   // CSS px, hard-coded
     }
   };
 
@@ -12261,34 +12528,62 @@ body {
         'pt;color:' + MXPT.blue + ';box-sizing:border-box;overflow-wrap:anywhere;">' + supplierName + '</div>' +
       hdrLine(H.addrM, (supplierAddress ? 'Reg. Address: ' + supplierAddress : ''), 'text-align:center;font-size:' + H.smallSize + 'pt;color:#000;') +
       hdrLine(H.conM, supplierContact, 'text-align:center;font-size:' + H.smallSize + 'pt;color:#000;');
-    /* LOGO PLACEHOLDER — the logo REGION is fixed by the master; only the
-       logo inside it changes. The master's own logo is a SAMPLE and is never
-       copied into a document, so with nothing uploaded the region stays
-       empty. A supplied logo is filled into the region with `object-fit:
-       contain`, which scales it proportionally (aspect ratio preserved, never
-       stretched or squashed) and `object-position: center` centres it, at
-       whatever size fits — so a differently-shaped logo simply leaves more
-       whitespace rather than changing the region.
-       The region is ABSOLUTELY positioned, so no logo can ever grow, shrink,
+    /* LOGO PLACEHOLDER — a FIXED 90x90px square; only the logo inside it
+       changes. Nothing is copied in from another company's template, so with
+       nothing uploaded the square stays empty. A supplied logo is filled into
+       the square with `object-fit: contain`, which scales it proportionally
+       (aspect ratio preserved, never stretched or squashed) and
+       `object-position: center` centres it, at whatever size fits — so a
+       differently-shaped logo simply leaves more whitespace rather than
+       changing the square.
+       The square is ABSOLUTELY positioned, so no logo can ever grow, shrink,
        push, or reposition the header, the company name, the divider or any
        other element: it is out of flow by construction. */
-    /* The supplied logo is CONTAIN-fitted into the region: the image element
-       fills the region and `object-fit: contain` scales the artwork
+    /* The supplied logo is CONTAIN-fitted into the square: the image element
+       fills the container and `object-fit: contain` scales the artwork
        proportionally to the largest size that fits inside it. Contain scales
        UP as well as down, so a small logo is enlarged to use the space (it is
        never left unnecessarily small) and an oversized one is reduced — the
        aspect ratio is preserved in both directions and the artwork is never
        stretched, squashed or cropped. `object-position: center center`
        centres it, so a logo with a different aspect ratio simply leaves
-       whitespace inside the region instead of changing it. The element's box
-       is exactly the region, so its size can never be driven by the artwork. */
+       whitespace inside the square instead of changing it.
+       SIZING: the container's width/height are absolute px constants — never a
+       percentage and never `auto` — so neither the parent flex rules nor the
+       length of the invoice content can resize it. Because the artwork is a
+       child that only ever *fits inside* the box, it can never drive the box
+       either; the box is the constant and the artwork is the variable. */
+    /* Vertical: the container is pinned to the page's top edge at
+       `H.logoBox.top` (0px) rather than centred on the text block. Centring
+       is what produced the shrinking: a 90px box centred on a text block
+       whose midpoint is ~28px from the page top starts ~17px ABOVE the paper,
+       and the only way to keep it "centred" AND on the page was to cap the
+       artwork at 56.22px — which is exactly the smaller logo that kept coming
+       back. The box now sits flush to the top edge so the full 90px is
+       visible, and the rule + tagline beneath it are pushed down by the
+       `ruleMarginPt` below so nothing crosses the artwork. */
+    /* The artwork is the container size, written out as literal px, with
+       `object-fit: contain` doing the proportional fit inside it. There is no
+       max-width, max-height or percentage on the image or on the container.
+       `object-position: center center` keeps a differently-shaped logo
+       centred in the square instead of pinned to a corner. */
+    const boxPx = H.logoBox.size;
+    /* `max-width:none;max-height:none` is not redundant: the document CSS
+       carries `.mx-doc img { max-width: 100% }`, a shared rule for every
+       image in the sheet. It happens to be a no-op here (the parent square is
+       exactly 90px wide, so 100% == 90px) but it is precisely the kind of
+       global rule that can start constraining the logo after an unrelated CSS
+       change, so the logo opts out of it explicitly. */
     const logoTag = (data.logoUrl && !data.bannerUrl)
-      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:100%;height:100%;object-fit:contain;object-position:center center;">'
+      ? '<img src="' + data.logoUrl + '" alt="Company logo" style="display:block;width:' + boxPx +
+        'px;height:' + boxPx + 'px;max-width:none;max-height:none;object-fit:contain;object-position:center center;">'
       : '';
+    /* No `overflow:hidden`: the artwork can never exceed the box now that both
+       are the same fixed size, so the rule could only ever crop. */
     const logoBox = data.bannerUrl ? '' :
-      '<div style="position:absolute;left:' + H.logoArea.x + 'pt;top:' + H.logoArea.y + 'pt;width:' + H.logoArea.w +
-        'pt;height:' + H.logoArea.h +
-        'pt;box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;">' + logoTag + '</div>';
+      '<div style="position:absolute;left:' + H.logoBox.left + 'px;top:' + H.logoBox.top +
+        'px;width:' + boxPx + 'px;height:' + boxPx +
+        'px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;">' + logoTag + '</div>';
     /* The letterhead is a FIXED-height band, exactly as the master draws it
        (`height`, not `min-height`): the name / address / contact / divider /
        tagline are painted inside 54.05pt and the next block starts at 54.05
@@ -12299,11 +12594,34 @@ body {
        band reproduces that instead of re-flowing the document.
        The rule and the tagline stay FULL WIDTH (that is how the master draws
        them), so a long tagline spans the page instead of wrapping. */
+    /* The logo square now owns 90px of clear height, so the divider rule and
+       the tagline are pushed below it — otherwise the artwork and the
+       full-width rule would cross each other. Both numbers below are derived
+       from the logo box and the measured text metrics, so they cannot drift:
+       `textTopPt` is where the three header lines end, `logoBottomPt` is
+       where the square ends, and the rule sits `logoGapPt` under the square.
+       The band is then tall enough to contain the rule and the tagline.
+       CONSEQUENCE: the letterhead band is therefore taller than the master's
+       54.05pt and every block below it starts that much lower. That is the
+       unavoidable cost of a 90px logo — the master's own logo is 28.23pt
+       (37.6px) tall precisely because that is what fits above its divider. */
+    const textTopPt = H.nameM + H.nameH + H.addrM + H.lineH + H.conM + H.lineH;
+    const logoBottomPt = H.logoBox.top * 0.75 + H.logoBox.size * 0.75;
+    const logoGapPt = 3;
+    /* The extra height is needed ONLY when a logo is actually present. With
+       no logo the letterhead keeps the master's own 54.05pt band and 3.76pt
+       rule margin, so the whole document stays on the master's measured
+       baselines; the 90px square is the only reason to grow anything. */
+    const hasLogo = !!(data.logoUrl && !data.bannerUrl);
+    const ruleMarginPt = hasLogo ? (logoBottomPt + logoGapPt - textTopPt) : H.ruleM;
+    const textBandH = hasLogo
+      ? (textTopPt + ruleMarginPt + H.ruleH + H.tagM + H.lineH)
+      : MXPT.bannerH;
     const textHeader =
-      '<div style="display:flow-root;height:' + MXPT.bannerH + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
+      '<div style="display:flow-root;height:' + textBandH.toFixed(2) + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
       logoBox +
       detailsBlock +
-      '<div style="margin-top:' + H.ruleM + 'pt;height:' + H.ruleH + 'pt;background:#000;"></div>' +
+      '<div style="margin-top:' + ruleMarginPt.toFixed(2) + 'pt;height:' + H.ruleH + 'pt;background:#000;"></div>' +
       hdrLine(H.tagM, tagline, 'text-align:center;font-style:italic;font-size:' + H.tagSize + 'pt;color:' + MXPT.blue + ';') +
       '</div>';
     /* The full-width letterhead, drawn in the master's own image box taken
@@ -12337,20 +12655,33 @@ body {
        short values. A long value — address, project brief, extra notes —
        WRAPS and grows the row downwards instead of spilling over the row
        below, and the label never shrinks so every colon stays in column. */
+    /* `data-edit` is the ONLY thing that makes a value editable on the
+       sheet. There is no other edit affordance anywhere in the template:
+       every element that does not carry it is locked furniture (letterhead
+       and logo, the NO / DESCRIPTION / UNIT / QTY / RATE / AMOUNT column
+       headers, the Sub Total / VAT / TOTAL labels, the "Due amount in
+       words" line, the courtesy line and the sign-off). See PDF_FIELD_MAP
+       and the preview's handlers for what each key writes back to. */
+    const editAttr = function (key, kind, label) {
+      return ' data-edit="' + key + '" data-edit-kind="' + kind + '" data-edit-label="' + label + '"';
+    };
     function row(label, value, labelW, opts) {
       const o = opts || {};
       /* o.tall: the row owns TWO row slots. Used by Address, which occupies
          two slots in the master because its own value wraps over two lines.
          o.band: the row sits inside its own bordered band, which owns the
          19.2pt min-height — adding one here too would push the band's
-         border on top of it and shift everything below by ~1.9pt. */
+         border on top of it and shift everything below by ~1.9pt.
+         o.edit / o.kind: tags this row's VALUE as editable. Omitted for
+         every supplier-side row and for Date of Invoice's label. */
       const minH = o.tall ? MXPT.rowH * 2 : MXPT.rowH;
       return '<div style="display:flex;align-items:flex-start;' + (o.band ? '' : 'min-height:' + minH + 'pt;') +
         'line-height:' + (o.lh || MXPT.lh.meta) + ';font-size:' + B + 'pt;box-sizing:border-box;overflow-wrap:anywhere;">' +
         '<span style="flex:0 0 ' + labelW + 'pt;width:' + labelW + 'pt;min-width:' + labelW +
           'pt;font-weight:700;box-sizing:border-box;">' + label + '</span>' +
         '<span style="flex:0 0 auto;font-weight:700;">:&#8201;</span>' +
-        '<span style="flex:1 1 auto;min-width:0;white-space:pre-wrap;word-wrap:break-word;word-break:break-word;overflow-wrap:anywhere;box-sizing:border-box;">' +
+        '<span' + (o.edit ? editAttr(o.edit, o.kind || 'text', label) : '') +
+          ' style="flex:1 1 auto;min-width:0;white-space:pre-wrap;word-wrap:break-word;word-break:break-word;overflow-wrap:anywhere;box-sizing:border-box;">' +
           (value === null || value === undefined ? '' : String(value)) + '</span></div>';
     }
     // No overflow:hidden — a grown row must be able to push the box taller.
@@ -12367,23 +12698,28 @@ body {
        lets a two-line address use its existing area instead of growing. */
     const tallRow = { tall: true };
     const bandLH = { lh: MXPT.lh.addl, band: true };
+    /* Editable: Date of Invoice + Date of Supply (both through the date
+       picker). Everything else on the SUPPLIER side stays locked. */
     const leftBand = '<div style="' + bandStyle + '">' +
-      row('Date of Invoice', data.invoiceDate, MXPT.labelW, bandLH) + '</div>';
+      row('Date of Invoice', data.invoiceDate, MXPT.labelW, { lh: MXPT.lh.addl, band: true, edit: 'date', kind: 'date' }) + '</div>';
     const leftBox = row("Supplier's TIN", data.supplierTin, MXPT.labelW) +
       row("Supplier's Name", supplierName, MXPT.labelW) +
       row('Address', supplierAddress, MXPT.labelW, tallRow) +
       row('Telephone No', data.supplierPhone, MXPT.labelW) +
-      row('Date of Supply', data.supplyDate, MXPT.labelW);
+      row('Date of Supply', data.supplyDate, MXPT.labelW, { edit: 'supplyDate', kind: 'date' });
+    /* Editable: the document number and every PURCHASER field. */
     const rightBand = '<div style="' + bandStyle + '">' +
-      row(docTitle === 'TAX INVOICE' ? 'Tax Invoice No' : 'Quotation No', data.docNo, MXPT.labelWR, bandLH) + '</div>';
-    const rightBox = row("Purchaser's TIN", data.clientTin, MXPT.labelWR) +
-      row("Purchaser's Name", data.clientName, MXPT.labelWR) +
-      row('Address', data.clientAddress, MXPT.labelWR, tallRow) +
+      row(docTitle === 'TAX INVOICE' ? 'Tax Invoice No' : 'Quotation No', data.docNo, MXPT.labelWR,
+        { lh: MXPT.lh.addl, band: true, edit: 'docNo' }) + '</div>';
+    const rightBox = row("Purchaser's TIN", data.clientTin, MXPT.labelWR, { edit: 'clientTin' }) +
+      row("Purchaser's Name", data.clientName, MXPT.labelWR, { edit: 'client' }) +
+      row('Address', data.clientAddress, MXPT.labelWR, { tall: true, edit: 'clientAddress' }) +
       // Purchaser telephone is `data.clientPhone` and nothing else — there is
       // deliberately no fallback to a contact PERSON, so a name can never be
-      // printed in the phone slot.
-      row('Telephone No', data.clientPhone || '', MXPT.labelWR) +
-      row('Place of Supply', data.placeOfSupply || 'N/R', MXPT.labelWR);
+      // printed in the phone slot. Editing it rewrites only the phone token
+      // inside the client's contact line (see pdfSetPurchaserPhone).
+      row('Telephone No', data.clientPhone || '', MXPT.labelWR, { edit: 'clientPhone' }) +
+      row('Place of Supply', data.placeOfSupply || 'N/R', MXPT.labelWR, { edit: 'placeOfSupply' });
     /* One column of the metadata grid: band, gutter, then the bordered box.
        Deliberately plain block siblings — a `height:100%` flex column inside
        a table cell resolves against an auto-height row, which makes the rows
@@ -12403,7 +12739,7 @@ body {
     const addlInfo = data.projectName || data.poNo || '';
     const addl = '<div style="height:' + MXPT.gutter + 'pt;"></div>' +
       '<div style="' + bandStyle + '">' +
-      row('Additional Information', addlInfo, MXPT.labelWA, bandLH) + '</div>';
+      row('Additional Information', addlInfo, MXPT.labelWA, { lh: MXPT.lh.addl, band: true, edit: 'projectName' }) + '</div>';
 
     // ITEM TABLE + TOTALS — one grid, so the column rules run straight
     // through the Sub Total / Discount / VAT / TOTAL block like the master.
@@ -12429,29 +12765,36 @@ body {
     };
     // Description column: honour real line breaks and break long tokens.
     const ITEM_TD_DESC = ITEM_TD + 'text-align:left;white-space:pre-wrap;word-wrap:break-word;word-break:break-word;';
+    /* Description, Unit, Qty and Rate are editable per line. AMOUNT is
+       deliberately NOT tagged: it is Quantity x Rate and recalculates, so
+       there is nothing to type into it. The row number is locked too. */
     const bodyRow = function (item, index) {
+      const n = index + 1;
       return '<tr>' +
-        '<td style="' + ITEM_TD + 'text-align:center;">' + (index + 1) + '</td>' +
-        '<td style="' + ITEM_TD_DESC + '">' + (item.description || '') + '</td>' +
-        '<td style="' + ITEM_TD + 'text-align:center;">' + (item.unit || '') + '</td>' +
-        '<td style="' + ITEM_TD + 'text-align:center;">' + (item.qty === '' || item.qty === null || item.qty === undefined ? '0' : item.qty) + '</td>' +
-        '<td style="' + ITEM_TD + 'text-align:right;">' + mx2(item.rate) + '</td>' +
+        '<td style="' + ITEM_TD + 'text-align:center;">' + n + '</td>' +
+        '<td style="' + ITEM_TD_DESC + '"' + editAttr('item:' + index + ':desc', 'text', 'Item ' + n + ' description') + '>' + (item.description || '') + '</td>' +
+        '<td style="' + ITEM_TD + 'text-align:center;"' + editAttr('item:' + index + ':unit', 'text', 'Item ' + n + ' unit') + '>' + (item.unit || '') + '</td>' +
+        '<td style="' + ITEM_TD + 'text-align:center;"' + editAttr('item:' + index + ':qty', 'number', 'Item ' + n + ' quantity') + '>' + (item.qty === '' || item.qty === null || item.qty === undefined ? '0' : item.qty) + '</td>' +
+        '<td style="' + ITEM_TD + 'text-align:right;"' + editAttr('item:' + index + ':rate', 'number', 'Item ' + n + ' rate') + '>' + mx2(item.rate) + '</td>' +
         '<td style="' + ITEM_TD + 'text-align:right;">' + mx2(item.amount) + '</td>' +
         '</tr>';
     };
-    // label cells span the Description+Unit+Qty columns; the No and Rate
-    // cells stay empty, exactly as in the master.
-    const totalRow = function (label, value, boldLabel, boldValue) {
+    /* label cells span the Description+Unit+Qty columns; the No and Rate
+       cells stay empty, exactly as in the master. `editKey` tags the VALUE
+       cell of a summary row (only the Discount amount is editable — the
+       Sub Total / VAT / TOTAL labels and figures are computed). */
+    const totalRow = function (label, value, boldLabel, boldValue, editKey) {
       const td = TOTAL_TD;
       return '<tr>' +
         '<td style="' + td + '"></td>' +
         '<td colspan="3" style="' + td + 'text-align:center;' + (boldLabel ? 'font-weight:700;' : '') + '">' + label + '</td>' +
         '<td style="' + td + '"></td>' +
-        '<td style="' + td + 'text-align:right;' + (boldValue ? 'font-weight:700;' : '') + '">' + mx2(value) + '</td>' +
+        '<td style="' + td + 'text-align:right;' + (boldValue ? 'font-weight:700;' : '') + '"' +
+          (editKey ? editAttr(editKey, 'number', label + ' amount') : '') + '>' + mx2(value) + '</td>' +
         '</tr>';
     };
     let totals = totalRow('Sub Total', data.subTotal, true, false);
-    if (Number(data.discount) > 0) totals += totalRow('Discount', -Math.abs(Number(data.discount)), true, false);
+    if (Number(data.discount) > 0) totals += totalRow('Discount', -Math.abs(Number(data.discount)), true, false, 'discount');
     if (Number(data.discount) > 0) totals += totalRow('', data.netTotal, false, false);
     if (Number(data.vat) > 0) totals += totalRow((data.vatPct ? data.vatPct + '% ' : '') + 'VAT', data.vat, true, true);
     totals += totalRow('TOTAL', data.grandTotal, true, true);
@@ -12500,77 +12843,163 @@ body {
 
   /* ── Live editable document preview ───────────────────────────
      The sheet on screen is the PRINT SOURCE, not a picture of one: the
-     export step reads this DOM verbatim instead of re-running the
-     template, so text the user retypes straight into the page survives
-     into the PDF. `pdfPreviewEdited` pins the preview — once hand-edited,
-     form changes stop regenerating it (they would silently discard the
-     correction) until the user presses "Rebuild from form". */
+     export step reads this DOM verbatim instead of re-running the template.
+
+     It is NOT a second copy of the data. Every field the renderer tags with
+     `data-edit` writes straight back into `erpState` — the same object the
+     form edits — so there is exactly one current version of the invoice at
+     all times and the two views cannot drift. That is why nothing pins the
+     preview any more: "Rebuild from form" is simply "re-render the sheet
+     from `erpState`", which can never discard an edit, because after an
+     edit the form's data IS the edited value. */
   let pdfPreviewHtml = '';      // last template output
-  let pdfPreviewEdited = false; // true once the sheet has been hand-edited
   let pdfPreviewTimer = null;
-  // PDF editor toolbar state (declared here so the painters below can reset
-  // it without worrying about declaration order).
-  let pdfSelected = null;       // element the toolbar is bound to
-  let pdfMoveMode = false;      // drag whole sections instead of typing
-  let pdfDrag = null;           // in-flight drag
+  let pdfDateInput = null;      // transient native date picker overlay
 
   function pdfPreviewState(text) {
     const pill = $('pdf-preview-state');
     if (pill) pill.textContent = text;
   }
 
+  /* ── Which fields are editable, and what each one writes back to ──
+     One table, so the preview and the form can never disagree about what a
+     field means. Anything the renderer does NOT tag with `data-edit` is
+     locked template furniture and gets no interaction at all. */
+  const PDF_FIELD_MAP = {
+    client:        { state: 'client',        input: 'erp-client' },
+    clientTin:     { state: 'clientTin',     input: 'erp-clienttin' },
+    clientAddress: { state: 'address',       input: 'erp-address' },
+    placeOfSupply: { state: 'placeOfSupply', input: 'erp-posupply' },
+    projectName:   { state: 'project',       input: 'erp-project' },
+    docNo:         { state: 'ref',           input: 'erp-ref' },
+    date:          { state: 'date',          input: 'erp-date' },
+    supplyDate:    { state: 'supplyDate',    input: null },
+    clientPhone:   { state: null,            input: 'erp-contact' }
+  };
+
+  /* Tag the editable fields the renderer marked, and nothing else. Dates get
+     no `contenteditable` at all — they are set through the native picker, so
+     a date field can never become free text. */
+  function pdfDecorate() {
+    const host = $('pdf-preview-container');
+    if (!host) return;
+    const fields = host.querySelectorAll('[data-edit]');
+    for (let i = 0; i < fields.length; i++) {
+      const el = fields[i];
+      const kind = el.getAttribute('data-edit-kind') || 'text';
+      const label = el.getAttribute('data-edit-label') || 'Editable field';
+      el.classList.add('pdf-editable');
+      el.setAttribute('spellcheck', 'false');
+      el.setAttribute('aria-label', label);
+      if (kind === 'date') {
+        el.removeAttribute('contenteditable');
+        el.setAttribute('role', 'button');
+        el.setAttribute('tabindex', '0');
+        el.setAttribute('aria-haspopup', 'dialog');
+      } else {
+        el.setAttribute('contenteditable', 'true');
+        el.setAttribute('role', 'textbox');
+        if (kind === 'number') el.setAttribute('inputmode', 'decimal');
+      }
+    }
+  }
+
+  /* Re-rendering replaces the DOM, so a field being typed into would lose
+     both focus and caret. Capture them first and put them back after. */
+  function pdfCaptureFocus() {
+    const host = $('pdf-preview-container');
+    const active = document.activeElement;
+    if (!host || !active || !host.contains(active)) return null;
+    const key = active.getAttribute && active.getAttribute('data-edit');
+    if (!key) return null;
+    let offset = null;
+    try {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) offset = sel.getRangeAt(0).startOffset;
+    } catch (e) { /* ignore */ }
+    return { key: key, offset: offset };
+  }
+
+  function pdfRestoreFocus(snap) {
+    if (!snap) return;
+    const host = $('pdf-preview-container');
+    const el = host && host.querySelector('[data-edit="' + snap.key + '"]');
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    if (snap.offset === null || snap.offset === undefined) return;
+    try {
+      const node = el.firstChild;
+      if (!node || node.nodeType !== 3) return;
+      const range = document.createRange();
+      range.setStart(node, Math.min(snap.offset, node.nodeValue.length));
+      range.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (e) { /* ignore */ }
+  }
+
+  /* Repainting replaces every node in the sheet, which blurs whatever field
+     the user was typing in. That blur is our own teardown, not a user
+     action, and any handler that ran a nested repaint from inside it would
+     be rewriting the host's innerHTML while the outer write is still
+     unwinding ("The node to be removed is no longer a child of this
+     node"). The re-entrancy guard defers such a nested paint until the
+     outer one has finished. */
+  let pdfPainting = false;
+  let pdfPaintQueued = false;
+
   // Paint the template output into the editable sheet.
   function paintPdfPreview() {
     const host = $('pdf-preview-container');
     if (!host) return;
-    pdfSelected = null;
-    pdfDrag = null;
-    host.innerHTML = pdfPreviewHtml;
-    pdfPreviewEdited = false;
+    if (pdfPainting) { pdfPaintQueued = true; return; }
+    const snap = pdfCaptureFocus();
+    pdfPainting = true;
+    try {
+      pdfCloseDatePicker(false);
+      host.innerHTML = pdfPreviewHtml;
+    } finally {
+      pdfPainting = false;
+    }
+    pdfDecorate();
     pdfPreviewState('Live');
-    pdfTagBlocks();          // drop stale drag markers / re-tag when moving
-    pdfSyncToolbar(null);
+    if (snap) pdfRestoreFocus(snap);
+    // A paint that arrived mid-teardown re-runs now, against the newest HTML.
+    if (pdfPaintQueued) { pdfPaintQueued = false; paintPdfPreview(); }
   }
 
-  // Re-render the sheet from the form. Debounced, and skipped while the
-  // preview is pinned. `force` unpins (the Rebuild button, resets).
+  /* Re-render the sheet from `erpState`. Debounced so typing is not fought
+     by a rebuild on every keystroke; `force` skips the wait (resets, the
+     Rebuild button, programmatic state changes). */
   function schedulePdfPreview(force) {
-    if (pdfPreviewEdited && !force) return;
     clearTimeout(pdfPreviewTimer);
-    pdfPreviewTimer = setTimeout(function () {
-      pdfPreviewEdited = false;
-      buildErpDoc();
-    }, 260);
+    if (force) { buildErpDoc(); return; }
+    pdfPreviewTimer = setTimeout(function () { buildErpDoc(); }, 260);
   }
 
-  /* The print payload: the live sheet, with every editor-only attribute
-     removed so no contenteditable/spellcheck state (and no focus ring or
-     hover tint) can reach the printed page. */
+  /* The print payload: the live sheet, with every editor-only hook removed
+     so no contenteditable state, focus ring, hover tint or `data-edit`
+     marker can reach the printed page. The VALUES are untouched — they are
+     the document. */
+  const PDF_EDITOR_ATTRS = ['contenteditable', 'spellcheck', 'role', 'inputmode', 'tabindex',
+    'aria-label', 'aria-haspopup', 'data-edit', 'data-edit-kind', 'data-edit-label'];
+  function pdfStripEditorHooks(root) {
+    for (let i = 0; i < PDF_EDITOR_ATTRS.length; i++) root.removeAttribute(PDF_EDITOR_ATTRS[i]);
+    root.classList.remove('pdf-editable', 'pdf-invalid');
+    const marked = root.querySelectorAll('[data-edit], [contenteditable], .pdf-editable, .pdf-invalid');
+    for (let i = 0; i < marked.length; i++) {
+      for (let a = 0; a < PDF_EDITOR_ATTRS.length; a++) marked[i].removeAttribute(PDF_EDITOR_ATTRS[a]);
+      marked[i].classList.remove('pdf-editable', 'pdf-invalid');
+    }
+  }
+
   function pdfPreviewPayload() {
     const host = $('pdf-preview-container');
     if (!host) return '';
     const clone = host.cloneNode(true);
-    // Editor-only state: contenteditable / spellcheck (no focus ring), the
-    // selection ring, the drag markers and the preview zoom. None of it may
-    // reach the printed page — the user's own inline formatting stays.
-    const marked = clone.querySelectorAll('[contenteditable], .pdf-selected, [data-pdf-block]');
-    for (let i = 0; i < marked.length; i++) {
-      marked[i].removeAttribute('contenteditable');
-      marked[i].removeAttribute('spellcheck');
-      marked[i].removeAttribute('data-pdf-block');
-      marked[i].classList.remove('pdf-selected');
-    }
-    clone.removeAttribute('contenteditable');
-    clone.removeAttribute('spellcheck');
-    clone.removeAttribute('aria-label');
-    clone.removeAttribute('data-pdf-block');
-    clone.removeAttribute('data-pdf-scale');
-    clone.classList.remove('pdf-selected', 'pdf-move-mode');
-    // Drop ONLY the preview zoom from the host's inline style — any text
-    // formatting applied to the sheet root itself must still print.
+    pdfStripEditorHooks(clone);
     if (clone.style) {
-      if (clone.style.transform) clone.style.transform = '';
-      if (clone.style.transformOrigin) clone.style.transformOrigin = '';
       if (clone.style.outline) clone.style.outline = '';
       const rest = clone.getAttribute('style');
       if (rest === null || rest.replace(/[\s;]/g, '') === '') clone.removeAttribute('style');
@@ -12578,217 +13007,166 @@ body {
     return clone.innerHTML;
   }
 
-  /* ── PDF editor toolbar ───────────────────────────────────────
-     Every control acts on the element the user clicked, which is outlined
-     in blue and named in the toolbar's readout. Formatting is written as
-     inline CSS (the template styles colour/size/family per node, so
-     inheritance alone would show nothing) and therefore travels with the
-     printed payload like any other text edit. */
-  function pdfNoteEdit() {
-    pdfPreviewEdited = true;
-    pdfPreviewState('Edited \u00b7 pinned');
+  /* ── Writing an edit back into the single source of truth ────
+     Every commit lands in `erpState` — the SAME object the form binds to —
+     and the matching form input is updated in the same breath. There is no
+     preview-side copy of any value, so the two views cannot drift and
+     "Rebuild from form" can never discard an edit. */
+
+  function pdfFieldText(el) {
+    const raw = (el.innerText !== undefined && el.innerText !== null) ? el.innerText : el.textContent;
+    return String(raw === null || raw === undefined ? '' : raw);
   }
 
-  function pdfRgbToHex(v) {
-    const s = String(v || '');
-    if (/^#[0-9a-f]{6}$/i.test(s)) return s;
-    const m = s.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-    if (!m) return '';
-    const h = function (n) { return ('0' + Number(n).toString(16)).slice(-2); };
-    return '#' + h(m[1]) + h(m[2]) + h(m[3]);
+  function pdfSetInput(id, value) {
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (el && el.value !== value) el.value = value;
   }
 
-  function pdfTargetLabel(el) {
-    if (!el) return 'Nothing selected';
-    const text = (el.textContent || '').trim().replace(/\s+/g, ' ');
-    // Never label the element with the editor's own bookkeeping classes.
-    const cls = String(el.className || '').split(' ').filter(function (c) {
-      return c && c.indexOf('pdf-') !== 0;
-    })[0];
-    const name = el.tagName.toLowerCase() + (cls ? '.' + cls : '');
-    if (!text) return name;
-    return name + ' \u2014 ' + (text.length > 38 ? text.slice(0, 38) + '\u2026' : text);
+  /* The purchaser's telephone slot is a phone parsed out of the client's
+     free-text contact line, so editing it rewrites just that token and
+     leaves any contact person beside it intact. */
+  function pdfSetPurchaserPhone(next) {
+    const cur = String(erpState.contact || '');
+    const found = parseContactPair(cur).phone;
+    if (found && cur.indexOf(found) !== -1) erpState.contact = cur.replace(found, next).trim();
+    else if (next) erpState.contact = cur.trim() ? cur.trim() + ' \u00b7 ' + next : next;
+    pdfSetInput('erp-contact', erpState.contact || '');
   }
 
-  // Push the selected element's current look back into the controls.
-  function pdfSyncToolbar(el) {
-    const label = $('pdf-tb-target');
-    if (label) label.textContent = pdfTargetLabel(el);
+  /* A usable number, `''` for an empty field, or null when the text cannot
+     be a number at all. "1." and ".5" are accepted so a half-typed number
+     is never thrown away mid-keystroke. */
+  function pdfNumeric(raw) {
+    const t = String(raw === null || raw === undefined ? '' : raw).replace(/,/g, '').trim();
+    if (t === '') return '';
+    if (!/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
+    return t;
+  }
+
+  /* Commit one edited field. Returns 'ok' when it was applied (or is a
+     no-op), 'revert' when the input is not usable — the caller then restores
+     the field from state so a bad value can never break the document. */
+  function pdfCommitField(key, raw) {
+    if (key === 'discount') {
+      const n = pdfNumeric(raw);
+      const t = erpTotals();
+      if (n === null || n === '' || t.sub <= 0) return 'revert';
+      // Discount is a PERCENTAGE everywhere else in the app, so an amount
+      // typed on the sheet is converted back to the percentage it means:
+      // one stored value, not an amount and a percentage competing.
+      const pct = (Math.abs(Number(n)) / t.sub) * 100;
+      erpState.discount = String(Math.round(pct * 10000) / 10000);
+      pdfSetInput('erp-discount', erpState.discount);
+      updateErpSummary();
+      saveErp();
+      return 'ok';
+    }
+    if (key.indexOf('item:') === 0) {
+      const parts = key.split(':');            // item : index : field
+      const row = erpState.lines[Number(parts[1])];
+      const field = parts[2];
+      if (!row) return 'revert';
+      if (field === 'qty' || field === 'rate') {
+        const n = pdfNumeric(raw);
+        if (n === null) return 'revert';
+        if (field === 'qty' && Number(n) < 0) return 'revert';
+        row[field] = n;
+      } else if (field === 'desc') {
+        row.name = raw.replace(/\s+$/, '');
+      } else if (field === 'unit') {
+        row.unit = raw.replace(/\s+/g, ' ').trim();
+      } else {
+        return 'revert';
+      }
+      // Keep the matching form row in step (rows are matched by data-id) so
+      // the form's own amount cell and summary show the same numbers.
+      const rowEl = document.querySelector('#erp-rows .qr-row[data-id="' + row.id + '"]');
+      if (rowEl) {
+        const input = rowEl.querySelector('.erp-' + (field === 'desc' ? 'name' : field));
+        const shown = field === 'desc' ? row.name : row[field];
+        if (input && input.value !== shown) input.value = shown;
+        const amount = erpLineAmount(row);
+        const cell = rowEl.querySelector('.qr-amount');
+        if (cell) cell.textContent = erpDocType() ? (amount === null ? '\u2014' : erpMoney(amount)) : '\u2014';
+      }
+      updateErpSummary();
+      saveErp();
+      return 'ok';
+    }
+    const spec = PDF_FIELD_MAP[key];
+    if (!spec) return 'revert';
+    if (key === 'clientPhone') {
+      pdfSetPurchaserPhone(raw.replace(/\s+/g, ' ').trim());
+    } else {
+      const value = key === 'date' || key === 'supplyDate' ? raw.trim() : raw.replace(/\s+/g, ' ').trim();
+      if (key === 'date' || key === 'supplyDate') {
+        if (value !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'revert';
+      }
+      erpState[spec.state] = value;
+      pdfSetInput(spec.input, value);
+    }
+    saveErp();
+    return 'ok';
+  }
+
+  /* Bad input is never kept: the field is restored from `erpState` (the only
+     copy) and flashes so the rejection is visible. */
+  function pdfRevertField(key) {
+    schedulePdfPreview(true);
+    const host = $('pdf-preview-container');
+    const el = host && host.querySelector('[data-edit="' + key + '"]');
     if (!el) return;
-    // A wrapper carries no text style of its own, so read the look from its
-    // first text-bearing descendant — otherwise the controls would snap back
-    // to the page defaults right after you formatted the selection.
-    let probe = el;
-    let ownText = false;
-    for (let i = 0; i < el.childNodes.length; i++) {
-      const n = el.childNodes[i];
-      if (n.nodeType === 3 && n.nodeValue.trim() !== '') ownText = true;
+    el.classList.add('pdf-invalid');
+    setTimeout(function () { if (el.parentNode) el.classList.remove('pdf-invalid'); }, 1300);
+  }
+
+  /* ── Date fields use the form's own picker, never free text ──
+     Clicking one opens a native `<input type="date">` overlaid on the exact
+     spot, so the value stays the same ISO date the form stores and the
+     document's layout never shifts while the picker is open. */
+  function pdfStoredDate(key) {
+    if (key === 'supplyDate') return erpState.supplyDate || erpState.date || '';
+    return erpState.date || '';
+  }
+
+  function pdfCloseDatePicker(commit) {
+    if (!pdfDateInput) return;
+    const input = pdfDateInput;
+    pdfDateInput = null;
+    if (commit && input.value) {
+      const key = input.getAttribute('data-pdf-datekey');
+      if (input.value !== pdfStoredDate(key) && pdfCommitField(key, input.value) === 'ok') schedulePdfPreview(true);
     }
-    if (!ownText) {
-      const t = pdfTextNodes(el);
-      if (t.length && t[0] !== el) probe = t[0];
-    }
-    const cs = window.getComputedStyle(probe);
-    const font = $('pdf-tb-font');
-    if (font) {
-      const first = function (v) { return String(v || '').split(',')[0].replace(/['"]/g, '').trim().toLowerCase(); };
-      const want = first(cs.fontFamily);
-      for (let i = 0; i < font.options.length; i++) {
-        if (first(font.options[i].value) === want) { font.value = font.options[i].value; break; }
-      }
-    }
-    const size = $('pdf-tb-size');
-    if (size) size.value = String(Math.round(parseFloat(cs.fontSize) * 0.75 * 10) / 10); // px -> pt
-    const color = $('pdf-tb-color');
-    const hex = pdfRgbToHex(cs.color);
-    if (color && hex) color.value = hex;
-    const lh = $('pdf-tb-lh');
-    if (lh) {
-      const ratio = parseFloat(cs.lineHeight) / parseFloat(cs.fontSize);
-      const opts = ['1.2', '1.4', '1.6'];
-      for (let i = 0; i < opts.length; i++) {
-        if (Math.abs(parseFloat(opts[i]) - ratio) < 0.08) { lh.value = opts[i]; break; }
-      }
-    }
+    if (input.parentNode) input.parentNode.removeChild(input);
   }
 
-  function pdfSelect(el) {
-    const host = $('pdf-preview-container');
-    if (pdfSelected && pdfSelected !== el && pdfSelected.classList) pdfSelected.classList.remove('pdf-selected');
-    pdfSelected = (el && el !== host && host && host.contains(el)) ? el : null;
-    if (pdfSelected) pdfSelected.classList.add('pdf-selected');
-    pdfSyncToolbar(pdfSelected);
-  }
-
-  /* Inline colour/size/family are set per node by the template, so a style
-     on a wrapper would change nothing visually: collect the descendants that
-     actually hold text and style those. */
-  function pdfTextNodes(el) {
-    const out = [];
-    (function walk(node) {
-      let hasText = false;
-      for (let i = 0; i < node.childNodes.length; i++) {
-        const n = node.childNodes[i];
-        if (n.nodeType === 3 && n.nodeValue.trim() !== '') hasText = true;
-      }
-      if (hasText) out.push(node);
-      for (let i = 0; i < node.children.length; i++) walk(node.children[i]);
-    })(el);
-    return out.length ? out : [el];
-  }
-
-  function pdfApplyStyle(prop, value) {
-    const host = $('pdf-preview-container');
-    if (!host) return;
-    // With no selection the sheet ROOT is the target (not the container):
-    // the container's own inline style is stripped from the print payload.
-    const sheetRoot = host.querySelector('.mx-doc > div') || host.firstElementChild || host;
-    const nodes = pdfSelected ? pdfTextNodes(pdfSelected) : [sheetRoot];
-    for (let i = 0; i < nodes.length; i++) nodes[i].style[prop] = value;
-    pdfNoteEdit();
-  }
-
-  function pdfSetScale(raw) {
-    const host = $('pdf-preview-container');
-    const s = Math.min(1.2, Math.max(0.8, Number(raw) || 1));
-    if (host) {
-      // transform does not change layout size, so the canvas is resized by
-      // hand or the shell would scroll to the unscaled extent.
-      host.style.transformOrigin = 'top left';
-      host.style.transform = (s === 1) ? '' : 'scale(' + s + ')';
-      host.setAttribute('data-pdf-scale', String(s));
-      const canvas = host.parentElement;
-      if (canvas) {
-        canvas.style.width = Math.round(816 * s) + 'px';
-        canvas.style.height = Math.round((host.scrollHeight || 1056) * s) + 'px';
-      }
-    }
-    const out = $('pdf-tb-scale-out');
-    if (out) out.textContent = s.toFixed(2) + 'x';
-  }
-
-  /* Move mode: tag the page's top-level sections so they can be dragged as
-     whole units, and suspend text editing so the pointer cannot select text
-     mid-drag. Offsets use margins (flow, not absolute), so sections nudge
-     past each other without overlapping. */
-  function pdfTagBlocks() {
-    const host = $('pdf-preview-container');
-    if (!host) return;
-    const stale = host.querySelectorAll('[data-pdf-block]');
-    for (let i = 0; i < stale.length; i++) stale[i].removeAttribute('data-pdf-block');
-    if (!pdfMoveMode) return;
-    const root = host.querySelector('.mx-doc > div') || host.firstElementChild;
-    if (!root) return;
-    const blocks = [];
-    if (root.children[0]) blocks.push(root.children[0]);   // letterhead band
-    const frame = root.children[1];
-    if (frame) {
-      for (let i = 0; i < frame.children.length; i++) blocks.push(frame.children[i]);
-    }
-    for (let i = 0; i < blocks.length; i++) blocks[i].setAttribute('data-pdf-block', String(i + 1));
-  }
-
-  function pdfSetMoveMode(on) {
-    const host = $('pdf-preview-container');
-    const btn = $('pdf-tb-move');
-    pdfMoveMode = !!on;
-    pdfDrag = null;
-    if (host) {
-      host.classList.toggle('pdf-move-mode', pdfMoveMode);
-      host.setAttribute('contenteditable', pdfMoveMode ? 'false' : 'true');
-    }
-    if (btn) btn.setAttribute('aria-pressed', pdfMoveMode ? 'true' : 'false');
-    pdfTagBlocks();
-  }
-
-  function pdfDragStart(e) {
-    if (!pdfMoveMode || !e.target || !e.target.closest) return;
-    const block = e.target.closest('[data-pdf-block]');
-    if (!block) return;
-    const cs = window.getComputedStyle(block);
-    pdfDrag = {
-      el: block,
-      x: e.clientX,
-      y: e.clientY,
-      ml: parseFloat(cs.marginLeft) || 0,
-      mt: parseFloat(cs.marginTop) || 0
-    };
-    try { block.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-    e.preventDefault();
-  }
-
-  function pdfDragMove(e) {
-    if (!pdfDrag) return;
-    // 1 screen px = 0.75pt at 96dpi, divided by the preview zoom.
-    const host = $('pdf-preview-container');
-    const s = (host && parseFloat(host.getAttribute('data-pdf-scale'))) || 1;
-    const dx = (e.clientX - pdfDrag.x) / s;
-    const dy = (e.clientY - pdfDrag.y) / s;
-    pdfDrag.el.style.marginLeft = (pdfDrag.ml + dx * 0.75).toFixed(2) + 'pt';
-    pdfDrag.el.style.marginTop = (pdfDrag.mt + dy * 0.75).toFixed(2) + 'pt';
-    pdfNoteEdit();
-    e.preventDefault();
-  }
-
-  function pdfDragEnd() { pdfDrag = null; }
-
-  /* Reset Layout: put the untouched master template back and return every
-     toolbar control to its default (selection, zoom, drag markers, move
-     mode). The template is re-painted, so the preview also un-pins. */
-  function pdfResetLayout() {
-    pdfDrag = null;
-    pdfSelect(null);
-    pdfSetMoveMode(false);
-    const scale = $('pdf-tb-scale');
-    if (scale) scale.value = '1';
-    const color = $('pdf-tb-color');
-    if (color) color.value = '#000000';
-    const lh = $('pdf-tb-lh');
-    if (lh) lh.value = '1.2';
-    const font = $('pdf-tb-font');
-    if (font) font.selectedIndex = 0;
-    paintPdfPreview();
-    pdfSetScale(1);
+  function pdfOpenDatePicker(field) {
+    pdfCloseDatePicker(false);
+    const key = field.getAttribute('data-edit');
+    if (!key) return;
+    const box = field.getBoundingClientRect();
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.className = 'pdf-date-input';
+    input.setAttribute('data-pdf-datekey', key);
+    input.setAttribute('aria-label', field.getAttribute('data-edit-label') || 'Date');
+    input.value = pdfStoredDate(key);
+    input.style.position = 'fixed';
+    input.style.left = Math.round(box.left) + 'px';
+    input.style.top = Math.round(box.top) + 'px';
+    input.style.width = Math.max(132, Math.round(box.width) + 26) + 'px';
+    input.style.height = Math.max(24, Math.round(box.height) + 2) + 'px';
+    document.body.appendChild(input);
+    pdfDateInput = input;
+    input.addEventListener('change', function () { pdfCloseDatePicker(true); });
+    input.addEventListener('blur', function () { pdfCloseDatePicker(true); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); pdfCloseDatePicker(false); }
+    });
+    input.focus();
+    try { if (input.showPicker) input.showPicker(); } catch (e) { /* ignore */ }
   }
 
   function buildErpDoc() {
@@ -12838,7 +13216,9 @@ body {
           tagline: esc(brand.spec || brand.tag || ''),
           documentType: esc(mode.doc),
           invoiceDate: esc(dateStr),
-          supplyDate: esc(dateStr),
+          // Falls back to the invoice date until the sheet sets its own, so
+          // the slot is never empty.
+          supplyDate: esc(erpState.supplyDate ? erpFormatDate(erpState.supplyDate) : dateStr),
           supplierTin: esc(brand.tin || ''),
           docNo: esc(erpState.ref || ''),
           clientTin: esc(erpState.clientTin || ''),
@@ -12888,6 +13268,8 @@ body {
       type: 'pdf', tool: 'erp', toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
       title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
       total: erpDocType() ? erpMoney(t.final) : '',
+      client: erpState.client || '',
+      ref: erpState.ref || '',
       draft: { tool: 'erp' }
     });
   }
@@ -12897,6 +13279,8 @@ body {
       type: 'copy', tool: 'erp', toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
       title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
       total: erpDocType() ? erpMoney(erpTotals().final) : '',
+      client: erpState.client || '',
+      ref: erpState.ref || '',
       draft: { tool: 'erp' }
     });
   }
@@ -13123,12 +13507,33 @@ body {
       });
     }
     $('menu-btn').addEventListener('click', function () {
-      if (window.matchMedia && window.matchMedia('(min-width: 1025px)').matches) {
+      if (isDesktopNav()) {
         toggleSidebar();
       } else {
         document.body.classList.add('sidebar-open');
       }
     });
+    // In-sidebar Menu toggle: collapses the desktop rail, closes the drawer
+    // on mobile. The left-edge handle reopens a collapsed rail.
+    const sidebarToggleBtn = $('sidebar-collapse');
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.addEventListener('click', function () {
+        if (isDesktopNav()) toggleSidebar();
+        else closeSidebar();
+      });
+    }
+    const sidebarReopenBtn = $('sidebar-reopen');
+    if (sidebarReopenBtn) {
+      sidebarReopenBtn.addEventListener('click', function () {
+        document.body.classList.remove('sidebar-collapsed');
+        try { localStorage.setItem(SIDEBAR_KEY, '0'); } catch (e) { /* ignore */ }
+        closeSidebar();
+        syncSidebarState();
+        const firstNav = document.querySelector('.sidebar-nav .sidebar-link');
+        if (firstNav) firstNav.focus();
+      });
+    }
+    initSidebarState();
     $('theme-toggle-settings').addEventListener('click', function () {
       applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
     });
@@ -13892,65 +14297,85 @@ body {
       }
       const host = $('pdf-preview-container');
       if (host) {
-        host.addEventListener('input', function () {
-          if (pdfPreviewEdited) return;
-          pdfNoteEdit();
+        /* Typing in an editable field writes straight through to `erpState`
+           AND the matching form input. No debounce here — the form has to be
+           live immediately — and the event then bubbles on to #erp-view's
+           own listener registered above, which schedules the sheet rebuild
+           so Amount, Sub Total, VAT and TOTAL follow the edit. */
+        host.addEventListener('input', function (e) {
+          const el = e.target && e.target.closest ? e.target.closest('[data-edit]') : null;
+          if (!el) return;
+          const kind = el.getAttribute('data-edit-kind') || 'text';
+          if (kind === 'date') return;
+          const key = el.getAttribute('data-edit');
+          const text = pdfFieldText(el);
+          // A numeric field may only ever hold a number. Anything else is
+          // rejected on the spot rather than silently accepted.
+          if (kind === 'number' && pdfNumeric(text) === null) { pdfRevertField(key); return; }
+          if (pdfCommitField(key, text) === 'revert') pdfRevertField(key);
         });
-        // Click-to-select: whatever was clicked gets the blue ring and the
-        // toolbar binds to it.
+        host.addEventListener('keydown', function (e) {
+          const el = e.target && e.target.closest ? e.target.closest('[data-edit]') : null;
+          if (!el) return;
+          const kind = el.getAttribute('data-edit-kind') || 'text';
+          // Dates are a button, not a textbox: Enter/Space open the picker
+          // BEFORE the generic Enter handling, which would otherwise just
+          // blur the field and look like nothing happened.
+          if (kind === 'date' && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
+            e.preventDefault();
+            pdfOpenDatePicker(el);
+            return;
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            el.blur();                  // commits through the blur handler
+            return;
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            el.blur();
+            schedulePdfPreview(true);   // discard whatever was typed
+            return;
+          }
+          // Block characters that can never be part of a number, so invalid
+          // input never reaches the field at all.
+          if (kind === 'number' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !/[0-9.,]/.test(e.key)) {
+            e.preventDefault();
+          }
+        });
+        // Commit (and validate) the moment the field is left.
+        host.addEventListener('focusout', function (e) {
+          const el = e.target && e.target.closest ? e.target.closest('[data-edit]') : null;
+          if (!el) return;
+          /* A field that is no longer in the document was removed by our own
+             repaint, not left by the user. Committing (or worse, reverting)
+             from that phantom blur would rewrite the sheet while it is being
+             rebuilt, so it is ignored. */
+          if (!el.isConnected) return;
+          const kind = el.getAttribute('data-edit-kind') || 'text';
+          if (kind === 'date') return;
+          const key = el.getAttribute('data-edit');
+          if (pdfCommitField(key, pdfFieldText(el)) === 'revert') pdfRevertField(key);
+          else schedulePdfPreview();
+        });
+        // Dates are never free text: the field opens the form's own picker.
         host.addEventListener('click', function (e) {
-          const el = e.target;
-          if (!el || el === host || !host.contains(el)) { pdfSelect(null); return; }
-          pdfSelect(el);
+          const el = e.target && e.target.closest ? e.target.closest('[data-edit]') : null;
+          if (!el || (el.getAttribute('data-edit-kind') || 'text') !== 'date') return;
+          e.preventDefault();
+          pdfOpenDatePicker(el);
         });
-        host.addEventListener('pointerdown', pdfDragStart);
-        host.addEventListener('pointermove', pdfDragMove);
-        host.addEventListener('pointerup', pdfDragEnd);
-        host.addEventListener('pointercancel', pdfDragEnd);
       }
+      /* "Rebuild from form" is now only "re-render from `erpState`": after
+         any edit that state already holds the edited value, so it can never
+         overwrite what the user just changed. */
       const rebuild = $('pdf-preview-rebuild');
       if (rebuild) {
         rebuild.addEventListener('click', function () {
-          clearTimeout(pdfPreviewTimer);
-          pdfPreviewEdited = false;
-          buildErpDoc();
+          schedulePdfPreview(true);
+          pdfPreviewState('Live');
         });
       }
-
-      /* ── Toolbar controls ─────────────────────────────────────── */
-      const fontSel = $('pdf-tb-font');
-      if (fontSel) fontSel.addEventListener('change', function () { pdfApplyStyle('fontFamily', this.value); });
-
-      const sizeBox = $('pdf-tb-size');
-      const applySize = function (pt) {
-        const n = Math.min(48, Math.max(4, Number(pt)));
-        if (!isFinite(n)) return;
-        if (sizeBox) sizeBox.value = String(Math.round(n * 10) / 10);
-        pdfApplyStyle('fontSize', (Math.round(n * 10) / 10) + 'pt');
-      };
-      const sizeUp = $('pdf-tb-size-up');
-      if (sizeUp) sizeUp.addEventListener('click', function () { applySize((Number(sizeBox && sizeBox.value) || 9.8) + 0.5); });
-      const sizeDown = $('pdf-tb-size-down');
-      if (sizeDown) sizeDown.addEventListener('click', function () { applySize((Number(sizeBox && sizeBox.value) || 9.8) - 0.5); });
-      if (sizeBox) sizeBox.addEventListener('change', function () { applySize(this.value); });
-
-      const colorBox = $('pdf-tb-color');
-      if (colorBox) colorBox.addEventListener('input', function () { pdfApplyStyle('color', this.value); });
-
-      const lhSel = $('pdf-tb-lh');
-      if (lhSel) lhSel.addEventListener('change', function () { pdfApplyStyle('lineHeight', this.value); });
-
-      const scale = $('pdf-tb-scale');
-      if (scale) scale.addEventListener('input', function () { pdfSetScale(this.value); });
-
-      const moveBtn = $('pdf-tb-move');
-      if (moveBtn) moveBtn.addEventListener('click', function () { pdfSetMoveMode(!pdfMoveMode); });
-
-      const resetBtn = $('pdf-tb-reset');
-      if (resetBtn) resetBtn.addEventListener('click', pdfResetLayout);
-
-      // Keep the eyebrow "Edited" hint honest for keyboard edits too.
-      if (host) host.addEventListener('keyup', function () { pdfNoteEdit(); });
 
       /* Printing the app itself (Ctrl+P): the toolbar and every selection
          ring are hidden while the print job runs, then restored. */
@@ -14444,7 +14869,7 @@ body {
     renderActivity();
     updateKPICards();
     wireKPILive();
-    showView('erp'); // the Master ERP Engine is the default view
+    showView(viewFromHash() || DEFAULT_VIEW); // the fragment wins; Home otherwise
     renderAll();
   renderQr();
   renderBoq();
@@ -14465,7 +14890,18 @@ body {
   syncInvCurrencySelect();
   formatAllNumericInputs();
   window.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !document.getElementById('history-view').hidden) showView('erp');
+    if (e.key === 'Escape' && !document.getElementById('history-view').hidden) showView(DEFAULT_VIEW);
+  });
+  // Back/forward, a hand-edited fragment or an external deep link all land
+  // here. Skipped when it matches the view already on screen, so the
+  // fragment update in showView cannot loop back into a re-render.
+  window.addEventListener('hashchange', function () {
+    const next = viewFromHash();
+    // An unrecognised fragment is not a view: keep what is on screen and
+    // put the address bar back in step instead of leaving it lying.
+    if (!next) { syncViewHash(currentView || DEFAULT_VIEW); return; }
+    if (next === currentView) return;
+    showView(next);
   });
   if (state.project) {
     $('r-rate').value = Calc.round2(defaultRate());

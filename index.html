@@ -344,59 +344,14 @@
           <h2 id="pdf-preview-title">Document preview</h2>
           <span class="pill pill-muted" id="pdf-preview-state">Live</span>
         </div>
-        <p class="hint">Click any text on the sheet to edit it — corrections are kept and printed exactly as shown. Editing pins the preview, so form changes stop regenerating it until you press <strong>Rebuild from form</strong>.</p>
+        <p class="hint">Click a highlighted field on the sheet to change it — the form on this page updates with it, and the two can never drift apart. Quantity and rate recalculate the amounts, VAT and total as you type. Everything else on the sheet is fixed template furniture.</p>
         <div class="actions">
           <button type="button" class="btn btn-ghost btn-sm" id="pdf-preview-rebuild"><span class="nav-icon" data-icon="history" aria-hidden="true"></span>Rebuild from form</button>
         </div>
 
-        <!-- PDF editor toolbar — floats above the sheet. Every control acts
-             on the element you clicked (outlined in blue); nothing here is
-             ever printed (see .pdf-toolbar in @media print). -->
-        <div class="pdf-toolbar" id="pdf-toolbar" role="toolbar" aria-label="Document editor">
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-font">Font</label>
-            <select class="pdf-tb-select" id="pdf-tb-font">
-              <option value="Arial, Helvetica, sans-serif">Arial</option>
-              <option value="'Times New Roman', Times, serif">Times New Roman</option>
-              <option value="'Courier New', Courier, monospace">Courier</option>
-              <option value="Calibri, 'Segoe UI', Arial, sans-serif">Calibri</option>
-            </select>
-          </div>
-          <div class="pdf-tb-group">
-            <span class="pdf-tb-label">Size</span>
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-size-down" aria-label="Decrease font size">&minus;</button>
-            <input type="text" inputmode="decimal" class="pdf-tb-num" id="pdf-tb-size" value="9.8" aria-label="Font size in points">
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-size-up" aria-label="Increase font size">+</button>
-          </div>
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-color">Colour</label>
-            <input type="color" class="pdf-tb-color" id="pdf-tb-color" value="#000000" aria-label="Text colour">
-          </div>
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-scale">Zoom</label>
-            <input type="range" class="pdf-tb-range" id="pdf-tb-scale" min="0.8" max="1.2" step="0.05" value="1" aria-label="Preview scale">
-            <span class="pdf-tb-readout" id="pdf-tb-scale-out">1.00x</span>
-          </div>
-          <div class="pdf-tb-group">
-            <label class="pdf-tb-label" for="pdf-tb-lh">Line</label>
-            <select class="pdf-tb-select" id="pdf-tb-lh">
-              <option value="1.2">1.2</option>
-              <option value="1.4">1.4</option>
-              <option value="1.6">1.6</option>
-            </select>
-          </div>
-          <div class="pdf-tb-group">
-            <button type="button" class="pdf-tb-btn pdf-tb-toggle" id="pdf-tb-move" aria-pressed="false" title="Drag whole sections of the page">Move mode</button>
-          </div>
-          <div class="pdf-tb-group">
-            <button type="button" class="pdf-tb-btn" id="pdf-tb-reset">Reset layout</button>
-          </div>
-          <span class="pdf-tb-target" id="pdf-tb-target">Nothing selected</span>
-        </div>
-
         <div class="pdf-preview-shell">
           <div class="pdf-preview-canvas">
-            <div id="pdf-preview-container" contenteditable="true" spellcheck="false" aria-label="Editable document preview" style="outline: none; box-sizing: border-box;"></div>
+            <div id="pdf-preview-container" spellcheck="false" aria-label="Editable document preview" style="outline: none; box-sizing: border-box;"></div>
           </div>
         </div>
       </section>
@@ -446,7 +401,7 @@
                 <input type="text" inputmode="decimal" data-numeric="1" id="db-item-rate" placeholder="e.g. 1,500" autocomplete="off">
               </div>
             </div>
-            <div class="actions">
+            <div class="actions db-form-actions">
               <button type="button" class="btn btn-primary btn-sm" id="db-item-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add item</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-item-cancel" hidden>Cancel edit</button>
             </div>
@@ -523,7 +478,7 @@
               <label for="db-client-hscode">HS code</label>
               <input type="text" id="db-client-hscode" placeholder="e.g. 8536.69" autocomplete="off">
             </div>
-            <div class="actions">
+            <div class="actions db-form-actions">
               <button type="button" class="btn btn-primary btn-sm" id="db-client-add"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add client</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-client-cancel" hidden>Cancel edit</button>
             </div>
@@ -571,7 +526,6 @@
           </div>
           <span class="kpi-value" id="kpi-val">0</span>
           <span class="kpi-sub" id="kpi-val-sub">Totals across all documents</span>
-          <span class="kpi-cached" id="kpi-val-cached" hidden></span>
         </div>
       </div>
 
