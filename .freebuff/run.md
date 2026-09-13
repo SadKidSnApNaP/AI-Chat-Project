@@ -2306,3 +2306,1022 @@ name plus a populated number, with storage left untouched. Console clean.
 
 Note: this testing emptied the preview profile's client list and cleared the ERP
 header fields it had filled; items, history, brand and appearance were untouched.
+
+## 2026-09-13 — Email confirmation, background colour, Library duplicates
+
+Three reports, three different root causes. Only one of them was actually a bug
+in the code the user was describing.
+
+### 1. Confirmation link left the app in Guest mode — a 300 ms race
+
+`js/cloud.js` had a `handleConfirmationRedirect()` that stripped the
+`#access_token=…` fragment out of the address bar with `replaceState` and then
+reloaded the page after a flat **300 ms**.
+
+supabase-js consumes those tokens itself, but NOT synchronously: for the
+implicit flow its `_initialize()` parses the URL up front and then
+`await this._getUser(access_token)` before `_saveSession()`. Verified against the
+shipped SDK source, not assumed:
+
+    async _initialize() {
+      if (B() && (e = Dr(window.location.href), this._isImplicitGrantCallback(e)
+                                  ? t = 'implicit' : await this._isPKCECallback(e) && (t = 'pkce')), …) {
+        let { data: n, error: r } = await this._getSessionFromURL(e, t);
+        …
+        await this._saveSession(i), …
+      }
+      return await this._recoverAndRefresh(), { error: null }
+    }
+
+So on any connection where that round-trip took longer than 300 ms the reload
+cancelled the exchange — and the tokens were by then already gone from the URL,
+so nothing could recover them. The user landed on Home still signed out. A
+one-shot `sessionStorage` guard marked the attempt "done" before it had
+succeeded, so re-clicking the link was ignored too.
+
+**Fixed by removing the race, not by tuning it.** `handleConfirmationRedirect()`
+now only DETECTS the callback and waits for supabase-js to report the outcome
+through `onAuthStateChange`; nothing touches the URL until then. A 15 s fallback
+covers a link that never yields a session, and a URL that Supabase itself refused
+(`error_code=` / `error_description=`) resolves immediately instead of waiting.
+The guard is set only after a successful exchange and cleared by both an ordinary
+page load and the failure path, so it can never block a later attempt.
+
+The second half of the bug was that a session arriving after boot changed
+nothing: `SESSION_EMAIL` and the `u:<email>:` key prefix are fixed at module
+load, so the app cannot re-namespace itself in place. `js/app.js` now captures
+`BOOT_SIGNED_IN` and reloads **once** when a session appears that it did not boot
+with (`watchForLateSignIn`), guarded so a reload cannot repeat itself.
+
+`js/cloud.js`'s `auth.onChange` also reports `SIGNED_IN` / `INITIAL_SESSION`, and
+cloud messages (a refused link, a lost connection) are mirrored to a toast once
+per distinct message.
+
+Tested with `.freebuff/make-confirm-test.ps1` + `.freebuff/confirm-app-stub.html`,
+which inject a fetch stub for `/auth/v1/user` into a copy of index.html
+(`?mode=token|error`, `?slow=N` delays the exchange). The stub sets the hash
+itself, because the preview navigation layer drops URL fragments.
+
+- `?mode=token&slow=1200`: `isConfirming()` true and the fragment still intact
+  while the exchange ran (the old code cleared it at t≈0); the exchange finished
+  at t+1.20s — four times the old reload window; `guard=1` proves
+  `finishConfirmation` took the SUCCESS path, i.e. a session really was saved;
+  the page then reloaded once.
+- `?mode=error`: resolved immediately, no wait; `guard` left null; toast
+  "That confirmation link is no longer valid…"; address bar cleaned.
+- Boot with a session present: chip "Confirm Test" / "Free plan", cloud status
+  `synced`, and Account Settings showed the email, `14 February 2026`, plan and
+  credits rows with the guest card hidden.
+- Ordinary load: the stale guard is cleared (verified `null` after reload).
+
+### 2. Background colour — the opaque layer in `#glow-backdrop`
+
+The click handler was never broken: `applyBg()` stored the value, moved `.active`
+and published `--bg-user`, and `elementFromPoint` over every swatch returned the
+swatch itself (no overlay). The canvas the user actually sees is
+`#glow-backdrop` — fixed, full-viewport, `z-index:-9999` — and its LAST gradient
+layer was an opaque `#20274c → #111428 → #090a14`. It painted over `:root`,
+where the chosen colour lives, so the swatch selection moved while the page never
+changed. (What reads as a "stuck red swatch" is the active ring, which is tinted
+with `--accent`.)
+
+`#glow-backdrop` now paints `background-color: var(--glow-bg, transparent)` and
+takes its base layer from `var(--glow-base, <built-in gradient>)`; `applyBg()`
+publishes `--glow-bg: <hex>` + `--glow-base: none`, and clears both on reset. The
+light-mode rule was rewritten from the `background` shorthand to
+`background-image` so it can no longer reset the colour.
+
+Verified live: preset → `rgb(22, 35, 71)`, custom picker `#808080` → a plainly
+grey canvas (screenshot), Reset → base gradient restored, `--glow-*` cleared,
+picker back to `#000000`, no active swatch.
+
+### 3. ERP auto-save — already correct; the duplicates were old rows
+
+The explicit Save was already in place from an earlier change:
+`#erp-save` ("Save to Library") sits in the Master ERP Engine's Live summary, and
+`erpSaveToLibrary()` is the only thing that writes a Library row.
+
+Re-measured rather than assumed: typing into `erp-project`, `erp-client`,
+`erp-ref`, `erp-contact`, `erp-clientphone`, `erp-address`, `erp-posupply` left
+the history at 5 entries, and two rapid clicks on Save to Library produced ONE
+new row (the entry id is remembered, so a resave updates in place). The Item /
+Client Database forms were equally inert while typing.
+
+The duplicates were therefore stale rows from the old auto-save build. Added a
+confirm-guarded **Remove duplicates** button to Library (`#history-dedupe`),
+shown only while duplicates exist: two rows are the same save when they share
+type + tool + toolName + title + client + ref + total AND fall inside the same
+minute, which keeps a deliberate re-issue of identical figures out of the net.
+Verified: it removed exactly the redundant copy of the two `ACCESS EKALA (PVT)
+LTD / Rs128,915` rows, kept the newer one, pruned its orphaned draft, re-rendered
+the list and hid itself; three injected rows with one genuine same-minute pair
+and one different-minute re-issue produced exactly 1 duplicate, not 2.
+
+## 2026-09-13 — Excel exports: real styling, live formulas, per-mode field sets
+
+**Supersedes every earlier note about `mxSheetAoa()` / the Excel export.** That
+function is GONE (as are its mentions at the old sections above): it built one
+flat AOA grid for every Document Mode, so a Delivery Note exported rate, amount,
+discount and VAT columns it does not have, and SheetJS could not style any of it.
+
+### Two libraries, split by DIRECTION
+
+Measured, not assumed: **SheetJS CE 0.18.5 cannot write styles.** A workbook
+written with a bold, bordered, shaded cell came back with one default font and an
+empty border — the `s` object is silently dropped and only number formats
+survive. So:
+
+| library | role | why |
+|---|---|---|
+| SheetJS (`xlsx@0.18.5`) | **reading** (`erpImportFile`) | also reads legacy `.xls` |
+| ExcelJS (`exceljs@4.4.0`) | **every write** | styles, merges, frozen panes, formulas |
+
+Both are CDN `<script>` tags in `index.html` next to the other libraries; the
+ExcelJS one carries a comment explaining the split.
+
+### One writer per document template
+
+`erpDocData()` (new) is the single description of the document being built — the
+PDF sheet and every spreadsheet are generated from the same object, so an export
+cannot drift from the printout. The writer is picked from the same `template`
+field the PDF templates are picked from:
+
+| mode | Excel sheet | columns | totals |
+|---|---|---|---|
+| Tax / Commercial Invoice, Pro Forma | `Invoice` | No / Description / Unit / Qty / Rate / Amount | Sub Total → Discount → (net) → VAT → TOTAL |
+| Quotation / Offer | `Quotation` | Item / Description of Item / Unit / Qty / Rate / Amount (description carries the `Make / Model:` line) | Sub Total → Estimated Freight → Total — **no VAT / discount / TIN** |
+| Delivery Note | `Delivery Note` | Item No / Description of Item / Model No / Unit / Qty — **five columns, nothing else** | none (no pricing at all) |
+
+Every calculated figure is a LIVE FORMULA over the cells above it, each carrying
+the value it currently evaluates to; `wb.calcProperties.fullCalcOnLoad = true`
+so Excel recalculates on open:
+
+```
+F16 =D16*E16      F18 =SUM(F16:F17)   F19 =-F18*5%
+F20 =F18+F19      F21 =F20*18%        F22 =F20+F21
+```
+
+The discount / VAT rows only exist when that percentage is non-zero, exactly as
+the sheet omits them.
+
+### Formatting
+
+Bordered + bold + shaded header row (`FFD9E1F2`) on the item grid; every grid cell
+boxed (`FFEDF1F9` labels in the info blocks); the letterhead and the recipient /
+client blocks MERGED across the sheet (26–28 merges per document); the item
+heading row frozen so the column names stay on screen; widths `[7.5, 40, 9.5,
+9.5, 15, 16]`; A4 portrait, fit to one page wide.
+
+**A trap worth remembering:** no column width may be exactly **9**. ExcelJS
+treats 9 as the default width, writes no `customWidth` flag, and the column comes
+back `undefined` after a save/load round trip (reproduced in isolation: 9 →
+`undefined`, 9.5 → survives). That is why the Qty column is 9.5, with a comment.
+
+### The import template (`#erp-template-dl`)
+
+`xlWriteImportTemplate()` writes a genuinely formatted workbook: `Header` sheet
+with a shaded bold title band, a bold `Field | Value` heading row and **frozen at
+row 3**; `Items` sheet with bold shaded `SKU / Description / Unit / Qty / Rate`
+headings, **frozen at row 1**, borders on every cell, `0.###` / `#,##0.00`
+formats, widths 14/48/10/10/15, plus 6 empty ruled rows to fill in.
+
+### Verified in the browser
+
+Ran against a real export via the seeded-session harness
+(`.freebuff/make-account-test.ps1` — the gate needs a signed-in account), with
+`URL.createObjectURL`/`HTMLAnchorElement.click` patched to capture the blob
+instead of downloading it, then reloaded each file with ExcelJS and read the
+cells back:
+
+- **Invoice** (100 × 3500, 25 × 4250.5, discount 5%, VAT 18%): sub `456262.5`,
+discount `-22813.13`, net `433449.38`, VAT `78020.89`, total `511470.26` —
+**identical to the printed sheet's** 456,262.50 / -22,813.13 / 433,449.38 /
+78,020.89 / 511,470.26.
+- **Pro Forma**: title cell reads `PRO FORMA INVOICE` (mode-driven, not
+hardcoded) and **no VAT or Discount cell exists** with both percentages at 0.
+- **Quotation**: `Item / Description of Item / Unit / Qty / Rate (LKR) / Amount
+(LKR)`; Sub Total → Estimated Freight → Total; zero VAT/discount rows.
+- **Delivery Note**: exactly `Item No / Description of Item / Model No / Unit /
+Qty` — a scan for `Rate|Amount|Discount|VAT|TOTAL` in the sheet returns **0 hits**.
+- File names are mode-driven: `TAX INVOICE INV-2026-001.xlsx`,
+`QUOTATION INV-2026-001.xlsx`, `DELIVERY NOTE INV-2026-001.xlsx`.
+- Import template: two sheets, frozen 3 / 1, borders and fills on every cell.
+
+Note for re-testing: the preview server caches sibling files, so a regenerated
+`.freebuff/account-test.html` must be opened with a cache-busting query string
+(`?v=N`) or the OLD build keeps running — this bit me once and looked like a
+width edit that "did not apply".
+
+Update the stale mentions above (`mxSheetAoa()` at the Excel/CSV lines) to read
+"now `erpDocData()` + the per-mode ExcelJS writers" if you work in those sections.
+
+## 2026-09-13 — Database edits flow into the open document
+
+An in-progress document only ever held COPIES of what the master database
+supplied (a line's name / unit / rate when its SKU was picked; the header's
+client fields when the client was chosen). Correcting the database afterwards
+left those copies frozen, so a loaded record kept printing the old rate.
+
+### The rule
+
+**A database edit flows into the open document for every field that still holds
+the value the database supplied; a value typed by hand on the document is never
+overwritten.**
+
+### How it works — provenance, field by field
+
+| where | what is remembered |
+|---|---|
+| `erpState.lines[n].src` | `{ name, unit, rate }` — what the record supplied to that line |
+| `erpState.clientSrc` | `{ name, v: { client, project, address, contact, clientPhone, clientTin, placeOfSupply, poNo, deliveryTerms, shipTo, currency } }` |
+
+Written in `addErpRow` / `erpFillFromSku` (lines) and `erpSelectClient` (header).
+A field still equal to its recorded value is LINKED and follows the record; a
+field that now differs is a **per-document override** and is left alone. So
+overriding one description for one invoice does not stop the rate from
+following, and a database edit does not silently undo an override. Re-picking
+the SKU is the explicit "take it from the database" and re-links every field.
+
+**Documents saved before this existed have no provenance.** For those the
+database's PREVIOUS value is the yardstick (knowable exactly when an edit
+happens) in `erpApplyItemToLine`, so a line plainly populated from the record
+does follow while one typed over does not. On the re-resolve paths there is no
+"previous" value, so a legacy line is only linked where it already equals the
+record — which changes no value and just records provenance for next time.
+
+### Where it fires
+
+| trigger | path |
+|---|---|
+| saving an item / client edit in the database (live, whichever view is open) | `addDbItem` / `addDbClient` → `syncDocumentWithDbItem` / `syncDocumentWithDbClient` |
+| Load Record | `erpLoadRecord` → `dbMaybeReload()` → `erpResolveFromDb()` |
+| entering the engine, incl. back/forward | `showView('erp')` → `dbMaybeReload()` → `erpResolveFromDb()` |
+| another tab writes the keys | `storage` listener → `dbMaybeReload()` |
+| a pull from Supabase replaced the local copy | `onCloudEvent` → `dbMaybeReload()` |
+
+`dbStorageSig()` / `dbMaybeReload()` are a cheap signature check over the two
+stored database keys: the in-memory `db` is only re-read when the stored copy
+actually differs, so the cloud/status events that fire constantly cost nothing.
+
+### Two bugs this turn found by testing, not reading
+
+1. **The boot-time `showView` runs BEFORE the first `renderErp`.** On a cold
+   start straight into `#/erp`, `readErpHeader()` would read the still-empty
+   HTML inputs and wipe the document just loaded from storage. Fixed with
+   `erpDomPainted`, set at the end of `renderErpHeader()`, which makes
+   `readErpHeader()` a no-op until the inputs have actually been painted.
+2. **The client half of the re-resolve starts by reading the header back**
+   (`readErpHeader()` inside `erpSyncClientForRecord`), and with a stale table
+   on screen that wrote the OLD line values straight over the ones just
+   refreshed — measured as: the line's `src` moved to the new rate while the
+   cell itself snapped back to the old one. `erpResolveFromDb` now renders the
+   rows BEFORE calling the client half.
+
+### Verified in the preview (all paths, current build)
+
+- **Live**: editing the item through the database UI while the ERP page was
+  open moved the line to the new name + rate and recalculated the amount
+  (4 × 6000 → `Rs24,000`) with a toast; editing the client moved the header's
+  address and TIN instantly.
+- **Override**: after typing a rate of 7777 on the line, a later database edit
+  (9000) updated the **name** but kept the **rate**, with `src.rate` left at the
+  value it was linked to — and the toast said how many values were kept.
+- **Load Record**: with the database edited out-of-band (8500), pressing Load
+  Record on a record holding 7000 produced 8500 in both the state and the DOM.
+- **Re-entry**: a database write made while on `#/home` was reflected on
+  returning to `#/erp`.
+- **Another tab**: a `storage` event on the item key refreshed the open line.
+- **Library is untouched**: after Save to Library, a database edit left the
+  saved entry (total `Rs24,000`) AND its draft snapshot byte-identical while the
+  working draft moved to the new rate. Nothing in the sync path calls
+  `erpRefreshLibraryEntry()`, `saveHistory()` or `pushHistory()` — it rewrites
+  only the working draft key (`calcmall_erp_v1`).
+
+Re-test note: the harness page must be opened with a fresh `?v=N` (the preview
+server caches sibling files) and `window.alert` must be stubbed before clicking
+**Save Record** — that handler ends in `window.alert`, which blocks the page's
+main thread and stalls the automation.
+
+## 2026-09-13 — Item "Model no": stored once, auto-filled into the ERP
+
+### What the field is
+
+`db.items[].model` — a free-text make/model code on the item record, stored with
+the record and (like every other item field) carried inside the `data` jsonb
+column in Supabase. **No schema change was needed**: `items` has explicit
+columns for sku/name/unit/rate, and `rowsToItems()` merges `data` back over them,
+so `model` round-trips through the cloud untouched. Do not add a `model` column
+unless you also add it to `itemsToRows`/`rowsToItems`.
+
+- Form: `#db-item-model` ("Model no (optional)"), between Item name and Unit.
+  In `DB_ITEM_FIELDS`, so clearing/resetting the form covers it; pre-filled by
+  `startEditDbItem()`, saved by `addDbItem()`.
+- Lists: the items table (`.db-grid-items`, head label `Model`) and the items
+  drawer (`<th>Model no</th>`). Blank shows `—`; full text is in the cell title.
+- Master Database view: `mdField('Model no', rec.model)`.
+- ERP: `erpFillFromSku()`/`addErpRow()` copy it, `erpLineSrc()` records it, and
+  `erpApplyItemToLine()` syncs it (the field list is now
+  `['name','model','unit','rate']`), so a Model no edited in the database reaches
+  an open line and a hand-typed Model no becomes a per-document override like the
+  other three. `loadErp()` gives older lines a `model` key so the render never
+  reads `undefined`.
+
+### Two real layout bugs found while testing this
+
+1. **`.qr-amount` on the item row's rate cell.** The row borrowed that class for
+   its bold money look, and `.qr-amount` carries `min-width: 96px` — the rate
+   cell was therefore 96px wide inside a ~52px grid track and bled into the
+   actions column. `.db-rate` now owns its styling (bold, tabular, nowrap,
+   `min-width: 0`, ellipsis) and the row no longer has `qr-amount`. Use
+   `.qr-amount` only on a tool table's amount cell.
+2. **Header labels sized the columns.** A grid `fr` track grows to its item's
+   min-content, so the head's own text sized the tracks differently from the row
+   below it — labels sat up to 230px off the cells they named on the clients
+   grid. `.db-list-head > span { min-width: 0 }` neutralises it on both sides.
+
+### Responsive bands for the item row (6 columns)
+
+`.db-grid-items` floors total 368px (columns) + 40px (gutters) ≈ the row's
+content box at a ~440px card. The dashboard's two-column layout returns at
+981px, which squeezes this card to ~400px, so the item row **stacks** in
+`(min-width: 981px) and (max-width: 1240px)` as well as below 760px — otherwise
+the name/model columns have nowhere to go. `.db-row.db-grid-items` scoping keeps
+those rules off the client/record rows (an unscoped `.db-row .db-unit` rule hit
+the clients grid). Clients/records only stack below 760px, where their 4 columns
+no longer fit.
+
+### Harnesses
+
+- `.freebuff/db-grid-test.html?w=<viewport>` — loads the real app in an iframe of
+  that width, seeds items+clients, and asserts: head/row column alignment, cell
+  widths vs their tracks, no bleed outside the row or card, no horizontal
+  overflow, row heights stay equal with a 100-character name/model, Model No and
+  `0`/`—` rate rendering, ellipsis + title. It reports the mode it measured
+  (`grid` or `stacked`). Passing at 645 (15), 900 (18), 1024 (16), 1241 (18),
+  1280 (18), 1440 (18), 1920 (18).
+- `.freebuff/cloud-sync-test.html` — the Supabase mapper test. Three checks were
+  added for the rate tie-break: a null `rate` COLUMN keeps the rate the record's
+  own `data` carries; a real column rate (0 included) wins over the payload; and
+  no rate anywhere still comes back `null`. 33/33 pass.
+- Signed-in ERP checks use the `account-test-stub.html` + `make-account-test.ps1`
+  pair (see the Account Settings section above); regenerate it with
+  `make-account-test.ps1` after any `build-preview.ps1` run, open it with a fresh
+  `?v=N`, and remember the guest gate blocks the ERP for signed-out users.
+
+Rate display note: `dbRateInfo()` is the only reader — `set` prints
+`Calc.fmtNum(value)` (0 → `0`), a blank/null prints `—`, and unreadable text
+prints `Invalid`. Verified against every stored shape: `242`, `0`, `null`, `"242"`,
+`"10 000"` → 10,000, `"abc"` → Invalid, `""`/`"NaN"` → `—`.
+
+## 2026-09-13 — Row click on the Item & Client Database opens the browse view's Details
+
+The two screens now share one renderer instead of two copies of the same fields:
+
+- `mdDetailHtml(kind, rec, actions)` returns the read-only body (title, sub, every
+  `mdField(...)` row). `renderMasterDataDetail()` renders it into the browse pane
+  with `mdManageHtml(kind)` as the action; the new drawer renders the same html
+  with `''` — the "Manage in Item & Client Database →" link is meaningless on that
+  page, so its footer carries **Edit this item/client** (loads that record into the
+  form) and **Close** instead.
+- New markup: `#db-detail-drawer` (`.drawer-card`, body `#db-detail-body` which
+  carries the `.md-detail` class so the browse view's CSS applies verbatim).
+- `openDbDetail(kind, rec)` / `closeDbDetail()` / `renderDbDetail()` keep the
+  selection as `{ kind, key }` (SKU / client name), never an index — so a sort or a
+  rename cannot point it at the wrong record. `renderDb()` re-renders the open
+  drawer, and `renderDbDetail()` closes it if the record no longer exists (deleted
+  while it was open).
+- Clicks: the existing `#db-item-rows` / `#db-client-rows` handlers now fall through
+  to the drawer whenever the click was NOT on `.db-item-edit` / `.db-item-del` (and
+  the client equivalents), so the pencil and the ✕ are untouched. Rows are
+  `tabindex="0"` with a descriptive `aria-label`; Enter/Space on a focused row opens
+  the same drawer (blocked while the event target is one of the row's buttons).
+  Backdrop click, ✕/Close and Escape all close it.
+- CSS: `cursor: pointer` and a `:focus-visible` ring are scoped to
+  `.db-row.db-grid-items` / `.db-row.db-grid-clients` — the record rows
+  (`.db-grid-records`) are not click targets and must not look like one.
+- `dbDetailSel` is declared with `var`: `renderDb()` can run from a storage/cloud
+  event before that line is evaluated, and every use is falsy-safe.
+
+Harness: `.freebuff/db-detail-test.html` — loads the real app in an iframe, seeds an
+item and a client, then asserts: the browse view's field list for a record is
+**byte-identical** to the drawer's for the same record (items AND clients), the
+drawer's kind label and Edit button, backdrop/Close/Escape exits, `tabindex` +
+Enter opening, the pencil still loading the form without opening the drawer, ✕
+still going through the confirm dialog, an edit made while the drawer is open being
+reflected in it, and the drawer's Edit button loading the record and closing.
+22/22 pass. Deleting the open record (✕ → confirm) closes the drawer and removes
+the row — checked live in the preview.
+
+## 2026-09-13 — Yearly Premium price $125 → $124.99
+
+Two places carried the yearly price, both in `index.html`: the card's
+`<p class="plan-price"><strong>$125</strong>` and the subscribe button's
+`data-price="$125 / yearly"`. Both now read `$124.99`; `data-price` is what the
+CTA handler writes into `nexora_plan_interest` and into the activation toast
+("Yearly Premium activated ($124.99 / yearly) — …"), so the summary text follows
+automatically. The "Save ~20%" badge is unchanged ($124.99 vs $12.99 × 12 =
+$155.88 is ~19.8% off). Monthly ($12.99) is untouched.
+
+Nothing else references the yearly price: Account Settings shows plan state and
+credits ("Premium — Unlimited Credits"), never a figure. Verified live — card
+label, badge, CTA attribute, activation toast, and `/\$125(?!\.)/` false across
+the whole DOM; `preview.html` rebuilt with no `$125` left in it.
+
+## 2026-09-13 — Library is documents-only; revision cap; per-document expiry
+
+**The last writers into `history` that were not a document save.** Every item or
+client add / edit / delete called `pushHistory({ type: 'db', … })`, and
+`renderHistory()` renders the whole array — so saving a database record put an
+"Item DB updated" / "Client DB updated" row into History & Saved Documents that
+nobody had saved, and inflated the "Saved Documents" KPI (`docCount =
+history.length`). The ERP document path was already clean: typing writes only
+`calcmall_erp_v1`, and `erpRefreshLibraryEntry()` returns false without a
+`libraryId`, so an export can never create a row.
+
+There is now a second, LOCAL store — `calcmall_activity_v1` (`activityLog`,
+`logActivity()`, `isDuplicateActivity()` — same 2 s one-action guard as
+`pushHistory`). All 8 database writers call `logActivity`; the Home feed is
+`activityFeed()` = `history` + `activityLog`, newest first, so the feed looks
+unchanged while the Library holds documents only. `clearActivity()` now clears
+WHAT THE FEED SHOWS (the activity log plus any notification rows an older build
+left in History) and never saved documents — which is what its own copy has
+always promised. `clearHistory()` stays Library-only. `resetAll()` clears the
+activity key too.
+
+The remaining `pushHistory` call sites are the standalone tools' export / copy
+actions (qr, boq, invoice, pricing, duty, variation, breakeven, fx, gpa,
+retainer, delay) — each is an explicit user action, unchanged.
+
+Leftovers are visible and removable, never auto-deleted: `libraryNotificationCount()`
+labels a Library button "Remove N notifications", which goes through
+`confirmAction` and then `removeLibraryNotifications()`.
+
+**Revision cap (warn at 3).** `erpLibraryPayload()` now carries `project` and
+`recordId` (read from the Project/Client Header's Primary Key field), and
+`erpLibraryKey()` identifies the JOB — `rec:<id>` when there is one, else
+`cp:<client>\u0001<project>`. `erpSaveToLibrary()` is `async` and, when it is
+about to create a NEW row for a job that already has ≥
+`LIBRARY_VERSION_WARN_AT` (3) rows, awaits a cancellable `confirmAction`
+("Save another version? … Save another one anyway?"). Cancel returns without
+writing; nothing is ever deleted. Re-saving the same open document still
+updates its row in place via `libraryId`, so the warning only appears for a
+genuinely new row.
+
+**Per-document auto-expiry (opt-in, default OFF).** Every entry carries
+`autoExpire` (false unless switched on for that row) and `touchedAt`.
+`LIBRARY_EXPIRE_DAYS = 30`; `libraryExpiryDue()` ignores any entry that is not
+`autoExpire === true`, so a finalized invoice/quotation is never removed for
+being old. `historyAction` handles `act === 'retention'` (the Library row's
+"Keep forever" ⇄ "● Auto-delete in Nd" button, `.history-retention.is-on`),
+and `touchLibraryEntry()` refreshes the clock on View / Load draft and
+Re-download. `sweepExpiredLibrary()` runs ONCE per boot, before the Library
+paints, and the count it removed is announced by a toast.
+
+**How it was tested.** The app gates every tool view behind sign-in, so a
+throwaway root page (index.html with `.freebuff/account-test-stub.html` injected
+before the `cloud.js` tag, built by a temporary `.freebuff/make-erp-test.ps1`)
+ran the real `js/app.js` with a seeded session. (The helper is recreated and
+deleted as needed — nothing test-only is shipped.) Measured: typing in the ERP
+(a client, project, ref, a line item) then navigating away left History empty;
+saving an item put one entry in `calcmall_activity_v1` and none in History;
+with 3 seeded JOB-1 versions the 4th save raised "JOB-1 already has 3 saved
+versions…" — Cancel left the list at 5, Save anyway took it to 6 with
+`recordId: 'JOB-1'`, `autoExpire: false`; every Library row defaulted to "Keep
+forever"; toggling one on stored `autoExpire: true`, and after 40 idle days a
+reload removed exactly that row ("1 document passed its 30-day auto-delete
+window…") while unflagged rows 90 days old survived; "Remove 2 notifications"
+took the Library from 6 rows to 4 and hid itself. Test page, helper, seeded
+items/clients and test history were all removed afterwards, and `preview.html`
+was rebuilt (969,506 bytes).
+
+## 2026-09-13 — Excel export gets a review step
+
+"Export as Excel (.xlsx)" used to jump straight to a Save As dialog, so the
+sheet could only be judged after the file existed (the PDF path already had its
+review step, the browser print preview). There is now a preview dialog between
+the click and the file: title, the sheet's dimensions in the note, the file name
+and currency in the footer, and the sheet itself as a read-only ruled table with
+`Download .xlsx` and `Cancel`. Cancel, the ✕, a backdrop click and Escape all
+return to editing without downloading; Enter confirms when the download button
+has focus.
+
+**The preview is not a second description of the document.** `xlRecordSheet()`
+is a worksheet with exactly the surface the template builders use (`getCell`,
+`mergeCells`, `getColumn().width`, `getRow().height`, `pageSetup`, `views`), and
+`xlDocPlan(d)` runs the REAL builder — `xlInvoiceSheet` / `xlQuotationSheet` /
+`xlDeliverySheet` — against it. Because `xlStyle()` writes into whatever cell
+object it is handed, the recorder collects the very font, fill, border,
+alignment and `numFmt` ExcelJS is about to write, plus every merge. One
+implementation, two outputs, nothing to drift. `xlSheetPreviewHtml()` then paints
+that plan: merges become `colspan`/`rowspan` (28 in the invoice fixture), fills
+come from the recorded ARGB, column widths are Excel character units scaled to
+px (min 26), and a formula cell is flagged with a marker and `title="Live
+formula: =…"` so a calculated figure is never mistaken for typed text.
+
+Verified with the signed-in harness, three modes, with the same anchor-click
+interception used for the earlier export checks (`HTMLAnchorElement.prototype.click`
+records `this.download` and returns, so the test proves a download happened
+without writing files):
+
+- click Export → modal opens, **0 downloads**; Cancel/✕/backdrop/Escape → modal
+  closes, **0 downloads**, still on the ERP view
+- click Export → Download → exactly one anchor click,
+  `download="TAX INVOICE REF-XL-1.xlsx"` (and the usual `erpRefreshLibraryEntry()`
+  refresh afterwards)
+- Invoice mode: VAT, Discount, Sub Total, TOTAL and "Due amount in words" all
+  present; 11 formula cells, `=D16*E16` … `=SUM(F16:F21)` … `=-F22*5%` …
+  `=F24+F25`, amounts formatted `#,##0.00`
+- Quotation mode: written-out date + Our Ref, recipient block, "Dear Sir,",
+  Rate/Amount, Estimated Freight, Terms & Conditions — and NO VAT, NO Discount
+- Delivery Note mode: headings `Item No / Description of Item / Model No / Unit
+  / Qty` — NO Rate, NO Amount, NO Discount, NO VAT
+- a multi-line description keeps its line break (quotation `Make / Model: …`
+  renders inside the description cell, `white-space: pre-wrap`)
+
+Two things worth knowing. The preview makes an existing wart *visible*: empty
+item rows in the ERP grid are still part of `d.items`, so they appear as zero
+rows in both the preview and the file — the export was always doing this, but now
+you can see it before saving. And the entitlement is still charged on the click
+(`gateClick(exportErpExcel)` runs before the preview), which matches the PDF
+path, where the print dialog also appears after the credit is spent.
+
+## 2026-09-13 — "Processed Value" scope + the plan tally's wording
+
+Reported: a brand-new account showed "Processed Value: Rs 2.8K" while its own
+sub-line read "LKR 2,809 across 0 documents", and "12 of 13 free".
+
+**Neither was stale cache**, and the numbers were not per-account wrong — the
+repro (a fresh account, same device, guest store deliberately full of leftovers)
+produced the report's exact wording: `Rs 2.8K` / `LKR 2,809 across 0 documents`
+with `nexora_free_usage = {"erp":1}`. Two real defects:
+
+1. `currentKPIValues()` added the UNSAVED ERP working draft to the headline:
+   `if (erpDocType()) procVal += erpDocTotals().final;`. The sub-line's document
+   count came from `history` — a different scope — so one typed draft line
+   (qty 1 x rate 2809) produced money "across 0 documents". `kpiTrends().val`
+   already summed documents only, so the headline also disagreed with its own
+   30-day badge. `procVal` is now COMMITTED value (saved documents + saved Scope
+   Guard requests), the sub-line is built from the same figures it sums
+   ("LKR 2,809 from 1 saved document", "— nothing processed yet" at zero), and
+   the draft is named on the pipeline caption instead ("Pipeline in progress — …
+   Draft on this device: Rs 2,809."). `currentKPIValues()` returns `docVal`,
+   `reqCount`, `reqVal` for that purpose; `listAnd()` joins the parts.
+
+2. The plan tally was phrased as REMAINING — "12 of 13 tools still free" — which
+   reads as "12 used". `planState().credits` now reports USED: "0 of 13 free
+   uses spent" on a fresh account, "1 of 13 …" after one tool view. The count
+   itself was always per-account and correct (verified); `acct-row-credits` is
+   its only consumer.
+
+**Per-account freshness checked for every stat, not just the broken one.** Two
+accounts on the SAME device, booted back to back through the fresh-account
+harness (`?as=<email>`, `/rest/v1/` returning no rows):
+
+| | account A (seeded: 2 items, 1 client, 1 doc Rs5,000, 1 saved record, 1 request Rs1,000, usage {erp:1}) | account B (untouched) | A again, after B |
+|---|---|---|---|
+| Active estimates | 1 | 0 | 1 |
+| Database records | 3 | 0 | 3 |
+| Saved documents | 1 | 0 | 1 |
+| Processed value | Rs 6K — "LKR 6,000 from 1 saved document and 1 project requests" | Rs 0 — "LKR 0 — nothing processed yet" | Rs 6K |
+| Credits | 1 of 13 free uses spent | 0 of 13 free uses spent | 1 of 13 |
+
+Everything reads through the `userKey()` shim, so the prefix is the account:
+keys are frozen at module load (`SESSION_EMAIL`) and every sign-in path ends in
+`reloadApp()`, with `watchForLateSignIn()` covering a session that arrives after
+boot. A fresh account is NOT supposed to be untouched-and-non-zero; a session
+that appears late forces the one reload that re-namespaces the page. Test page,
+helper, stub and the seeded accounts were all removed afterwards; `preview.html`
+rebuilt (983,421 bytes).
+
+**Still worth deciding (not changed):** opening a tool VIEW spends that tool's
+single free use, before the user does anything with it — so browsing the ERP
+costs the same as exporting from it. That is the standing design ("entering a
+tool view IS a tool execution"); the new wording at least makes it visible
+rather than implied.
+
+**Incidental find, fixed:** the boot log carried
+`SyntaxError: Failed to execute 'add' on 'DOMTokenList': The token provided must
+not be empty` from `renderDashboard()` — a PRE-EXISTING line (not part of this
+change), `dropEl.classList.add(c.drop > 0 ? 'drop-bad' : (hasBaseline ?
+'drop-none' : ''))`, which passes `''` whenever a Scope Guard project exists with
+no baseline and no drop. Because it threw inside `renderAll()`, everything the
+boot sequence does after that call never ran: the later renders AND the
+`hashchange` listener registration. Fixed by only adding a class when there is
+one (`const dropCls = …; if (dropCls) dropEl.classList.add(dropCls);`). Verified:
+a fresh load now logs nothing at all, and a hand-set `#/history` fragment
+switches the view, which can only happen if boot reached the end.
+
+## 2026-09-13 — Formal PDF letterhead: the blank dark box, and the page margin it never had
+
+Two defects, both shared by every tool that builds a formal letter.
+
+**1. The "empty" dark box was the doc-type badge, painted #111827 on #111827.**
+`formalLetterhead()` emits `<div class="fm-right"><div class="fm-banner">LINE
+ITEMS</div>…</div>`, so the badge is a direct `<div>` child of `.fm-right` — and
+the row rule `.fm-right > div { font-size: 11px; color: #111827 }` is (0,1,1),
+which outranks `.fm-banner` (0,1,0). Both the colour AND the size were lost:
+computed `color: rgb(17, 24, 39)` on `background: rgb(17, 24, 39)`, at 11px
+instead of 12.5px. Fixed in BOTH copies of the rule (`css/style.css` and the
+`PRINT_DOC_CSS` array in `js/app.js`) with `.fm-right > div:not(.fm-banner)`;
+the `@media print` block in `css/style.css` also dropped `.fm-banner` from its
+`color: #111827 !important` list. The badge is NOT leftover markup — it carries
+the document type (LINE ITEMS / QUOTATION / TAX INVOICE / VARIATION ORDER) and
+now renders.
+
+**2. The formal letters had no page margin at all.** `compilePrintHtml()` wraps
+the body in `.doc-page` with `padding: 0` — correct for the METRIX/ERP template,
+whose `MXPT` coordinates already carry the master's own 46pt margins and which is
+absolutely positioned. The flow-based `.fm-doc` letters therefore ran
+edge-to-edge: `.fm-head` spanned 0→816px of the 816px (612pt) page, so the
+right-aligned Date / Ref / TIN block sat exactly on the paper edge (measured
+`right: 816.0`) and read as clipped. Fixed by scoping the page padding to them:
+`.doc-page > .fm-doc { padding: 15mm 12mm; box-sizing: border-box; }` — the same
+padding the app's own `@media print` already gave these docs. The `.mx-doc`
+template is not matched, so its geometry is untouched.
+
+Measured in the print payload (the hidden `#print-frame`, i.e. exactly what the
+PDF receives), header box before → after:
+
+| tool | doc class | `.fm-head` | badge |
+|---|---|---|---|
+| Quantity & Rate | `.quo-doc fm-doc` | 0→816 → **45.3→770.7** | `LINE ITEMS`, white, 12.5px |
+| Quotation (BOQ) | `.quo-doc fm-doc` | 0→816 → **45.3→770.7** | `QUOTATION`, white |
+| Smart Invoice (all 4 modes) | `.quo-doc fm-doc` | 0→816 → **45.3→770.7** | `TAX INVOICE`, white |
+| Variation | `.var-doc fm-doc` | 0→816 → **45.3→770.7** | `VARIATION ORDER`, white |
+| Master ERP Engine | `.quo-doc mx-doc` | unchanged (absolute, master geometry) | n/a |
+
+Only these five tools produce a document at all: `exportViaPrintWindow` has
+exactly five call sites (`qr` / `boq` / `invoice` / `variation` / `erp`). Scope
+Guard, Pricing, Import Tax, Breakeven, FX & Fees, GPA, Retainer and Delay have
+**no PDF export** — they copy to the clipboard (`copy*` functions) only — so
+there is no template, no badge and no clipping to fix there.
+
+**Method worth reusing when checking a print payload.** The engine writes into a
+hidden `#print-frame` iframe; read that frame's own document to measure what the
+PDF will actually contain. Replace `frame.contentWindow.print` with a no-op
+BEFORE clicking export — and again immediately after, because `document.open()`
+can drop the override — otherwise the browser's print dialog blocks the renderer
+and every `preview_evaluate` times out until it is dismissed (this wedged the
+preview mid-investigation). Making `#print-frame` visible at `transform:
+scale(0.78)` lets `preview_screenshot` show the real sheet.
+
+## 2026-09-13 — Result figures never clip: one fit pass for every tool
+
+The report: the Margin & Markup Pricing tool showed `Rs190,323,232,3` in the
+"Selling price" box while the box beside it looked correct. Not a formatting
+bug. Every result box was a fixed font size inside a `min-width: 0` grid/flex
+cell, and a money figure is ONE unbreakable token — so a big enough number
+overflows its cell and gets cut where an ancestor clips (`.kpi-card` carries
+`overflow: hidden`). The box that "looked right" was simply shorter.
+
+Two halves that must stay together:
+
+- `css/style.css` gives every result box one contract — `.stat-value,
+  .result-value, .kpi-value, .qr-total-value, .boq-sum-line strong` are
+  `display: block; white-space: nowrap; max-width: 100%; min-width: 0`, so the
+  measured width is honest and the element can never leave its card.
+  `.fit-wrap` is the escape hatch.
+- `js/app.js` `fitResultValues()` keeps the design font size while the figure
+  fits, shrinks it in 0.5px steps until it does, and — if it still does not fit
+  at the 10px floor — adds `.fit-wrap` so the figure wraps onto a second line
+  instead of being cut. A wrapped number is still readable; a clipped one is
+  wrong.
+
+It is driven centrally: a `MutationObserver` (text, plus `hidden`) queues a
+single rAF pass, so no renderer has to remember to call it; `showView()`
+re-runs it, because a figure inside a hidden view has no width; and a window
+`resize` re-runs it. The observer watches `hidden` deliberately — watching
+`class` or `style` would feed it its own `.fit-wrap` / font-size writes.
+
+Two traps, both found by testing rather than reasoning:
+
+1. A container rebuilt with `innerHTML` (`#results`, `#erp-summary`) produces a
+   record whose TARGET is the container, not the new figures — so checking only
+   `record.target` and its ancestors missed every one of those renders. The
+   check now inspects `record.addedNodes` too.
+2. A figure written while its panel is still hidden cannot be measured. Those
+   elements are reported `unlaid` and retried for a handful of frames, with the
+   budget reset by every real mutation and view change — bounded, because a
+   permanently hidden view is `unlaid` forever and would otherwise spin.
+
+Verified live with `190323232323` as the base value in all twelve tools plus
+the Home KPIs: **13 surfaces, every visible result box reporting
+`scrollWidth <= clientWidth`, 0 overflows.** A deliberately absurd 45-character
+figure shrinks to the 10px floor and wraps to two lines, staying inside its
+card. At normal values nothing changes — a 250,000 base leaves all six pricing
+figures at the design 21px, because an inline size equal to the CSS size
+renders identically.
+
+Coverage: every tool's summary reuses these same classes, so this is one rule
+rather than per-tool code. (Pricing aside, the copy-only tools never printed a
+figure into a document — see the PDF sections above.)
+
+## 2026-09-13 — The Library has exactly ONE writer now
+
+The hint under the ERP's Save to Library claimed that only that button puts a
+document in the Library and that generating a PDF or Excel file does not. Half
+of that was true and half was not, so here is the full audit of every path that
+could append a row, taken from the code rather than from the intent:
+
+| path | what it actually did |
+|---|---|
+| `#erp-save` → `erpSaveToLibrary()` | the deliberate save — the only legitimate append |
+| `erpRefreshLibraryEntry()` (both ERP exports) | refresh only: `if (!erpState.libraryId) return false` — cannot create |
+| `pushHistory()` — **11 call sites** | qr / boq / invoice / variation PDF exports **and** the Copy buttons of pricing, duty, breakeven, fx, gpa, retainer and delay appended a Library row on EVERY export or copy |
+| database add / edit / remove | already moved to the activity feed in an earlier change |
+| `saveErp()` | writes the working-draft key only, never `history` |
+| unload / navigation | none: no `beforeunload`, `pagehide` or `visibilitychange` handler touches history (cloud.js's `visibilitychange` only flushes the sync queue) |
+| timers | none write history; the only `setInterval` is the OTP countdown |
+
+So typing was already harmless — but **every export and every summary copy still
+appended a row**, which is exactly what the hint promised they did not (and the
+empty-state under the list even advertised "export a PDF or copy a summary from
+any tool" as a way to create entries).
+
+Fix: the 11 `pushHistory()` calls became `logActivity()`, and `pushHistory()` +
+`isDuplicateHistory()` were **deleted** so no second writer exists to drift back
+in — the comment left in their place says so. Exports and copies keep the same
+shape in the Home activity feed (type / tool / title / client / ref / total), so
+the feed looks unchanged while the Library stops pretending an action was a save.
+Copy that read "export a PDF or copy a summary" was rewritten in the Library's
+empty state and in `#erp-save-hint`.
+
+Deliberate consequences: the "Saved documents" KPI and "Processed value" now
+count deliberate saves only, and a tool export no longer offers "Re-download
+PDF" from the Library (the tool's own Export button is untouched).
+
+Verified end to end, with the ERP holding 3 line items and a typed header:
+
+| action | Library | activity feed |
+|---|---|---|
+| type 6 header fields + add 2 line items | **1 → 1** | 0 → 0 |
+| navigate away and back (Home, Database, Library, ERP) | 1 | 0 |
+| **reload the page** | 1 (draft restored, not saved) | 0 |
+| Export as Excel (preview → download) | **1** (figures refreshed) | 1 |
+| Export as PDF (print frame really built) | **1** | 1 |
+| Copy summary from another tool | **1** | **+1** |
+| click **Save to Library** on an unsaved document | **2** | 1 |
+
+Repeats found in this profile's Library at the time of the audit: **2 rows,
+both deliberate saves of the same quotation** (`Acme Holdings (Pvt) Ltd`,
+`REF 2026 009`, `Rs13,000`, two minutes apart) — my own test saves, which the
+Library itself flagged as `Review 1 repeat`. "Remove duplicates" and "Remove
+notifications" were both correctly hidden (no legacy `db` rows remained in this
+profile — those were cleared in the earlier change, and their removal is already
+offered through the Library's own "Remove N notifications" button). Test rows
+and the temporary premium flag were cleared afterwards; `preview.html` rebuilt
+(991,170 bytes).
+
+If a user still sees old rows, the mechanism is that the Library is synced to
+the `documents` table, so a cloud pull restores whatever the OLD build wrote
+(notification and export rows included). Nothing in this change deletes them:
+the Library's own read-only "Review repeats" and "Remove N notifications"
+controls are the way to see and clear them.
+
+## 2026-09-13 — Export testing must not touch the user's disk (`?nodl=1`)
+
+**The rule: never verify an export by letting a real download happen.** Load the
+page with `?nodl=1` and assert on the recorded payload instead. One final real
+download is acceptable only when the user asks for it.
+
+Why it matters: while iterating on the Excel export and the PDF letterhead the
+real export was run repeatedly in the live preview to see its output. Every one
+of those ends in a genuine browser download, and reloading between iterations
+aborts downloads still in flight, which is how a Downloads folder ends up full
+of Chrome's incomplete scratch files. Severity note: the app itself has no
+code path that can loop a download — there is nothing to fix in `app.js` for
+this, only in how the testing is done.
+
+The app now has ONE choke point for disk writes, `nexoraSaveFile(content,
+filename, mime)` (~line 7590), used by both file producers (`xlDownload` for
+`.xlsx` and `downloadBackup` for the JSON snapshot). With the flag on it writes
+nothing and instead pushes `{ filename, type, bytes, at }` into
+`window.__nexoraDownloads`, so the real bytes and the real file name are still
+asserted on. `openPrintWindow()`'s `doPrint` has the same switch for the PDF
+side: the document is still written into the hidden `#print-frame` (so the
+print payload stays measurable in the DOM), but `win.print()` is skipped and a
+`{ at, title, bytes, html }` record lands in `window.__nexoraPrintouts`.
+
+```js
+// in the preview, with the page loaded as ...?nodl=1
+await fetch('js/app.js');                  // sanity: the served file has the seam
+window.__nexoraPrintouts = [];             // reset per trial
+screenshotless assertions: __nexoraDownloads / __nexoraPrintouts
+```
+
+Verified (nothing was written to disk): backup JSON recorded as 11,791 bytes
+with 0 anchor clicks; Excel export recorded `QUOTATION NODL-1.xlsx`, 8,277
+bytes, 0 anchor clicks, and only AFTER the preview dialog was confirmed; the PDF
+export recorded `QUOTATION NODL-1`, 25,583 bytes with the frame still holding
+the document. With the flag OFF the real path is unchanged — exactly one anchor
+click carrying `download="nexora-backup-2026-09-13.json"` and a `blob:` href —
+checked by intercepting `HTMLAnchorElement.prototype.click` rather than letting
+Chrome write the file.
+
+Related gotchas found while doing this:
+
+- **`localStorage` is namespaced.** The app writes through the per-user key shim
+  (`u:<email>:<key>`), so a test that clears or reads the bare `calcmall_history`
+  is measuring the wrong key and will report "nothing saved" while the save
+  actually worked. Assert against `u:<email>:calcmall_history`.
+- **A hash-only `preview_navigate` does NOT reload the page.** Only the fragment
+  changes, so the in-memory state survives and a "cleared storage" step looks
+  like it did nothing. Add a real query param (`?nodl=1&t=4`) to force a reload.
+- **The previous instance flushes on unload.** Clearing storage and then
+  navigating can be undone by the outgoing page writing its in-memory state
+  back. Measure the value at the START of the evaluating call, not before it.
+
+## 2026-09-13 — The "double print payload" was a deferral, not a bug
+
+One measurement showed two identical print payloads from a single click. It is
+**not** an app bug and it is now permanently instrumented rather than assumed
+either way:
+
+- Every print record carries an ISO `at` timestamp, and a second payload for the
+  same title inside 1500ms logs
+  `[print-audit] DOUBLE PRINT PAYLOAD for "…" — previous at …, now … (Nms apart)`.
+- Measured with single clicks and a wait longer than the deferral: **5/5 trials
+  produced exactly one payload**, evenly spaced ~1.7s apart, matching the click
+  cadence. Earlier trials (5 more) were also single.
+- The mechanism: `doPrint` is deferred until `document.fonts.ready` and pending
+  images settle (up to ~2.5s). Records are therefore written when printing
+  actually happens, not when the button is clicked, so a payload from an earlier
+  click can land inside the NEXT measurement window and look like a double-fire.
+  The one pair seen was 1ms apart, i.e. two queued callbacks flushing together.
+- The "my automation retried the evaluation" theory was tested and REFUTED: a
+  deliberately slow expression (11s, past the 10s eval limit) incremented a
+  counter stored in localStorage exactly ONCE.
+
+So the audit line is the evidence to trust if it ever recurs; the app prints
+once per click.
+
+## 2026-09-13 — Every mini-tool can Save to Library (its only writer)
+
+The 12 Other Utilities tools had no Save button, so exports and summary copies
+had been the de-facto way rows appeared. They now have the ERP's contract.
+
+**Two writers, both behind an explicit click.** The complete audit of
+`history` mutations: `history.unshift(entry)` in `erpSaveToLibrary()` (~10159)
+and in `saveToolToLibrary()` (~10460). Everything else removes rows (delete,
+clear, notification purge, expiry sweep) or loads them at boot. `pushHistory()`
+is gone; the only remaining occurrence of that name is the comment recording
+that it is gone.
+
+- **Buttons:** 12 × `Save to Library` with `data-tool-save="<tool>"`
+  (`sg-save`, `qr-save`, `boq-save`, `pr-save`, `dt-save`, `vr-save`,
+  `bk-save`, `fx-save`, `gp-save`, `rt-save`, `dl-save`, `inv-save`), placed
+  before each tool's Export/Copy button. The `save` icon already existed in
+  `TOOL_ICONS`. Bound by one loop in `wireEvents()` over `[data-tool-save]`, so
+  a new tool needs no new binding. Not credit-gated — the ERP's save is not
+  either.
+- **Export / Copy write nothing.** They still record what happened, but to the
+  activity feed via `logActivity()`. The 12 inline identity objects were
+  replaced by one registry, `TOOL_DOC[tool]()`, which the save button ALSO
+  uses — so a feed entry and a saved row can never describe one document two
+  ways. `logActivity()` now ignores a null entry.
+- **One row per project/session.** `toolLibraryIds` (key
+  `calcmall_tool_library_v1`) remembers each tool's entry id, so repeated saves
+  update in place. Resetting a tool — or clearing its rows — calls
+  `clearToolLibraryId()`, so the next save starts a NEW document. Deleting a
+  Library row also drops any tool id pointing at it. This is what makes a tool
+  with no client field of its own (Pricing, Breakeven, FX, GPA) still update one
+  row instead of piling up copies.
+- **Re-download PDF stays, now for saved documents only.** `type: 'pdf'` is set
+  for the five tools that really print (ERP, qr, boq, invoice, variation), so
+  only those rows offer the button; the copy-only tools do not.
+- **View / Load draft now restores.** `toolSnapOf()` stores a deep copy in
+  `draftStore[id]` and `restoreToolSnapshot()` merges it back onto the tool's
+  own empty shape (a snapshot from an older build cannot leave a field
+  undefined), then repaints. Opening a saved row also re-points that tool's next
+  save at the same row.
+- **Revision cap generalised.** `libraryJobKey(tool, rec)` / `
+  libraryVersionCount(tool, key)` now carry the tool id, and `erpLibraryKey` /
+  `erpLibraryVersionCount` are thin wrappers over them, so "3 versions of this
+  job" means the same thing in every tool.
+
+Verified in the preview, all with `?nodl=1`:
+
+| check | result |
+|---|---|
+| typing a qty/rate | Library unchanged (0 rows), totals update |
+| Save (Qty & Rate) | 1 row, `type: pdf`, total `Rs 20,000`, id remembered |
+| change qty, Save again | still 1 row, same id, total `Rs 50,000`/`Rs 70,000` |
+| Export to PDF | history delta **0**, 1 print payload, activity feed +1 |
+| Copy Pricing Summary | history delta **0**, activity feed entry `Pricing summary / Rs279,140,740,740` |
+| Save (Pricing, copy-only) | 1 row, `type: copy`; saving again → still 1 row |
+| Re-download PDF from a saved row | 1 print payload, history delta 0 |
+| copy-only row | offers no Re-download button (nothing to re-download) |
+| wreck the inputs, click View | inputs restored from the snapshot; next save updates the same row |
+| Save with an empty tool | toast "Fill in the GPA Planner first — there is nothing to save yet.", 0 rows, no dialog |
+| 4th version of one job | dialog "Save another version? … already has 3 saved versions …" — Cancel left the count at 3, Save anyway took it to 4 |
+| ERP regression | 1 row created, re-save updated it in place (same id, total Rs5,000 → Rs15,000) |
+
+Test rows and the temporary premium flag are cleared, `_signed-in-test.html` is
+deleted, and `preview.html` is rebuilt (1,009,920 bytes). Cosmetic note: a few
+rows now show two `btn-primary` buttons (the tool's own `Add row` plus Save);
+the ERP row has only one. Left as is deliberately — demoting `Add row` would
+change a long-standing affordance nobody asked to change.
+
+## 2026-09-13 — Saved project/client records get their own Details view
+
+Saved records (`erpRecords`, the ERP's Save Record store) used to be reachable
+only as a jump into the ERP with the Record ID pre-filled — clicking one from
+Home did not show what was in it. They now browse exactly like items and
+clients, in the SAME list + detail panes:
+
+- **A third tab in the Master Database browse view** —
+  `#md-tab-records` / `data-md-tab="records"`, count in `#md-records-count`.
+  `mdRowsForTab()` reads `recordEntries()` (most recent save first) and keys
+  each row on the Primary Key / Record ID; `mdMatches()` searches id, client,
+  project, address, contact, TIN, ref, PO, currency and terms; `mdFindSelection()`
+  resolves a `record` selection against `erpRecords` rather than `db`.
+  The tab handler used to hard-code `clients ? 'clients' : 'items'` — it now
+  accepts `records` too, which is the kind of thing that silently swallows a new
+  tab.
+- **The detail pane** (`mdDetailHtml(kind='record', rec, actions, recId)`, a new
+  4th argument carrying the record id) shows the saved header — Saved date,
+  Document mode, Client name, Project name, Address, Contact, Purchaser TIN,
+  Place of supply, PO no, Reference, Date of invoice, Currency, Line total —
+  then a read-only **line-item table** (No / Description / Unit / Qty / Rate /
+  Amount), reusing `.md-field` and `.data-table`. A Delivery Note record shows
+  no Rate/Amount columns, because a delivery note has no pricing — the same rule
+  the document itself follows. A Model value prints as a second line under the
+  description.
+- **One labelled exit**: `mdManageHtml('record', key)` renders
+  **“Load in Master ERP Engine →”**, and the `.md-manage` handler routes a
+  `record` straight to `erpLoadRecordById()` — the SAME path the ERP's own Load
+  Record button uses — instead of jumping to the database page. The read-only
+  pane still never edits anything.
+- Home wiring: a `#home-records-list` row click now calls
+  `openMasterData('record', id)` (it used to call `erpLoadRecordById`), and
+  “View all” calls `openMasterData('record')` — the full list in the same browse
+  view, not the Item & Client Database. Row tooltip is now “View this record's
+  details”. `openMasterData()` maps `record` → the `records` tab.
+- New CSS is one small block: `.md-lines` neutralises `.data-table`'s
+  `min-width: 640px` for this narrow pane so the table fits instead of
+  scrolling.
+
+### The real “Load Record not populating” bug, found and fixed
+
+Wiring the button exposed why loading a record never appeared to restore the
+header. `erpLoadRecord()` ran `erpResolveFromDb()` **before** `renderErp()`, and
+`erpResolveFromDb()` starts with `readErpHeader()` — which takes the live
+INPUTS as the truth. So the freshly loaded header was read straight back out of
+the still-stale inputs and overwritten: lines changed, the header did not.
+Reproduced with the ERP's OWN Load Record button (`client` stayed
+`WRECKED-A`, while `#erp-record-meta` and the alert claimed a successful load,
+and the document preview confirmed the STATE was wrong too, not just the
+inputs). Fixed by painting first, then re-resolving:
+
+```js
+erpState = Object.assign(emptyErp(), rec.state);
+...
+renderErp();          // inputs now mirror the loaded record
+ erpResolveFromDb();  // readErpHeader() can no longer clobber it
+erpRecordMeta(id);
+```
+
+Verified with `?nodl=1` after the fix: wrecking the header, then Home → Saved
+Records → the record → “Load in Master ERP Engine →” gives
+`clientInput = Acme Engineering Pvt Ltd`, `projectInput = Fire system upgrade —
+Phase 2`, `refInput = REF 2026 021`, 2 lines, and the document preview contains
+“Acme Engineering” with no “WRECKED” — so `erpState` is correct, not just the
+DOM. Also checked: the details pane shows the record's real data on the first
+click, the line table renders both lines with amounts, “View all” opens the
+records tab with the read-only empty state, the Items/Clients tabs are
+unaffected, and the Item & Client Database page's own records list still offers
+its Load and Delete buttons untouched.
+
+Test record and premium flag cleared, `_signed-in-test.html` deleted,
+`preview.html` rebuilt (1,018,346 bytes).
+
+#### Re-verified after the session interruption (same bundle, no code change)
+
+Re-built `_signed-in-test.html` from `.freebuff/make-erp-test.ps1`, signed in
+via the stub, set `u:alex.perera@example.lk:nexora_plan = premium`, and walked
+the flow again on the live dev server:
+
+- Home → **Saved Records** row (`#home-records-list [data-rec]`) → click →
+  `#/master-data`, tab **Saved records** active, Details pane shows
+  `E2E-REC-1 · Acme Engineering Pvt Ltd · Fire system upgrade — Phase 2`,
+  document mode, address, ref, **Line items (2)** with
+  `Rs20,000` + `Rs2,500` and **Line total Rs22,500**.
+- **Load in Master ERP Engine →** → `#/erp` with `erp-record-id = E2E-REC-1`,
+  `erp-client`, `erp-project`, `erp-ref` all populated and both line rows
+  restored (SKU 7 / MX-9000 / 2 × 10000, SKU 9 / FS-450 / 1 × 2500); summary
+  reads `Sub total Rs22,500 · Quotation total Rs22,500`. This is the
+  `renderErp()`-before-`erpResolveFromDb()` ordering fix holding.
+- **View all →** → same browse view on the records tab with the full list.
+- Items / Clients tabs still switch and keep their own empty states.
+
+Note on synthetic input: driving the line rows with dispatchEvent from the
+console is not a faithful test — the SKU `change` handler's re-render can land
+after the scripted writes, so a snapshot taken that way can hold `sku` only.
+That is a harness artefact, not app behaviour; the record used for this pass was
+seeded through the store instead. Verify line edits by hand in the UI.
+
+Cleanup: record store key, premium flag, `cm-inv-v1` draft, and the console
+probe keys (`__evalRetryProbe`, `nexora_confirm_loads`, `nexora_confirm_log`,
+`nexora_harness_log_v2`, `nexora_harness_runs_v2`) removed from the preview
+profile; `_signed-in-test.html` deleted. No code changed in this pass, so
+`preview.html` is still current.

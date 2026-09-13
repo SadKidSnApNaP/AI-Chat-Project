@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Row-click details drawer — Item &amp; Client Database</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #0c0e18; color: #cbd5e1; padding: 16px; margin: 0; }
+  h1 { font-size: 15px; color: #fff; }
+  .pass { color: #4ade80; }
+  .fail { color: #f87171; font-weight: 700; }
+  pre { white-space: pre-wrap; margin: 2px 0 10px 18px; color: #94a3b8; }
+  #summary { margin: 14px 0; font-size: 15px; font-weight: 700; }
+  iframe { width: 1280px; height: 900px; border: 1px solid #334155; background: #fff; }
+</style>
+</head>
+<body>
+<h1>Item &amp; Client DB row click → details drawer (same panel as Master Database)</h1>
+<div id="out"></div>
+<div id="summary">running…</div>
+<iframe id="frame" src="/index.html#/db"></iframe>
+
+<script>
+(function () {
+  const out = document.getElementById('out');
+  let pass = 0, fail = 0;
+  function check(name, cond, detail) {
+    const el = document.createElement('div');
+    el.className = cond ? 'pass' : 'fail';
+    el.textContent = (cond ? 'PASS ' : 'FAIL ') + name;
+    out.appendChild(el);
+    if (!cond && detail !== undefined) {
+      const pre = document.createElement('pre');
+      pre.textContent = '  got: ' + JSON.stringify(detail);
+      out.appendChild(pre);
+    }
+    cond ? pass++ : fail++;
+  }
+
+  const ITEMS = [
+    { sku: '1042', name: 'Fire detection panel — supply & install', model: 'MX-450 / Apollo', unit: 'Nr', rate: 12500 },
+    { sku: '7', name: 'Service of Fire Suppression System', unit: 'Nr', rate: 0 }
+  ];
+  const CLIENTS = [
+    { name: 'Acme Holdings (Pvt) Ltd', clientName: 'Acme Holdings (Pvt) Ltd', defaultProject: 'Main Street fit-out',
+      clientAddress: '123 Example Road, Colombo 05', contactPerson: 'Alex Perera', contactNumber: '+94 71 000 0000',
+      tinRegNo: 'TIN 000 000 000', placeOfSupply: 'Western Province', poNo: 'PO-2026-0451',
+      deliveryTerms: 'Delivered to site (DDP)', shipTo: 'Site gate 2', currency: 'LKR' }
+  ];
+
+  const frame = document.getElementById('frame');
+  let phase = 0;
+  frame.addEventListener('load', function () {
+    phase += 1;
+    const w = frame.contentWindow, d = frame.contentDocument;
+    if (phase === 1) {
+      w.localStorage.setItem('nexora_item_db', JSON.stringify(ITEMS));
+      w.localStorage.setItem('nexora_client_db', JSON.stringify(CLIENTS));
+      w.location.hash = '#/db';
+      w.location.reload();
+      return;
+    }
+    setTimeout(function () { run(w, d); }, 30);
+  });
+
+  function pairs(root) {
+    return Array.from(root.querySelectorAll('.md-field')).map(f =>
+      f.querySelector('dt').textContent.trim() + '=' + f.querySelector('dd').textContent.trim());
+  }
+  function drawer() { return frame.contentDocument.getElementById('db-detail-drawer'); }
+  function drawerOpen() { return drawer() && !drawer().hidden; }
+  function bodyPairs() { return pairs(frame.contentDocument.getElementById('db-detail-body')); }
+  function closeDrawer() {
+    const d = frame.contentDocument;
+    if (drawerOpen()) d.getElementById('db-detail-drawer-close-btn').click();
+  }
+
+  function run(w, d) {
+    try {
+      const rowFor = sku => Array.from(d.querySelectorAll('#db-item-rows .db-row'))
+        .find(r => r.querySelector('.db-sku').textContent.trim() === sku);
+
+      /* ── 1. The browse view's panel, for comparison ─────────────────── */
+      d.getElementById('nav-home').click();
+      const viewAll = d.getElementById('home-db-items-view-all');
+      if (viewAll) viewAll.click();
+      else { const row = Array.from(d.querySelectorAll('#home-db-items .home-db-row'))[0]; if (row) row.click(); }
+      const mdRows = Array.from(d.querySelectorAll('#md-rows .home-db-row'));
+      check('master-data view listed the records', mdRows.length === 2,
+        mdRows.map(r => r.textContent.trim().slice(0, 20)));
+      const mdItem = mdRows.find(r => /1042/.test(r.textContent));
+      if (mdItem) mdItem.click();
+      const browseItemPairs = pairs(d.getElementById('md-detail'));
+      check('browse view shows the item detail pane with fields', browseItemPairs.length >= 6, browseItemPairs);
+      check('browse view keeps its Manage link', /Manage in Item & Client Database/.test(d.getElementById('md-detail').textContent));
+
+      // Clients tab, same treatment.
+      d.getElementById('md-tab-clients').click();
+      const mdClient = Array.from(d.querySelectorAll('#md-rows .home-db-row')).find(r => /Acme/.test(r.textContent));
+      if (mdClient) mdClient.click();
+      const browseClientPairs = pairs(d.getElementById('md-detail'));
+
+      /* ── 2. A row click on the DB page opens the SAME panel ──────────── */
+      d.getElementById('sidebar-db').click();
+      check('back on the Item & Client Database page', /#\/db$/.test(w.location.hash), w.location.hash);
+      rowFor('1042').click();
+      check('clicking an item row opens the details drawer', drawerOpen());
+      check('drawer shows the same item fields as the browse view',
+        JSON.stringify(bodyPairs()) === JSON.stringify(browseItemPairs),
+        { drawer: bodyPairs(), browse: browseItemPairs });
+      check('drawer names the record kind', /Item record/.test(d.getElementById('db-detail-drawer-kind').textContent),
+        d.getElementById('db-detail-drawer-kind').textContent);
+      check('drawer offers this record\'s own Edit (no redundant Manage link)',
+        /Edit this item/.test(d.getElementById('db-detail-drawer-edit').textContent) && !/Manage in/.test(d.getElementById('db-detail-body').textContent));
+      closeDrawer();
+      check('Close hides the drawer', !drawerOpen());
+
+      /* ── 3. Clients behave identically ───────────────────────────────── */
+      const cRow = d.querySelector('#db-client-rows .db-row');
+      cRow.click();
+      check('clicking a client row opens the details drawer', drawerOpen());
+      check('drawer shows the same client fields as the browse view',
+        JSON.stringify(bodyPairs()) === JSON.stringify(browseClientPairs),
+        { drawer: bodyPairs(), browse: browseClientPairs });
+      check('client drawer offers Edit this client', /Edit this client/.test(d.getElementById('db-detail-drawer-edit').textContent));
+      // Backdrop click closes.
+      const overlay = drawer();
+      overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      check('clicking the backdrop hides the drawer', !drawerOpen());
+
+      /* ── 4. The pencil and the ✕ keep their own behaviour ────────────── */
+      rowFor('1042').querySelector('.db-item-edit').click();
+      check('the pencil still loads the record into the edit form',
+        d.getElementById('db-item-sku').value === '1042' && d.getElementById('db-item-model').value === 'MX-450 / Apollo',
+        { sku: d.getElementById('db-item-sku').value, model: d.getElementById('db-item-model').value });
+      check('the pencil does NOT open the drawer', !drawerOpen());
+      check('the form is in update mode', /Update Item/.test(d.getElementById('db-item-add').textContent));
+      d.getElementById('db-item-cancel').click();
+
+      // ✕ opens the confirm dialog instead of the drawer.
+      const delBtn = rowFor('1042').querySelector('.db-item-del');
+      w.confirm = function () { return false; };            // decline
+      delBtn.click();
+      const confirmVisible = d.querySelector('.confirm-overlay, .modal-overlay.confirm');
+      check('the ✕ still asks first (and not the drawer)', !drawerOpen(), { confirm: !!confirmVisible });
+      if (confirmVisible && confirmVisible.querySelector('[data-confirm-no], .confirm-no')) {
+        confirmVisible.querySelector('[data-confirm-no], .confirm-no').click();
+      } else {
+        d.querySelectorAll('.modal-overlay').forEach(o => {
+          if (!o.hidden && o.id !== 'db-detail-drawer') {
+            const cancel = Array.from(o.querySelectorAll('button')).find(b => /cancel|no/i.test(b.textContent));
+            if (cancel) cancel.click();
+          }
+        });
+      }
+
+      /* ── 5. Keyboard: Enter on a focused row ─────────────────────────── */
+      const target = rowFor('7');
+      check('item rows are focusable', target.getAttribute('tabindex') === '0');
+      target.focus();
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      check('Enter on a focused row opens its details', drawerOpen() && /Service of Fire Suppression/.test(d.getElementById('db-detail-body').textContent),
+        d.getElementById('db-detail-body').textContent.slice(0, 60));
+      d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      check('Escape closes the drawer', !drawerOpen());
+
+      /* ── 6. Edits and deletions keep the drawer honest ──────────────── */
+      rowFor('1042').click();
+      rowFor('1042').querySelector('.db-item-edit').click();          // drawer stays open underneath
+      const model = d.getElementById('db-item-model');
+      model.value = 'MX-999 / Apollo';
+      model.dispatchEvent(new Event('input', { bubbles: true }));
+      d.getElementById('db-item-add').click();
+      check('an edit while the drawer was open is reflected in it',
+        /MX-999 \/ Apollo/.test(d.getElementById('db-detail-body').textContent),
+        d.getElementById('db-detail-body').textContent.slice(0, 80));
+      d.getElementById('db-detail-drawer-edit').click();
+      check('the drawer\'s Edit button loads that record and closes the drawer',
+        !drawerOpen() && /MX-999/.test(d.getElementById('db-item-model').value),
+        { open: drawerOpen(), model: d.getElementById('db-item-model').value });
+      d.getElementById('db-item-cancel').click();
+
+      const summary = document.getElementById('summary');
+      summary.textContent = fail === 0 ? ('ALL ' + pass + ' CHECKS PASSED') : (fail + ' FAILED / ' + (pass + fail));
+      summary.className = fail === 0 ? 'pass' : 'fail';
+    } catch (err) {
+      check('harness ran without throwing', false, String(err && err.stack || err));
+      document.getElementById('summary').textContent = 'HARNESS ERROR';
+      document.getElementById('summary').className = 'fail';
+    }
+  }
+})();
+</script>
+</body>
+</html>

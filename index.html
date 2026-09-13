@@ -463,7 +463,7 @@
               <button type="button" class="btn btn-ghost" id="erp-export-xlsx"><span class="nav-icon" data-icon="sheet" aria-hidden="true"></span>Export as Excel (.xlsx)</button>
               <button type="button" class="btn btn-ghost" id="erp-reset">Reset document</button>
             </div>
-            <p class="hint" id="erp-save-hint">Typing only updates the working draft on this device. Click <strong>Save to Library</strong> to put the document in History &amp; Saved Documents — generating a PDF or Excel file does not create an entry.</p>
+            <p class="hint" id="erp-save-hint">Typing only updates the working draft on this device — nothing is saved until you click <strong>Save to Library</strong>, which is the only way a document enters your Library. Generating a PDF or Excel file does not save it; exports and summary copies are recorded in the Home activity feed instead.</p>
             <p class="error" id="erp-error" role="alert" hidden></p>
           </section>
         </div>
@@ -519,6 +519,10 @@
                 <input type="text" id="db-item-name" placeholder="e.g. PVC pipe 25mm — supply &amp; install" autocomplete="off">
               </div>
               <div class="field">
+                <label for="db-item-model">Model no <span class="row-muted">(optional)</span></label>
+                <input type="text" id="db-item-model" placeholder="e.g. MX-450 / Make 25mm" autocomplete="off">
+              </div>
+              <div class="field">
                 <label for="db-item-unit">Unit type</label>
                 <input type="text" id="db-item-unit" list="db-unit-list" placeholder="e.g. m / Nr / Lot" autocomplete="off">
                 <datalist id="db-unit-list">
@@ -539,7 +543,7 @@
               <button type="button" class="btn btn-ghost btn-sm" id="db-item-cancel" hidden>Cancel edit</button>
             </div>
             <div class="db-list-head db-grid-items" aria-hidden="true">
-              <span>SKU</span><span>Item</span><span>Unit</span><span class="db-rate-h">Rate</span><span></span>
+              <span>SKU</span><span>Item</span><span>Model</span><span>Unit</span><span class="db-rate-h">Rate</span><span></span>
             </div>
             <div class="db-list" id="db-item-rows"></div>
           </section>
@@ -650,7 +654,7 @@
           <span class="tool-badge" data-icon="database" aria-hidden="true"></span>
           <div>
             <h2 class="tool-name">Master Database</h2>
-            <p class="tagline">Browse the items and clients behind your documents. Pick a record to read its full details.</p>
+            <p class="tagline">Browse the items, clients and saved project records behind your documents. Pick a record to read its full details.</p>
           </div>
         </div>
         <p class="privacy-note">Read-only view · Same data the ERP engine uses</p>
@@ -665,6 +669,7 @@
           <div class="md-tabs" role="tablist" aria-label="What to browse">
             <button type="button" class="md-tab active" id="md-tab-items" data-md-tab="items" role="tab" aria-selected="true">Items <span class="md-tab-count" id="md-items-count">0</span></button>
             <button type="button" class="md-tab" id="md-tab-clients" data-md-tab="clients" role="tab" aria-selected="false">Clients <span class="md-tab-count" id="md-clients-count">0</span></button>
+            <button type="button" class="md-tab" id="md-tab-records" data-md-tab="records" role="tab" aria-selected="false">Saved records <span class="md-tab-count" id="md-records-count">0</span></button>
           </div>
           <input type="text" id="md-search" class="md-search" placeholder="Filter by SKU, name, client or address…" autocomplete="off" aria-label="Filter records">
           <div class="md-rows" id="md-rows" role="tabpanel" aria-labelledby="md-list-title">
@@ -1253,7 +1258,8 @@
             placeholder="Your change-order message will appear here when you generate one…"></textarea>
 
           <div class="actions">
-            <button type="button" class="btn btn-primary" id="msg-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy to Clipboard</button>
+            <button type="button" class="btn btn-primary" id="sg-save" data-tool-save="scope-guard"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+            <button type="button" class="btn btn-ghost" id="msg-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy to Clipboard</button>
             <button type="button" class="btn btn-ghost" id="msg-close">Close</button>
           </div>
         </section>
@@ -1339,6 +1345,7 @@
         <div class="actions">
           <button type="button" class="btn btn-primary" id="qr-add-row"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add row</button>
           <button type="button" class="btn btn-ghost" id="qr-clear">Clear all</button>
+          <button type="button" class="btn btn-primary" id="qr-save" data-tool-save="qr"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
           <button type="button" class="btn btn-ghost" id="qr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export to PDF</button>
           <span class="tool-free" id="qr-hint">Tip: press Enter on the last row to add the next one.</span>
         </div>
@@ -1482,7 +1489,8 @@
 
         <p class="error" id="boq-error" role="alert" hidden></p>
         <div class="actions">
-          <button type="button" class="btn btn-primary" id="boq-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Download Client Quotation PDF</button>
+          <button type="button" class="btn btn-primary" id="boq-save" data-tool-save="boq"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+          <button type="button" class="btn btn-ghost" id="boq-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Download Client Quotation PDF</button>
           <button type="button" class="btn btn-ghost" id="boq-reset">Reset quotation</button>
         </div>
       </section>
@@ -1588,7 +1596,8 @@
             <p class="hint" id="pr-note">Margin and markup are two views of the same profit: margin is profit ÷ price, markup is profit ÷ cost.</p>
             <p class="error" id="pr-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="pr-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Pricing Summary</button>
+              <button type="button" class="btn btn-primary" id="pr-save" data-tool-save="pricing"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="pr-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Pricing Summary</button>
               <button type="button" class="btn btn-ghost" id="pr-reset">Reset</button>
             </div>
           </section>
@@ -1709,7 +1718,8 @@
             <p class="hint">Percentages are applied on the CIF value exactly as you enter them — Nexora Engine does not apply any country- or HS-code-specific rules. Verify current rates with your customs agent.</p>
             <p class="error" id="dt-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="dt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Breakdown</button>
+              <button type="button" class="btn btn-primary" id="dt-save" data-tool-save="duty"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="dt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Breakdown</button>
               <button type="button" class="btn btn-ghost" id="dt-reset">Reset</button>
             </div>
           </section>
@@ -1800,7 +1810,8 @@
             <p class="hint" id="vr-note">The variation PDF includes the work description, cost impact, revised value and a time-extension line — ready for client approval.</p>
             <p class="error" id="vr-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="vr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export Variation PDF</button>
+              <button type="button" class="btn btn-primary" id="vr-save" data-tool-save="variation"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="vr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export Variation PDF</button>
               <button type="button" class="btn btn-ghost" id="vr-reset">Reset</button>
             </div>
           </section>
@@ -1914,7 +1925,8 @@
             <p class="hint" id="bk-note">Breakeven = every cost covered, nothing left over. Price above this to make a profit — the summary shows exactly what each hour must carry.</p>
             <p class="error" id="bk-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="bk-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="bk-save" data-tool-save="breakeven"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="bk-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="bk-reset">Reset</button>
             </div>
           </section>
@@ -2050,7 +2062,8 @@
             <p class="hint" id="fx-note">Example: a $1,000 target through Stripe's 2.9% + $0.30 means invoicing $1,030.18 — the fee is charged on the larger amount, so the gross-up compounds.</p>
             <p class="error" id="fx-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="fx-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Invoice Amount</button>
+              <button type="button" class="btn btn-primary" id="fx-save" data-tool-save="fx"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="fx-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Invoice Amount</button>
               <button type="button" class="btn btn-ghost" id="fx-reset">Reset</button>
             </div>
           </section>
@@ -2141,7 +2154,8 @@
             <p class="hint" id="gp-note">Required average = the GPA you must hold across every remaining credit to graduate at your target. The assignment score shows what the remaining graded weight must average.</p>
             <p class="error" id="gp-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="gp-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="gp-save" data-tool-save="gpa"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="gp-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="gp-reset">Reset</button>
             </div>
           </section>
@@ -2253,7 +2267,8 @@
             <p class="hint" id="rt-note">Set the monthly included hours and your blended rate to price the retainer.</p>
             <p class="error" id="rt-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="rt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="rt-save" data-tool-save="retainer"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="rt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="rt-reset">Reset</button>
             </div>
           </section>
@@ -2360,7 +2375,8 @@
             <p class="hint">Penalty accrues daily on the contract value and is capped when a cap % is set. Nexora Engine does not model grace periods or LD clauses — check your contract.</p>
             <p class="error" id="dl-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="dl-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="dl-save" data-tool-save="delay"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="dl-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="dl-reset">Reset</button>
             </div>
           </section>
@@ -2383,8 +2399,17 @@
       <section class="card">
         <div class="card-head">
           <h2>Saved entries</h2>
-          <button type="button" class="btn btn-ghost btn-sm" id="history-clear" hidden>Clear all</button>
+          <div class="history-head-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="history-review" hidden>Review repeats</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="history-dedupe" hidden>Remove duplicates</button>
+            <!-- Rows an older build wrote from database notifications rather
+                 than a document save. Offered for removal only while any
+                 remain; never removed on its own. -->
+            <button type="button" class="btn btn-ghost btn-sm" id="history-notifications" hidden>Remove notifications</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="history-clear" hidden>Clear all</button>
+          </div>
         </div>
+        <div id="history-review-panel" class="history-review" hidden aria-live="polite"></div>
         <div id="history-list" class="history-list"></div>
       </section>
       <div class="actions">
@@ -2750,7 +2775,7 @@
           <div class="card-head">
             <h2 id="plan-yearly-title">Yearly Premium</h2>
           </div>
-          <p class="plan-price"><strong>$125</strong><span class="plan-period">/ yearly</span></p>
+          <p class="plan-price"><strong>$124.99</strong><span class="plan-period">/ yearly</span></p>
           <ul class="plan-list">
             <li>Unlimited tool usage</li>
             <li>All tools are accessible</li>
@@ -2759,7 +2784,7 @@
             <li>2 months free included</li>
           </ul>
           <div class="actions">
-            <button type="button" class="btn btn-primary plan-cta" id="plan-yearly-cta" data-plan="Yearly Premium" data-price="$125 / yearly">Subscribe Yearly</button>
+            <button type="button" class="btn btn-primary plan-cta" id="plan-yearly-cta" data-plan="Yearly Premium" data-price="$124.99 / yearly">Subscribe Yearly</button>
           </div>
         </section>
       </div>
@@ -2906,7 +2931,8 @@
             </div>
             <p class="error" id="inv-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="inv-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Generate Document PDF</button>
+              <button type="button" class="btn btn-primary" id="inv-save" data-tool-save="invoice"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="inv-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Generate Document PDF</button>
               <button type="button" class="btn btn-ghost" id="inv-reset">Reset document</button>
             </div>
           </section>
@@ -3061,6 +3087,7 @@
             <tr>
               <th>SKU</th>
               <th>Item name &amp; description</th>
+              <th>Model no</th>
               <th>Unit</th>
               <th class="text-right">Default rate</th>
               <th class="w70">Action</th>
@@ -3110,6 +3137,57 @@
     </div>
   </div>
 
+  <!-- ══ Details drawer — the Master Database's read-only panel, opened from a
+       row on the Item & Client Database page. Identical fields and markup to the
+       browse view (one shared renderer); the footer swaps the browse view's
+       "Manage in Item & Client Database" link for this record's own Edit, since
+       this IS that page. Rendered by renderDbDetail(). -->
+  <div class="modal-overlay" id="db-detail-drawer" hidden>
+    <div class="drawer-card" role="dialog" aria-modal="true" aria-labelledby="db-detail-drawer-title">
+      <div class="modal-head">
+        <h2 id="db-detail-drawer-title">Details</h2>
+        <button type="button" class="modal-close" id="db-detail-drawer-close" aria-label="Close details">&times;</button>
+      </div>
+      <div class="md-detail" id="db-detail-body">
+        <!-- Rendered by renderDbDetail() -->
+      </div>
+      <div class="drawer-foot">
+        <span class="drawer-count" id="db-detail-drawer-kind">Record</span>
+        <span class="db-detail-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="db-detail-drawer-edit">Edit this record</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="db-detail-drawer-close-btn">Close</button>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Excel export preview. "Export as Excel (.xlsx)" shows the sheet here
+       BEFORE anything is downloaded — and it is not a second description of
+       the document: the template builders are run against a recording
+       worksheet, so this table is drawn from the very cells, merges, fills
+       and number formats the .xlsx is written from. Download only happens on
+       the button below; Cancel/Escape/backdrop return to editing. Rendered by
+       previewErpExcel(). -->
+  <div class="modal-overlay" id="xl-preview-modal" hidden>
+    <div class="drawer-card xl-preview-card" role="dialog" aria-modal="true" aria-labelledby="xl-preview-title">
+      <div class="modal-head">
+        <h2 id="xl-preview-title">Excel preview</h2>
+        <button type="button" class="modal-close" id="xl-preview-close" aria-label="Close preview">&times;</button>
+      </div>
+      <p class="hint" id="xl-preview-note"></p>
+      <div class="xl-preview-scroll">
+        <div id="xl-preview-sheet" class="xl-preview-sheet"></div>
+      </div>
+      <div class="drawer-foot">
+        <span class="drawer-count" id="xl-preview-meta"></span>
+        <span class="db-detail-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="xl-preview-download">Download .xlsx</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="xl-preview-cancel">Cancel</button>
+        </span>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirmation dialog. Every reset / destructive action routes through
        confirmAction() in js/app.js, so an accidental click never wipes data
        and every prompt looks and reads the same way. -->
@@ -3138,6 +3216,12 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Excel WRITING. SheetJS above can read styles but drops them when it
+       writes, so every .xlsx this app produces (the import template and the
+       document exports) is built with ExcelJS: real bold/shaded header rows,
+       cell borders, merged letterhead and info blocks, frozen panes and live
+       formulas. SheetJS stays for IMPORT, because it also reads legacy .xls. -->
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <!-- Supabase (auth + cloud storage). Cloud layer first, then the app. -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="js/cloud.js"></script>

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Item &amp; Client Database — column alignment test</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #0c0e18; color: #cbd5e1; padding: 16px; margin: 0; }
+  h1 { font-size: 15px; color: #fff; }
+  .pass { color: #4ade80; }
+  .fail { color: #f87171; font-weight: 700; }
+  .name { color: #a5b4fc; }
+  pre { white-space: pre-wrap; margin: 2px 0 10px 18px; color: #94a3b8; }
+  #summary { margin: 14px 0; font-size: 15px; font-weight: 700; }
+  iframe { border: 1px solid #334155; background: #fff; }
+</style>
+</head>
+<body>
+<h1>DB rows vs column headers — real app in an iframe (<span id="ww"></span>px)</h1>
+<div id="out"></div>
+<div id="summary">running…</div>
+<iframe id="frame"></iframe>
+
+<script>
+(function () {
+  const qs = new URLSearchParams(location.search);
+  const WIDTH = Number(qs.get('w')) || 1280;
+  const URL_APP = '/index.html';
+  document.getElementById('ww').textContent = WIDTH;
+  const frame = document.getElementById('frame');
+  frame.style.width = WIDTH + 'px';
+  frame.style.height = '900px';
+
+  const out = document.getElementById('out');
+  let pass = 0, fail = 0;
+  function check(name, cond, detail) {
+    const el = document.createElement('div');
+    el.className = cond ? 'pass' : 'fail';
+    el.textContent = (cond ? 'PASS ' : 'FAIL ') + name;
+    out.appendChild(el);
+    if (!cond && detail !== undefined) {
+      const pre = document.createElement('pre');
+      pre.textContent = '  got: ' + JSON.stringify(detail, null, 1);
+      out.appendChild(pre);
+    }
+    cond ? pass++ : fail++;
+  }
+
+  const SEED_ITEMS = [
+    { sku: '1042', name: 'Fire detection panel — supply & install', model: 'MX-450 / Apollo', unit: 'Nr', rate: 12500 },
+    { sku: '7', name: 'Service of Fire Suppression System', model: '', unit: 'Nr', rate: 0 },
+    { sku: '9001', name: 'A deliberately very long item description that must never stretch the row it lives in', model: 'MAKE: SOMETHING-WITH-A-REALLY-LONG-MODEL-CODE-2026-XZ', unit: 'Lot', rate: 1000000 }
+  ];
+  const SEED_CLIENTS = [
+    { name: 'Acme Holdings (Pvt) Ltd', clientName: 'Acme Holdings (Pvt) Ltd', address: '123 Example Road, Colombo 05', currency: 'LKR' }
+  ];
+
+  let phase = 0;
+  frame.src = URL_APP + '#/db';
+  frame.addEventListener('load', function () {
+    phase += 1;
+    const w = frame.contentWindow, d = frame.contentDocument;
+
+    if (phase === 1) {
+      // Seed through the app's own storage keys, then let it re-read them.
+      w.localStorage.setItem('nexora_item_db', JSON.stringify(SEED_ITEMS));
+      w.localStorage.setItem('nexora_client_db', JSON.stringify(SEED_CLIENTS));
+      w.location.hash = '#/db';
+      w.location.reload();
+      return;
+    }
+
+    const rect = el => { const r = el.getBoundingClientRect(); return { l: Math.round(r.left), w: Math.round(r.width) }; };
+    const rows = () => Array.from(d.querySelectorAll('#db-item-rows .db-row'));
+
+    check('app booted with the seeded rows',
+      rows().length === SEED_ITEMS.length && d.querySelectorAll('#db-client-rows .db-row').length === 1,
+      { items: rows().length, clients: d.querySelectorAll('#db-client-rows .db-row').length });
+    check('viewport ' + WIDTH + 'px', w.innerWidth === WIDTH, { viewport: w.innerWidth });
+
+    const head = d.querySelector('.db-list-head.db-grid-items');
+    const row = rows()[0];
+    const gridMode = head && getComputedStyle(head).display !== 'none';
+    window.__mode = gridMode ? 'grid' : 'stacked';
+
+    if (!gridMode && row) {
+      // Stacked card: every value cell must have the wide column, and nothing
+      // may be clipped or overlap the actions cell.
+      const cells = Array.from(row.children);
+      const actions = row.querySelector('.db-del');
+      const values = cells.filter(c => c !== actions);
+      const widths = values.map(c => Math.round(c.getBoundingClientRect().width));
+      const aBox = actions.getBoundingClientRect();
+      check('stacked: every value cell spans the wide column',
+        widths.every(wd => wd >= Math.round(row.clientWidth) - 100),
+        { widths: widths, rowClient: Math.round(row.clientWidth) });
+      check('stacked: no value cell overlaps the actions cell',
+        values.every(c => c.getBoundingClientRect().right <= aBox.left + 1),
+        { actionsLeft: Math.round(aBox.left), valueRights: values.map(c => Math.round(c.getBoundingClientRect().right)) });
+      check('stacked: the name cell is at least 200px wide (never a sliver)',
+        widths[1] >= 200, { nameWidth: widths[1] });
+    }
+
+    if (gridMode && head && row) {
+      const heads = Array.from(head.children);
+      const cells = Array.from(row.children);
+      check('item row cell count matches the header column count',
+        cells.length === heads.length && heads.length === 6, { head: heads.length, row: cells.length });
+      check('item header labels are SKU / Item / Model / Unit / Rate / (actions)',
+        heads.slice(0, 5).map(h => h.textContent.trim()).join('|') === 'SKU|Item|Model|Unit|Rate',
+        heads.map(h => h.textContent.trim()));
+      const drift = heads.map((h, i) => {
+        const a = rect(h), b = rect(cells[i]);
+        return { col: h.textContent.trim() || '(actions)', dLeft: Math.abs(a.l - b.l), dWidth: Math.abs(a.w - b.w) };
+      });
+      check('every cell starts and ends exactly under its own header',
+        drift.every(x => x.dLeft <= 1 && x.dWidth <= 1), drift);
+      const widths = cells.map(c => Math.round(c.getBoundingClientRect().width));
+      check('no column is squeezed below its floor (name >= 78, model >= 56, rate >= 62)',
+        widths[1] >= 78 && widths[2] >= 56 && widths[4] >= 62, { widths: widths });
+      const tracks = getComputedStyle(row).gridTemplateColumns.split(' ').map(parseFloat);
+      check('no cell is wider than the grid track it sits in (nothing bleeds sideways)',
+        widths.every((wd, i) => wd <= tracks[i] + 1), { widths: widths, tracks: tracks });
+    }
+
+    const bySku = s => rows().find(r => r.querySelector('.db-sku').textContent.trim() === s);
+    check('the Model column shows the stored Model no, not a dash',
+      bySku('1042').querySelector('.db-model').textContent.trim() === 'MX-450 / Apollo',
+      bySku('1042').querySelector('.db-model').textContent.trim());
+    check('the model cell carries the full text in its title',
+      bySku('1042').querySelector('.db-model').title === 'MX-450 / Apollo',
+      bySku('1042').querySelector('.db-model').title);
+    check('the Rate column shows the saved rate', bySku('1042').querySelector('.db-rate').textContent.trim() === '12,500',
+      bySku('1042').querySelector('.db-rate').textContent.trim());
+    check('a genuine 0 rate prints 0, an empty model prints an em dash',
+      bySku('7').querySelector('.db-rate').textContent.trim() === '0' &&
+      bySku('7').querySelector('.db-model').textContent.trim() === '\u2014',
+      { rate: bySku('7').querySelector('.db-rate').textContent.trim(), model: bySku('7').querySelector('.db-model').textContent.trim() });
+    const longRow = bySku('9001');
+    check('a long name/model is ellipsised, with the full text in the title',
+      longRow.querySelector('.db-name').title === SEED_ITEMS[2].name &&
+      longRow.querySelector('.db-model').title === SEED_ITEMS[2].model,
+      { name: longRow.querySelector('.db-name').title.slice(0, 30), model: longRow.querySelector('.db-model').title.slice(0, 30) });
+
+    const heights = rows().map(r => Math.round(r.getBoundingClientRect().height));
+    // Sub-pixel line-box rounding can move a row by 1px; what must never happen
+    // is a long value wrapping the row to three or four times its neighbours.
+    check('all three item rows keep the same height (none stretched by long text)',
+      heights.length === 3 && (Math.max.apply(null, heights) - Math.min.apply(null, heights)) <= 2, heights);
+
+    const list = d.getElementById('db-item-rows');
+    const card = list.closest('.card');
+    check('no horizontal overflow in the items list or its card',
+      list.scrollWidth <= list.clientWidth + 1 && card.scrollWidth <= card.clientWidth + 1 &&
+      d.documentElement.scrollWidth <= d.documentElement.clientWidth + 1,
+      { list: [list.scrollWidth, list.clientWidth], card: [card.scrollWidth, card.clientWidth], page: [d.documentElement.scrollWidth, d.documentElement.clientWidth] });
+    check('every item row keeps a sane height (nothing wraps to 5 lines)',
+      rows().every(r => r.getBoundingClientRect().height <= 240),
+      rows().map(r => Math.round(r.getBoundingClientRect().height)));
+
+    // Cells must stay inside the card's box too (nothing bleeding off the edge).
+    const cardBox = card.getBoundingClientRect();
+    check('every item cell sits inside the card box',
+      rows().every(r => Array.from(r.children).every(c => {
+        const b = c.getBoundingClientRect();
+        return b.left >= cardBox.left - 1 && b.right <= cardBox.right + 1;
+      })), { card: [Math.round(cardBox.left), Math.round(cardBox.right)] });
+
+    const cHead = d.querySelector('.db-list-head.db-grid-clients');
+    const cRow = d.querySelector('#db-client-rows .db-row');
+    if (cHead && cRow && getComputedStyle(cHead).display !== 'none') {
+      const heads = Array.from(cHead.children), cells = Array.from(cRow.children);
+      const drift = heads.map((h, i) => {
+        const a = rect(h), b = rect(cells[i]);
+        return { col: h.textContent.trim(), dLeft: Math.abs(a.l - b.l), dWidth: Math.abs(a.w - b.w) };
+      });
+      check('client row cells still line up with their header',
+        cells.length === heads.length && drift.every(x => x.dLeft <= 1 && x.dWidth <= 1), drift);
+    }
+    // No DB cell may bleed outside its row, in either mode.
+    check('no DB cell bleeds outside its row',
+      ['#db-item-rows', '#db-client-rows'].every(sel =>
+        Array.from(d.querySelectorAll(sel + ' .db-row')).every(r => {
+          const box = r.getBoundingClientRect();
+          return Array.from(r.children).every(c => {
+            const b = c.getBoundingClientRect();
+            return b.right <= box.right + 1 && b.left >= box.left - 1;
+          });
+        })),
+      { items: rows().length, clients: d.querySelectorAll('#db-client-rows .db-row').length });
+
+    const summary = document.getElementById('summary');
+    summary.textContent = fail === 0 ? ('ALL ' + pass + ' CHECKS PASSED @ ' + WIDTH + 'px') : (fail + ' FAILED / ' + (pass + fail) + ' @ ' + WIDTH + 'px');
+    summary.className = fail === 0 ? 'pass' : 'fail';
+    window.__results = { width: WIDTH, pass: pass, fail: fail };
+  });
+})();
+</script>
+</body>
+</html>

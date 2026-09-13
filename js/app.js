@@ -352,11 +352,17 @@
     if (isAdmin()) return { key: 'admin', pill: 'Developer \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
     if (getPlan() === 'premium') return { key: 'premium', pill: 'Premium \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
     const total = meteredToolIds().length;
-    const left = freeToolsLeft();
+    /* Phrased as USED, not remaining. "12 of 13 tools still free" was read —
+       perfectly reasonably — as "12 used", and it was the one line on a
+       fresh account that looked wrong. The tally itself was never stale: it
+       is per account through the namespaced storage shim. */
+    const used = total - freeToolsLeft();
     return {
       key: 'free',
       pill: 'Free plan',
-      credits: left > 0 ? left + ' of ' + total + ' tools still free' : 'Free uses used up'
+      credits: used >= total
+        ? 'All ' + total + ' free uses spent'
+        : used + ' of ' + total + ' free uses spent'
     };
   }
 
@@ -1056,16 +1062,26 @@
   /* The canvas is painted by the forced-glass block in index.html, which owns
      it with !important — so the stylesheet's own `body { background: var(--bg) }`
      can never show a chosen colour. The block reads `--bg-user` instead, and
-     that is what this publishes (alongside --bg, for anything else reading it). */
+     that is what this publishes (alongside --bg, for anything else reading it).
+
+     The colour also has to be published to `#glow-backdrop`, which is the LAST
+     thing painted before the content: its final gradient layer is fully opaque,
+     so it hid the chosen colour behind it however many times the swatches were
+     clicked. `--glow-bg` carries the colour and `--glow-base: none` removes that
+     opaque layer (both are cleared on reset, which restores the built-in look). */
   function applyBg(hex) {
     const root = document.documentElement.style;
     if (!hex) {
       root.removeProperty('--bg');
       root.removeProperty('--bg-user');
       root.removeProperty('--bg-overlay');
+      root.removeProperty('--glow-bg');
+      root.removeProperty('--glow-base');
     } else {
       root.setProperty('--bg', hex);
       root.setProperty('--bg-user', hex);
+      root.setProperty('--glow-bg', hex);
+      root.setProperty('--glow-base', 'none');
     }
     const sw = document.querySelectorAll('.bg-preset');
     for (let i = 0; i < sw.length; i++) {
@@ -1510,6 +1526,132 @@
   const DEFAULT_VIEW = 'home';
   let currentView = '';
 
+  /* ── Result figures must never be clipped ──────────────────────────────
+     Every calculated figure in the app — the dashboard KPIs, each tool's
+     summary boxes, the BOQ / invoice / ERP total lines — is ONE unbreakable
+     token ("Rs190,323,232,323"). At a fixed font size it either fits its box
+     or overflows the card, where a clipping ancestor cuts it mid-digit, so
+     the SAME kind of number reads full in one box and truncated in the box
+     next to it. One pass gives every result box the same treatment: keep the
+     design's size while the figure fits, shrink it when it does not, and
+     wrap only as a last resort — a wrapped number is still readable, a
+     clipped one is simply wrong.
+
+     A MutationObserver drives it, so no renderer has to remember to call it,
+     and showView() re-runs it on entry because a value rendered inside a
+     hidden view has no measurable width. The matching CSS (nowrap +
+     max-width, so the measurement is honest) sits with the other result
+     styles in css/style.css. */
+  const RESULT_VALUE_SELECTOR =
+    '.stat-value, .result-value, .kpi-value, .qr-total-value, .boq-sum-line strong';
+  const RESULT_VALUE_MIN_PX = 10;          // below this the figure wraps instead
+  const RESULT_VALUE_RETRY_FRAMES = 15;    // ~250ms for layout to settle
+  const resultValueBase = new WeakMap();   // element → its design font size
+  let resultValueQueued = false;
+  let resultValueFrames = 0;
+
+  function fitResultValue(el) {
+    if (!el || !el.isConnected) return 'skip';
+    const text = el.textContent;
+    /* Nothing to fit, or not laid out yet ('unlaid'): a figure written while
+       its container is still hidden has no width to measure against, so the
+       pass retries it on the coming frames instead of silently leaving it
+       oversized. */
+    if (!text || text === '\u2014') return 'skip';
+    if (!el.clientWidth) return 'unlaid';
+    let base = resultValueBase.get(el);
+    if (base === undefined) {
+      const size = parseFloat(window.getComputedStyle(el).fontSize);
+      base = size > 0 ? size : 16;
+      resultValueBase.set(el, base);
+    }
+    el.classList.remove('fit-wrap');
+    el.style.fontSize = base + 'px';
+    if (el.scrollWidth <= el.clientWidth) return;   // fits as designed
+    let size = base;
+    while (size > RESULT_VALUE_MIN_PX && el.scrollWidth > el.clientWidth) {
+      size = Math.max(RESULT_VALUE_MIN_PX, size - 0.5);
+      el.style.fontSize = size + 'px';
+    }
+    // Still too wide at the floor: wrap it rather than cut it.
+    if (el.scrollWidth > el.clientWidth) el.classList.add('fit-wrap');
+  }
+
+  function fitResultValues(root) {
+    const scope = (root && root.querySelectorAll) ? root : document;
+    const list = scope.querySelectorAll(RESULT_VALUE_SELECTOR);
+    let unlaid = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (fitResultValue(list[i]) === 'unlaid') unlaid++;
+    }
+    /* Retry only for a full-document pass (never a scoped one), and only a
+       bounded number of frames — a hidden view keeps its figures 'unlaid'
+       for as long as it stays hidden, so an unbounded retry would spin. */
+    if (!root && unlaid) {
+      if (resultValueFrames < RESULT_VALUE_RETRY_FRAMES) {
+        resultValueFrames++;
+        scheduleResultFit();
+      }
+    } else if (!unlaid) {
+      resultValueFrames = 0;
+    }
+  }
+
+  /* The retry path: never resets the frame budget it is spending. */
+  function scheduleResultFit() {
+    if (resultValueQueued) return;
+    resultValueQueued = true;
+    window.requestAnimationFrame(function () {
+      resultValueQueued = false;
+      fitResultValues();
+    });
+  }
+
+  /* The real-change path: a mutation, a resize or a view change restarts the
+     catch-up budget, because it is new information about the layout. */
+  function queueResultFit() {
+    resultValueFrames = 0;
+    scheduleResultFit();
+  }
+
+  function watchResultValues() {
+    if (typeof window.MutationObserver !== 'function') return;
+    const touchesAValue = function (node) {
+      if (!node) return false;
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      return !!(el && el.closest && el.closest(RESULT_VALUE_SELECTOR));
+    };
+    const obs = new MutationObserver(function (records) {
+      for (let i = 0; i < records.length; i++) {
+        const rec = records[i];
+        if (touchesAValue(rec.target)) { queueResultFit(); return; }
+        /* Renderers that rebuild a container (`#results`, `#erp-summary`, …)
+           with innerHTML put the figures in as ADDED NODES of a target that
+           is not itself a value box — checking only the target missed every
+           one of those renders, which is how a large figure could sit
+           un-fitted until the next view change. */
+        const added = rec.addedNodes;
+        for (let j = 0; j < added.length; j++) {
+          const node = added[j];
+          if (node.nodeType !== 1) continue;
+          if (node.matches(RESULT_VALUE_SELECTOR) || node.querySelector(RESULT_VALUE_SELECTOR)) {
+            queueResultFit();
+            return;
+          }
+        }
+      }
+    });
+    /* Text, plus `hidden` — a result panel that is unhidden has to be
+       measured again, and that happens with no text change at all. The
+       `hidden` filter is deliberate: watching `class` or `style` instead
+       would feed the observer its own `.fit-wrap` / font-size writes. */
+    obs.observe(document.body, {
+      subtree: true, childList: true, characterData: true,
+      attributes: true, attributeFilter: ['hidden']
+    });
+    window.addEventListener('resize', queueResultFit);
+  }
+
   function viewFromHash(hash) {
     const raw = String(hash === undefined ? window.location.hash : hash)
       .replace(/^#\/?/, '').trim().toLowerCase();
@@ -1598,9 +1740,19 @@
     // route reached it (the Home card, a bookmark, or a back/forward step).
     if (name === 'master-data') renderMasterData();
     if (name === 'backup') renderStorageStatus();
+    /* Entering the engine re-reads the master database if the stored copy
+       changed underneath this page (another tab, or a pull from the cloud),
+       then re-resolves the open draft against it — so an item or client
+       edited while the page was hidden is already reflected. It repaints
+       only when a value actually changed. */
+    if (name === 'erp') { dbMaybeReload(); erpResolveFromDb(); }
     // Repaint the account surfaces on entry: the plan, credits and sync rows
     // must reflect the store as it stands now, not as it stood at boot.
     if (name === 'account') { renderAuthUi(); renderStorageStatus(); renderCloudStatus(); }
+    /* A figure rendered while its view was hidden has no measurable width, so
+       the fit pass runs again now that the view is on screen. */
+    queueResultFit();
+    fitResultValues();
     closeSidebar();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -1753,6 +1905,7 @@
     if (!(revisions >= 0)) { showError(err, 'Revisions must be 0 or more.'); return false; }
 
     const wasNew = !state.project;
+    if (wasNew) clearToolLibraryId('scope-guard');   // a new project is a new document
     state.project = {
       name: $('p-name').value.trim(),
       currency: $('p-currency').value,
@@ -1792,7 +1945,13 @@
     const dropEl = $('stat-drop');
     dropEl.textContent = displayDrop(c.drop, hasBaseline);
     dropEl.classList.remove('drop-bad', 'drop-none');
-    dropEl.classList.add(c.drop > 0 ? 'drop-bad' : (hasBaseline ? 'drop-none' : ''));
+    /* No baseline and no drop means NEITHER class applies — which used to be
+       written as classList.add(''), and add() throws on an empty token with
+       "The token provided must not be empty". The throw happened inside
+       renderAll(), so it aborted everything the boot sequence does after it
+       (the later renders and the hashchange listener were never registered). */
+    const dropCls = c.drop > 0 ? 'drop-bad' : (hasBaseline ? 'drop-none' : '');
+    if (dropCls) dropEl.classList.add(dropCls);
 
     $('stat-unbilled').textContent = Calc.fmtMoney(c.unbilled, p.currency);
     $('stat-extra-hours').textContent = Calc.fmtDur(c.committed, p.hoursUnit);
@@ -2350,6 +2509,7 @@
 
   async function clearQr() {
     if (!(await confirmAction({ title: 'Clear line items?', message: 'Clear all line items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
+    clearToolLibraryId('qr');       // cleared rows are a new document
     qrRows = [];
     saveQr();
     renderQr();
@@ -2435,6 +2595,14 @@
     '.var-doc .q-sigline { width: 200px; border-bottom: 1px solid #111827; height: 26px; }',
     /* Formal document layout (Metrix Engineering format) */
     '.fm-doc { font-size: 12px; }',
+    /* Formal-letter documents (Quantity & Rate, Quotation, Smart Invoice,
+       Variation) are flow-based, unlike the absolutely positioned METRIX /
+       ERP template whose coordinates already carry the master's own margins.
+       Without a page margin of its own the letterhead ran edge-to-edge and
+       the right-aligned Date / Ref / TIN block sat exactly on the paper edge,
+       where a printer or PDF exporter clips it. Scoped to .fm-doc so the
+       master template's geometry is untouched. */
+    '.doc-page > .fm-doc { padding: 15mm 12mm; box-sizing: border-box; }',
     '.fm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 3px solid #111827; padding-bottom: 10px; }',
     '.fm-left { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }',
     '.fm-co { min-width: 0; }',
@@ -2444,7 +2612,11 @@
     '.fm-spec { display: block; width: 100%; font-style: italic; font-weight: bold; font-size: 11px; color: #0d1b6e !important; margin: 4px 0 8px 0; }',
     '.fm-right { text-align: right; flex: none; max-width: 42%; }',
     '.fm-banner { display: inline-block; background: #111827; color: #ffffff; font-weight: 700; font-size: 12.5px; letter-spacing: 0.06em; padding: 4px 12px; border-radius: 4px; margin-bottom: 6px; }',
-    '.fm-right > div { font-size: 11px; color: #111827; margin-top: 2px; }',
+    /* :not(.fm-banner) — the doc-type badge is a <div> and a direct child of
+       .fm-right, so a plain `> div` rule outranked `.fm-banner` and painted
+       its text #111827 on its own #111827 background: a solid, unreadable
+       block. The badge keeps its own white text and 12.5px size. */
+    '.fm-right > div:not(.fm-banner) { font-size: 11px; color: #111827; margin-top: 2px; }',
     '.fm-metabox { display: flex; gap: 0; border: 1px solid #111827; border-radius: 4px; margin: 12px 0 10px; }',
     '.fm-meta-col { flex: 1 1 50%; padding: 8px 10px; min-width: 0; }',
     '.fm-meta-col + .fm-meta-col { border-left: 1px solid #111827; }',
@@ -2589,6 +2761,39 @@
     const doPrint = function () {
       if (printed) return;
       printed = true;
+      /* Print suppressed in test mode (?nodl=1): the document is still
+         written into the hidden frame — so the exact print payload can be
+         measured in the DOM — but no print dialog opens and no file is
+         produced. Reading the frame is the real check; the dialog is not
+         something a test can usefully assert on anyway. */
+      /* Double-print audit. One user action must produce ONE print payload.
+         In a single measurement two identical payloads arrived from one
+         dispatch and did not reproduce in five later trials, so it is
+         RECORDED rather than assumed either way: every payload carries an
+         ISO timestamp, and a second payload for the same title inside 1.5s
+         logs a warning naming both timestamps. Recording changes no
+         behaviour — nothing is blocked, suppressed or retried here. */
+      const rec = {
+        at: new Date().toISOString(),
+        title: title,
+        bytes: compiledHTML.length,
+        html: compiledHTML,
+        suppressed: nexoraNoDownload()
+      };
+      window.__nexoraPrintouts = window.__nexoraPrintouts || [];
+      const prevPrint = window.__nexoraPrintouts[window.__nexoraPrintouts.length - 1];
+      const gap = prevPrint && prevPrint.at ? (Date.now() - Date.parse(prevPrint.at)) : null;
+      if (prevPrint && prevPrint.title === title && gap !== null && gap < 1500) {
+        console.warn('[print-audit] two print payloads for "' + title + '" landed close together — previous at ' + prevPrint.at +
+          ' (' + prevPrint.bytes + ' bytes), now ' + rec.at + ' (' + rec.bytes + ' bytes), ' + gap + 'ms apart. ' +
+          'Prints are DEFERRED until fonts and images settle, so two separate exports can flush together and this is not ' +
+          'automatically a double-fire. Compare these timestamps with your own clicks before treating it as a bug.');
+      }
+      window.__nexoraPrintouts.push(rec);
+      if (rec.suppressed) {
+        console.info('[nodl] print suppressed (no dialog, no file):', title, compiledHTML.length + ' bytes', rec.at);
+        return;
+      }
       try { win.focus(); win.print(); } catch (e) { /* user can Ctrl+P */ }
     };
     /* Fonts must be in before the first paint request, or the master
@@ -2675,12 +2880,7 @@
     // Compile the live values (rows, currency symbols, totals) into a
     // standalone print document — no CDN, no offscreen capture.
     exportViaPrintWindow($('qr-doc'), 'Quantity & Rate sheet');
-    pushHistory({
-      type: 'pdf', tool: 'qr', toolName: 'Quantity & Rate Calculator',
-      title: 'Quantity & Rate sheet',
-      total: (function () { let t = 0; for (let i = 0; i < qrRows.length; i++) { const a = qrAmount(qrRows[i]); if (a !== null) t += a; } return Calc.TOOL_CURRENCIES[qrCur()].symbol.trim() + ' ' + Calc.fmtNum(t); })(),
-      draft: { tool: 'qr' }
-    });
+    logActivity(TOOL_DOC.qr());
   }
 
   /* ── Engineering Quotation & BOQ Generator (tool #03) ──────────── */
@@ -2888,6 +3088,7 @@
 
   async function clearBoq() {
     if (!(await confirmAction({ title: 'Clear BOQ items?', message: 'Clear all BOQ items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
+    clearToolLibraryId('boq');
     boqState.lines = [];
     saveBoq();
     renderBoqRows();
@@ -2896,6 +3097,7 @@
 
   async function resetBoq() {
     if (!(await confirmAction({ title: 'Reset quotation?', message: 'This clears the details, items, discount and VAT.', confirmLabel: 'Reset', danger: true }))) return;
+    clearToolLibraryId('boq');
     boqState = emptyBoq();
     saveBoq();
     renderBoq();
@@ -2914,12 +3116,7 @@
     // Live values (client, ref, date, items, discount, VAT) were compiled
     // into #quotation-doc by buildBoqDoc() just above.
     exportViaPrintWindow($('quotation-doc'), 'Quotation ' + (boqState.meta.ref || ''));
-    pushHistory({
-      type: 'pdf', tool: 'boq', toolName: 'Quotation',
-      title: boqState.meta.client || 'Quotation',
-      total: quoMoney(Calc.boqFinal(Calc.boqSubTotal(boqState.lines), num(boqState.discount), num(boqState.vat))),
-      draft: { tool: 'boq' }
-    });
+    logActivity(TOOL_DOC.boq());
   }
 
   /* ── Smart Invoice & Document Builder (tool #05) ──────────────── */
@@ -3206,6 +3403,7 @@
 
   async function resetInv() {
     if (!(await confirmAction({ title: 'Reset document?', message: 'This clears the type, fields, business details and items.', confirmLabel: 'Reset', danger: true }))) return;
+    clearToolLibraryId('invoice');
     invState = emptyInv();
     saveInv();
     renderInv();
@@ -3220,12 +3418,7 @@
     // Live values (doc type, business header + logo, fields, items,
     // currency) were compiled into #inv-doc by buildInvDoc() just above.
     exportViaPrintWindow($('inv-doc'), INV_DOC_TYPES[invState.docType].label + ' ' + (invState.meta.ref || invState.meta.invoice || ''));
-    pushHistory({
-      type: 'pdf', tool: 'invoice', toolName: 'Smart Invoice & Document Builder',
-      title: invState.meta.client || INV_DOC_TYPES[invState.docType].label,
-      total: (function () { let t = 0; for (let i = 0; i < invState.lines.length; i++) { const a = invLineAmount(invState.lines[i]); if (a !== null) t += a; } return invMoney(t); })(),
-      draft: { tool: 'invoice' }
-    });
+    logActivity(TOOL_DOC.invoice());
   }
 
   /* ── Margin & Markup Pricing Calculator (tool #04) ─────────── */
@@ -3306,6 +3499,7 @@
 
   async function resetPricing() {
     if (!(await confirmAction({ title: 'Reset pricing calculator?', message: 'This clears cost, overhead and profit target.', confirmLabel: 'Reset', danger: true }))) return;
+    clearToolLibraryId('pricing');
     prState = emptyPricing();
     savePricing();
     fillPricingForm();
@@ -3329,11 +3523,7 @@
       'Net profit: ' + prMoney(r.profit) + ' (margin ' + Calc.fmtPct(r.marginPct) + ' · markup ' + Calc.fmtPct(r.markupPct) + ')'
     ];
     const text = lines.join('\n');
-    pushHistory({
-      type: 'copy', tool: 'pricing', toolName: 'Margin & Markup Pricing Calculator',
-      title: 'Pricing summary', total: prMoney(r.price),
-      draft: { tool: 'pricing' }
-    });
+    logActivity(TOOL_DOC.pricing());
     const btn = $('pr-copy');
     const done = function () { flashCopied(btn); };
     const fallback = function () {
@@ -3483,11 +3673,7 @@
     }
     lines.push('', 'Percentages applied on CIF as entered — verify current rates with your customs agent.');
     copyText(lines.join('\n'), $('dt-copy'), 'Copy Breakdown');
-    pushHistory({
-      type: 'copy', tool: 'duty', toolName: 'Import Tax & Landed Cost Calculator',
-      title: 'Import duty breakdown', total: dutyMoney(r.landed),
-      draft: { tool: 'duty' }
-    });
+    logActivity(TOOL_DOC.duty());
   }
 
   /* ── Variation & Change Order Generator (tool #07) ────────────── */
@@ -3609,12 +3795,7 @@
     // Live values (project, desc, figures, dates) were compiled into
     // #variation-doc by buildVariationDoc() just above.
     exportViaPrintWindow($('variation-doc'), 'Contract variation ' + (varState.project || ''));
-    pushHistory({
-      type: 'pdf', tool: 'variation', toolName: 'Variation & Change Order Generator',
-      title: varState.project || 'Contract variation',
-      total: varMoney(Calc.variationCalc(varState.original, varState.added).revised),
-      draft: { tool: 'variation' }
-    });
+    logActivity(TOOL_DOC.variation());
   }
 
   /* ── Freelance Rate & Overhead Breakeven (tool #08) ───────────── */
@@ -3708,11 +3889,7 @@
       'Breakeven covers all costs — price above this to make a profit.'
     ];
     copyText(lines.join('\n'), $('bk-copy'), 'Copy Summary');
-    pushHistory({
-      type: 'copy', tool: 'breakeven', toolName: 'Freelance Rate & Overhead Breakeven Calculator',
-      title: 'Rate & overhead breakeven', total: bkMoney(r.hourly) + '/h',
-      draft: { tool: 'breakeven' }
-    });
+    logActivity(TOOL_DOC.breakeven());
   }
 
   /* ── Cross-Border FX & Fee Adjuster (tool #09) ────────────────── */
@@ -3820,11 +3997,7 @@
       'Send exactly ' + fxMoney(r.invoice) + ' to net ' + fxMoney(r.received) + '.'
     ];
     copyText(lines.join('\n'), $('fx-copy'), 'Copy Invoice Amount');
-    pushHistory({
-      type: 'copy', tool: 'fx', toolName: 'Cross-Border FX & Fee Adjuster',
-      title: 'Fee-adjusted invoice amount', total: fxMoney(r.invoice),
-      draft: { tool: 'fx' }
-    });
+    logActivity(TOOL_DOC.fx());
   }
 
   /* ── Academic GPA & Target Grade Planner (tool #10) ───────────── */
@@ -3949,15 +4122,13 @@
       }
     }
     copyText(lines.join('\n'), $('gp-copy'), 'Copy Summary');
-    pushHistory({
-      type: 'copy', tool: 'gpa', toolName: 'Academic GPA & Target Grade Planner',
-      title: 'GPA forecast', total: '',
-      draft: { tool: 'gpa' }
-    });
+    logActivity(TOOL_DOC.gpa());
   }
   /* ── History (localStorage) ───────────────────────────────────── */
-  // Central event log: every PDF export or summary copy across all tools
-  // records a snapshot (tool, title, total with currency, timestamp).
+  // The Library (History & Saved Documents): DELIBERATE saves only — today
+  // that means the ERP's "Save to Library" button and nothing else. An
+  // export or a summary copy is an action, not a saved document, so those
+  // are recorded in the activity feed (ACTIVITY_KEY) below.
   const HISTORY_KEY = 'calcmall_history';
   const HISTORY_DRAFTS_KEY = 'calcmall_history_drafts';
 
@@ -4004,50 +4175,107 @@
      longer leaves two rows with the same millisecond on the clock. */
   const HISTORY_DEDUPE_MS = 2000;
 
-  function isDuplicateHistory(entry) {
-    const last = history[0];
+  /* `pushHistory()` — the generic "append a Library row" helper — is gone
+     deliberately. It was the remaining way a row could reach the Library
+     without the user saving anything: every tool called it on export/copy,
+     so "History & Saved Documents" was really an export log. The Library is
+     now written in exactly ONE place, the ERP's Save to Library button
+     (`erpSaveToLibrary`), and nothing else may append to `history`.
+     Export/copy events are recorded in the activity feed instead — see
+     `logActivity()` below. Do not reintroduce a second writer. */
+
+  /* ── Activity log — NOT the Library ───────────────────────────────
+     Everything that HAPPENED but was not saved as a document is recorded
+     HERE and surfaces in the Home activity feed:
+
+       · database events (an item or client added, edited or removed)
+       · a PDF export or a summary copy from any tool
+
+     None of it goes into `history`. History & Saved Documents is a list of
+     DOCUMENTS, and the ONLY thing that may add a row to it is a deliberate
+     Save to Library. Logging database notifications into `history` is what
+     used to fill the Library with "Item DB updated" rows nobody saved, and
+     logging exports there is what made it read like an export log — so an
+     export now looks the same in the feed while the Library stays clean. */
+  const ACTIVITY_KEY = 'calcmall_activity_v1';
+  function loadActivityLog() {
+    try {
+      const raw = localStorage.getItem(ACTIVITY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+  let activityLog = loadActivityLog();
+  function saveActivityLog() {
+    try { localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activityLog)); } catch (e) { /* ignore */ }
+  }
+  /* One-action guard: a click that somehow reaches its handler twice leaves
+     one feed entry, not two. */
+  function isDuplicateActivity(entry) {
+    const last = activityLog[0];
     if (!last) return false;
     if (Date.now() - last.at > HISTORY_DEDUPE_MS) return false;
-    const same = function (a, b) { return String(a || '') === String(b || ''); };
-    return same(last.type, entry.type || 'pdf') &&
-      same(last.tool, entry.tool) &&
-      same(last.toolName, entry.toolName) &&
-      same(last.title, entry.title) &&
-      same(last.client, entry.client) &&
-      same(last.ref, entry.ref) &&
-      same(last.total, entry.total);
+    return String(last.type || '') === String(entry.type || 'db') &&
+      String(last.toolName || '') === String(entry.toolName || '') &&
+      String(last.title || '') === String(entry.title || '');
   }
-
-  function pushHistory(entry) {
-    if (isDuplicateHistory(entry)) return;
-    history.unshift({
+  function logActivity(entry) {
+    if (!entry) return;
+    if (isDuplicateActivity(entry)) return;
+    activityLog.unshift({
       id: uid(),
-      type: entry.type || 'pdf',
+      type: entry.type || 'db',
       tool: entry.tool || '',
       toolName: entry.toolName || 'Nexora Engine',
       title: entry.title || '\u2014',
       total: entry.total || '',
-      /* Document entries carry the client and the reference so the activity
-         feed can name WHICH document it was. Repeating the document type for
-         every row told the reader nothing; rows logged before these fields
-         existed simply fall back to title/total. */
       client: entry.client || '',
       ref: entry.ref || '',
       at: Date.now()
     });
-    if (history.length > 60) history = history.slice(0, 60);
-    if (entry.draft) draftStore[history[0].id] = entry.draft;
-    // Prune orphaned drafts (their list entry aged out).
-    const live = {};
-    for (let i = 0; i < history.length; i++) {
-      if (draftStore[history[i].id]) live[history[i].id] = draftStore[history[i].id];
-    }
-    draftStore = live;
-    saveHistory();
-    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
-    renderHistory();
+    if (activityLog.length > 60) activityLog = activityLog.slice(0, 60);
+    saveActivityLog();
     renderActivity();
-    renderKpis();
+  }
+  /* The Home feed: saved documents (History) plus the events logged here
+     (database changes, exports and copies), newest first. */
+  function activityFeed() {
+    return history.concat(activityLog).sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+  }
+  /* Routes in History that are notifications, not documents. Written by an
+     older build that logged database changes into the Library; counted so
+     the user can see exactly how much of the list is noise, and cleared only
+     when they ask. Nothing removes them on its own. */
+  function libraryNotificationCount() {
+    let n = 0;
+    for (let i = 0; i < history.length; i++) if (history[i].type === 'db') n++;
+    return n;
+  }
+  function removeLibraryNotifications() {
+    const before = history.length;
+    history = history.filter(function (h) { return h.type !== 'db'; });
+    const removed = before - history.length;
+    if (removed) {
+      saveHistory();
+      renderHistory();
+      renderActivity();
+      renderKpis();
+      updateKPICards();
+    }
+    return removed;
+  }
+  /* The Library button for it: confirm first, remove only notifications. */
+  async function removeNotificationsFromLibrary() {
+    const n = libraryNotificationCount();
+    if (!n) return;
+    if (!(await confirmAction({
+      title: 'Remove notifications?',
+      message: 'Remove ' + n + ' database notification' + (n === 1 ? '' : 's') + ' from the Library? They were written by an older build that logged item and client edits as if they were saved documents. Your saved documents, and the database records themselves, are not affected.',
+      confirmLabel: 'Remove notifications'
+    }))) return;
+    const removed = removeLibraryNotifications();
+    showToast(removed === 1 ? 'Removed 1 notification from the Library.' : 'Removed ' + removed + ' notifications from the Library.');
   }
 
   function renderHistory() {
@@ -4056,9 +4284,13 @@
     renderActivity();
     renderKpis();
     const clearBtn = $('history-clear');
+    const dedupeBtn = $('history-dedupe');
+    const noteBtn = $('history-notifications');
     if (!history.length) {
-      list.innerHTML = '<div class="history-empty">No saved entries yet. Export a PDF or copy a summary from any tool and it will appear here automatically.</div>';
+      list.innerHTML = '<div class="history-empty">Nothing saved yet. Use <strong>Save to Library</strong> in the Master ERP Engine or in any Other Utilities tool to keep a document here — exporting a PDF or copying a summary does not save it.</div>';
       if (clearBtn) clearBtn.hidden = true;
+      if (dedupeBtn) dedupeBtn.hidden = true;
+      if (noteBtn) noteBtn.hidden = true;
       return;
     }
     list.innerHTML = history.map(function (h) {
@@ -4066,6 +4298,23 @@
       const badge = h.type === 'pdf'
         ? '<span class="pill pill-accent">PDF</span>'
         : '<span class="pill pill-muted">Copy</span>';
+      /* Retention is per document and OFF by default, so an entry only ever
+         disappears on its own when the user switched this on for THAT row. */
+      const expiryOn = h.autoExpire === true;
+      const touched = Number(h.touchedAt || h.at || 0);
+      const daysLeft = expiryOn && touched > 0
+        ? Math.max(0, Math.ceil((touched + LIBRARY_EXPIRE_MS - Date.now()) / 86400000))
+        : null;
+      const retention = '<button type="button" class="btn btn-ghost btn-sm history-retention' +
+        (expiryOn ? ' is-on' : '') + '" data-hact="retention" title="' +
+        (expiryOn
+          ? 'Auto-delete is ON for this document: it is removed after ' + LIBRARY_EXPIRE_DAYS + ' days without being opened or re-saved. Click to keep it forever.'
+          : 'Kept forever. Click to auto-delete this document after ' + LIBRARY_EXPIRE_DAYS + ' days without being opened or re-saved.') +
+        '">' +
+        (expiryOn
+          ? '<span class="history-retention-mark" aria-hidden="true">&#9679;</span> Auto-delete in ' + daysLeft + 'd'
+          : 'Keep forever') +
+        '</button>';
       return '<div class="history-item card" data-id="' + h.id + '">' +
         '<div class="history-main">' +
           '<div class="history-title"><strong>' + esc(h.title) + '</strong> ' + badge + '</div>' +
@@ -4075,11 +4324,22 @@
         '<div class="history-actions">' +
           '<button type="button" class="btn btn-ghost btn-sm" data-hact="view">View / Load draft</button>' +
           (h.type === 'pdf' ? '<button type="button" class="btn btn-ghost btn-sm" data-hact="pdf">Re-download PDF</button>' : '') +
+          retention +
           '<button type="button" class="btn btn-ghost btn-sm" data-hact="delete">Delete</button>' +
         '</div>' +
       '</div>';
     }).join('');
     if (clearBtn) clearBtn.hidden = false;
+    // Only offered while it would actually do something.
+    if (dedupeBtn) dedupeBtn.hidden = duplicateHistoryCount() === 0;
+    /* Notification rows left behind by the old auto-save: offered for removal
+       only while any remain, and never removed without a click. */
+    if (noteBtn) {
+      const n = libraryNotificationCount();
+      noteBtn.hidden = n === 0;
+      if (n) noteBtn.textContent = 'Remove ' + n + ' notification' + (n === 1 ? '' : 's');
+    }
+    renderHistoryReview();
   }
 
   function historyAction(id, act) {
@@ -4088,9 +4348,28 @@
     if (act === 'delete') {
       history = history.filter(function (x) { return x.id !== id; });
       delete draftStore[id];
+      /* Any tool whose next save would have updated this row forgets it, so
+         that save starts a new document instead of aiming at a dead id. */
+      const owners = Object.keys(toolLibraryIds);
+      for (let i = 0; i < owners.length; i++) {
+        if (toolLibraryIds[owners[i]] === id) delete toolLibraryIds[owners[i]];
+      }
+      saveToolLibraryIds();
       saveHistory();
       try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
       renderHistory();
+      return;
+    }
+    /* Per-document retention switch: “auto-delete after 30 days of
+       inactivity”. Off by default; this only ever changes the flag. */
+    if (act === 'retention') {
+      h.autoExpire = h.autoExpire !== true;
+      h.touchedAt = Date.now();   // switching it on starts a fresh window
+      saveHistory();
+      renderHistory();
+      showToast(h.autoExpire
+        ? 'Auto-delete on — this document will be removed after ' + LIBRARY_EXPIRE_DAYS + ' days without being opened or re-saved.'
+        : 'Keep forever — this document will not be auto-deleted.');
       return;
     }
     const draft = draftStore[id] || {};
@@ -4122,10 +4401,16 @@
         // so it passes the same gate (a guest must not reach a tool here).
         if (!checkAccessAndCredits()) return;
         selectTool(tool);
+        /* Put back what was actually SAVED, and point the tool's next save at
+           this row so re-saving updates it instead of adding a copy. */
+        if (draft && draft.state) restoreToolSnapshot(tool, draft);
+        toolLibraryIds[tool] = h.id;
+        saveToolLibraryIds();
         showView(TOOL_VIEWS[tool]);
       } else {
         showView('home');
       }
+      touchLibraryEntry(h);   // opening it counts as activity for its expiry clock
       return;
     }
     if (act === 'pdf') {
@@ -4139,17 +4424,182 @@
       else if (tool === 'qr') qrExportPdf();
       else if (tool === 'variation') exportVariationPdf();
       else if (tool && TOOL_VIEWS[tool]) { selectTool(tool); showView(TOOL_VIEWS[tool]); }
+      touchLibraryEntry(h);   // re-downloading it counts as activity too
       return;
     }
   }
 
+  /* ── Duplicate cleanup (one-off) ────────────────────────────────
+     Nothing in the current save path can create a duplicate: typing only
+     touches the working draft, and Save to Library updates the row it
+     already owns. But browsers that used the app before that change still
+     hold rows written by the old auto-save — the same document twice, seconds
+     apart — so this gives the user a way to purge them without losing
+     anything else.
+
+     Two rows are the same action when they share the full identity (type,
+     tool, title, client, ref, total) AND fall inside the same minute. The
+     minute bound is what keeps a deliberate re-issue of identical figures
+     (a genuine second document) out of the net. */
+  function dedupeKeyOf(h) {
+    const minute = Math.floor((Number(h.at) || 0) / 60000);
+    return [h.type || '', h.tool || '', h.toolName || '', h.title || '',
+      h.client || '', h.ref || '', h.total || '', minute].join('\u0001');
+  }
+
+  function duplicateHistoryCount() {
+    const seen = {};
+    let dupes = 0;
+    for (let i = 0; i < history.length; i++) {
+      const key = dedupeKeyOf(history[i]);
+      if (seen[key]) dupes++; else seen[key] = true;
+    }
+    return dupes;
+  }
+
+  /* ── READ-ONLY repeat review ─────────────────────────────────────────
+     Two different questions, deliberately two different tools:
+       · "Remove duplicates" ACTS — same-minute copies of one save.
+       · "Review repeats" only LISTS. It groups entries that describe the SAME
+         record by type + tool + title + client + reference + total, whatever
+         the clock says, and marks which row a dedupe would keep. It exists
+         because a repeated save (or a build that saved on its own) can leave
+         copies minutes apart, and the user should be able to SEE them before
+         removing anything. Nothing in this path writes, moves or deletes. */
+  function repeatKeyOf(h) {
+    return [h.type || '', h.tool || '', h.toolName || '', h.title || '',
+      h.client || '', h.ref || '', h.total || ''].join('\u0001');
+  }
+
+  function historyRepeatGroups() {
+    const groups = {};
+    const order = [];
+    for (let i = 0; i < history.length; i++) {
+      const h = history[i];
+      const key = repeatKeyOf(h);
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(h);
+    }
+    // history is newest-first, so each group is already in keep-first order.
+    return order.map(function (k) { return groups[k]; })
+      .filter(function (g) { return g.length > 1; });
+  }
+
+  function historyWhen(at) {
+    return new Date(Number(at) || 0).toLocaleString('en-GB',
+      { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderHistoryReview() {
+    const panel = $('history-review-panel');
+    const btn = $('history-review');
+    if (!panel) return;
+    const groups = historyRepeatGroups();
+    if (btn) {
+      btn.hidden = groups.length === 0;
+      btn.textContent = groups.length === 1 ? 'Review 1 repeat' : 'Review ' + groups.length + ' repeats';
+    }
+    let repeats = 0;
+    let dbRepeats = 0;
+    groups.forEach(function (g) {
+      repeats += g.length - 1;
+      if ((g[0].type || '') === 'db') dbRepeats += g.length;
+    });
+    if (!groups.length) {
+      panel.hidden = true;
+      panel.innerHTML = '';
+      return;
+    }
+
+    const docGroups = groups.filter(function (g) { return (g[0].type || '') !== 'db'; });
+    const activityGroups = groups.filter(function (g) { return (g[0].type || '') === 'db'; });
+
+    const groupHtml = function (g) {
+      const head = g[0];
+      const isActivity = (head.type || '') === 'db';
+      return '<div class="history-repeat-group">' +
+        '<div class="history-repeat-head">' +
+          '<strong>' + esc(head.title || '\u2014') + '</strong>' +
+          '<span class="pill ' + (isActivity ? 'pill-muted' : 'pill-accent') + '">' +
+            (isActivity ? 'database change' : (head.type === 'copy' ? 'copy' : 'PDF')) + '</span>' +
+          '<span class="pill pill-muted">' + g.length + ' copies</span>' +
+        '</div>' +
+        '<div class="history-repeat-meta">' + esc(head.toolName || '') +
+          (head.total ? ' · ' + esc(head.total) : '') +
+          (head.client ? ' · ' + esc(head.client) : '') +
+          (head.ref ? ' · ' + esc(head.ref) : '') + '</div>' +
+        '<ul class="history-repeat-rows">' + g.map(function (h, i) {
+          return '<li><span class="history-repeat-when">' + esc(historyWhen(h.at)) + '</span>' +
+            (i === 0
+              ? '<span class="history-repeat-keep">would be kept</span>'
+              : '<span class="history-repeat-drop">repeat \u2014 remove from the row\u2019s own Delete button</span>') +
+            '</li>';
+        }).join('') + '</ul>' +
+      '</div>';
+    };
+
+    panel.innerHTML =
+      '<div class="history-repeat-summary"><strong>' + repeats + ' of ' + history.length + '</strong> saved ' +
+        (history.length === 1 ? 'entry repeats' : 'entries repeat') +
+        ' another entry with the same title, client, reference and total.' +
+        (docGroups.length ? ' ' + docGroups.length + ' ' + (docGroups.length === 1 ? 'group is a' : 'groups are') + ' document.' : '') +
+        (activityGroups.length ? ' ' + dbRepeats + ' ' + (dbRepeats === 1 ? 'row is a' : 'rows are') +
+          ' database change (an item or client was saved or removed), not a document.' : '') +
+        ' <em>Nothing is deleted here \u2014 this is the list to review. Use <strong>Remove duplicates</strong> for same-minute copies, or each row\u2019s Delete button.</em></div>' +
+      groups.map(groupHtml).join('');
+  }
+
+  function dedupeHistory() {
+    const seen = {};
+    const kept = [];
+    let removed = 0;
+    // history is newest-first, so the first row of a pair is the one kept and
+    // the redundant later copy (and its draft) is dropped.
+    for (let i = 0; i < history.length; i++) {
+      const key = dedupeKeyOf(history[i]);
+      if (seen[key]) { removed++; delete draftStore[history[i].id]; continue; }
+      seen[key] = true;
+      kept.push(history[i]);
+    }
+    if (!removed) return 0;
+    history = kept;
+    pruneDrafts();
+    saveHistory();
+    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
+    renderHistory();
+    renderActivity();
+    renderKpis();
+    updateKPICards();
+    renderStorageStatus();
+    return removed;
+  }
+
+  async function removeDuplicateHistory() {
+    const dupes = duplicateHistoryCount();
+    if (!dupes) { showToast('No duplicate entries found.'); return; }
+    const ok = await confirmAction({
+      title: 'Remove duplicate entries?',
+      message: dupes + (dupes === 1 ? ' entry looks' : ' entries look') +
+        ' like the same save recorded more than once. One copy of each is kept and nothing else is touched.',
+      confirmLabel: 'Remove ' + dupes
+    });
+    if (!ok) return;
+    const removed = dedupeHistory();
+    showToast(removed + ' duplicate ' + (removed === 1 ? 'entry' : 'entries') + ' removed.');
+  }
+
   async function clearHistory() {
-    if (!(await confirmAction({ title: 'Clear history?', message: 'Clear the entire history? This cannot be undone.', confirmLabel: 'Clear everything', danger: true }))) return;
+    if (!(await confirmAction({ title: 'Clear history?', message: 'Clear every saved document from the Library? This cannot be undone. Activity-feed notifications are cleared separately, by "Clear activity feed" on the Home page.', confirmLabel: 'Clear everything', danger: true }))) return;
     history = [];
     draftStore = {};
+    toolLibraryIds = {};            // every tool's remembered row went with it
+    saveToolLibraryIds();
     saveHistory();
     try { localStorage.removeItem(HISTORY_DRAFTS_KEY); } catch (e) { /* ignore */ }
     renderHistory();
+    renderActivity();
+    renderKpis();
+    updateKPICards();
   }
 
   /* ── Retainer & SLA Pricing Estimator (tool #11) ──────────────── */
@@ -4211,6 +4661,7 @@
 
   async function resetRetainer() {
     if (!(await confirmAction({ title: 'Reset retainer estimator?', message: 'This clears the client details and pricing inputs.', confirmLabel: 'Reset', danger: true }))) return;
+    clearToolLibraryId('retainer');
     rtState = emptyRetainer();
     saveRetainer();
     fillRetainerForm();
@@ -4234,11 +4685,7 @@
       'Net profit / month: ' + rtMoney(r.profit) + ' (margin ' + Calc.fmtPct(r.marginPct) + ')'
     ];
     copyText(lines.join('\n'), $('rt-copy'), 'Copy Summary');
-    pushHistory({
-      type: 'copy', tool: 'retainer', toolName: 'Retainer & SLA Pricing Estimator',
-      title: rtState.client || 'Retainer pricing', total: rtMoney(r.price) + '/mo',
-      draft: { tool: 'retainer' }
-    });
+    logActivity(TOOL_DOC.retainer());
   }
 
   /* ── Project Delay & Damages Impact (tool #12) ────────────────── */
@@ -4303,6 +4750,7 @@
 
   async function resetDelay() {
     if (!(await confirmAction({ title: 'Reset delay calculator?', message: 'This clears the contract details and penalty rates.', confirmLabel: 'Reset', danger: true }))) return;
+    clearToolLibraryId('delay');
     dlState = emptyDelay();
     saveDelay();
     fillDelayForm();
@@ -4323,11 +4771,7 @@
       'Total damages exposure: ' + dlMoney(r.total) + ' (' + Calc.fmtPct(r.pctOfContract) + ' of contract)'
     ];
     copyText(lines.join('\n'), $('dl-copy'), 'Copy Summary');
-    pushHistory({
-      type: 'copy', tool: 'delay', toolName: 'Project Delay & Damages Impact Calculator',
-      title: dlState.project || 'Delay impact', total: dlMoney(r.total),
-      draft: { tool: 'delay' }
-    });
+    logActivity(TOOL_DOC.delay());
   }
 
   /* ── Brand & settings (shared letterhead + default terms) ───── */
@@ -4753,20 +5197,47 @@
     return acc;
   }
 
+  /* COMMITTED value only — and the figures the card then DESCRIBES are the
+     same figures it SUMS.
+
+     The live ERP working draft used to be added in here:
+
+         if (erpDocType()) procVal += erpDocTotals().final;
+
+     which is how a brand-new account with nothing saved could read
+     "LKR 2,809 across 0 documents" — the money came from an unsaved draft
+     while the document count came from `history`, a different scope
+     entirely. `kpiTrends().val` already summed documents only, so the
+     headline and its own 30-day badge disagreed too. The draft is NOT
+     processed value (nothing is saved); it is reported on the pipeline
+     caption instead, and the sub-line below now names what it counted. */
   function currentKPIValues() {
     const activeEst = (erpRecords && typeof erpRecords === 'object') ? Object.keys(erpRecords).length : 0;
     const dbCount = db.items.length + db.clients.length;
     const docCount = history.length;
-    let procVal = 0;
-    for (let i = 0; i < history.length; i++) procVal += kpiTotalNumber(history[i].total);
-    if (erpDocType()) procVal += erpDocTotals().final;
-    procVal += state.requests.reduce(function (s, r) { return s + (r.value || 0); }, 0);
-    return { activeEst: activeEst, dbCount: dbCount, docCount: docCount, procVal: procVal };
+    let docVal = 0;
+    for (let i = 0; i < history.length; i++) docVal += kpiTotalNumber(history[i].total);
+    const reqCount = state.requests.length;
+    let reqVal = 0;
+    for (let i = 0; i < reqCount; i++) reqVal += (Number(state.requests[i] && state.requests[i].value) || 0);
+    return {
+      activeEst: activeEst, dbCount: dbCount, docCount: docCount,
+      docVal: docVal, reqCount: reqCount, reqVal: reqVal,
+      procVal: docVal + reqVal
+    };
   }
 
   function fmtPctShort(val) {
     if (val === 0) return '0%';
     return (val > 0 ? '+' : '') + val.toFixed(1).replace(/\.0$/, '') + '%';
+  }
+
+  /* "a", "a and b", "a, b and c" — for the KPI sub-lines. */
+  function listAnd(items) {
+    const parts = items || [];
+    if (parts.length <= 1) return parts.join('');
+    if (parts.length === 2) return parts[0] + ' and ' + parts[1];
+    return parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
   }
 
   /* `fmt` renders a window figure for the tooltip (money vs a plain count).
@@ -4864,13 +5335,32 @@
     const valSub = $('kpi-val-sub');
     if (valSub) {
       const exact = curCode + ' ' + Number(cur.procVal).toLocaleString('en-US', { maximumFractionDigits: 2 });
-      valSub.textContent = exact + ' across ' + (cur.docCount === 1 ? '1 document' : cur.docCount + ' documents') +
+      /* Names exactly what the figure above is made of, so a total and a count
+         of zero can never sit on the same line again. */
+      const parts = [];
+      if (cur.docCount > 0) parts.push(cur.docCount === 1 ? '1 saved document' : cur.docCount + ' saved documents');
+      if (cur.reqCount > 0) parts.push(cur.reqCount === 1 ? '1 project request' : cur.reqCount + ' project requests');
+      valSub.textContent = exact + (parts.length ? ' from ' + listAnd(parts) : ' \u2014 nothing processed yet') +
         (kpiMixedCurrencies() ? ' · mixed currencies' : '');
     }
     const pm = $('pm-caption');
-    if (pm) pm.textContent = cur.dbCount > 0 || cur.docCount > 0
-      ? 'Pipeline active — ' + cur.dbCount + ' DB records and ' + cur.docCount + ' documents ready.'
-      : 'Pipeline idle — open the ERP engine to process a document.';
+    if (pm) {
+      const draftVal = erpDocType() ? erpDocTotals().final : 0;
+      const hasCommitted = cur.dbCount > 0 || cur.docCount > 0;
+      let cap;
+      if (hasCommitted) {
+        cap = 'Pipeline active — ' + cur.dbCount + ' DB records and ' + cur.docCount + ' documents ready.';
+        /* Work in progress is real, it just is not "processed" yet: it is
+           named here, with the fact that it is unsaved, rather than folded
+           into a total that claims to be about documents. */
+        if (draftVal > 0) cap += ' Draft on this device: ' + curSym + ' ' + Calc.fmtNum(draftVal) + ' (not saved yet).';
+      } else if (draftVal > 0) {
+        cap = 'Pipeline in progress — a document is open in the ERP engine and nothing is saved yet. Draft on this device: ' + curSym + ' ' + Calc.fmtNum(draftVal) + '.';
+      } else {
+        cap = 'Pipeline idle — open the ERP engine to process a document.';
+      }
+      pm.textContent = cap;
+    }
     const setBar = function (id, val, cap, label, title) {
       const strong = $(id);
       const bar = strong.closest('.health-item').querySelector('.health-fill');
@@ -4902,12 +5392,15 @@
     const list = $('activity-list');
     if (!list) return;
     const clearBtn = $('activity-clear');
-    if (!history.length) {
+    /* The feed is documents (History) PLUS the automatic database events that
+       are logged here rather than in the Library. */
+    const feed = activityFeed();
+    if (!feed.length) {
       list.innerHTML = '<div class="activity-empty">No activity yet — export a PDF, save an ERP record, or update the database and events will appear here.</div>';
       if (clearBtn) clearBtn.hidden = true;
       return;
     }
-    list.innerHTML = history.slice(0, 12).map(function (h) {
+    list.innerHTML = feed.slice(0, 12).map(function (h) {
       const kind = h.type === 'db' ? 'db' : (h.tool === 'erp' ? 'erp' : (h.type === 'copy' ? 'copy' : 'pdf'));
       let head, bits = [];
       if (h.type === 'db') {
@@ -4933,15 +5426,18 @@
     }).join('');
     if (clearBtn) clearBtn.hidden = false;
   }
+  /* Clears WHAT THE FEED SHOWS — the automatic database events, including the
+     notification rows an older build wrote into History. Saved documents are
+     never touched, which is what this button's own wording has always
+     promised. */
   async function clearActivity() {
-    if (!(await confirmAction({ title: 'Clear activity feed?', message: 'Saved documents in History are not affected.', confirmLabel: 'Clear feed', danger: true }))) return;
-    history = [];
-    draftStore = {};
-    saveHistory();
-    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
-    renderHistory();
+    if (!(await confirmAction({ title: 'Clear activity feed?', message: 'This clears the activity feed and the database notifications listed in your Library. Saved documents in History are not affected.', confirmLabel: 'Clear feed', danger: true }))) return;
+    activityLog = [];
+    saveActivityLog();
+    removeLibraryNotifications();
     renderActivity();
     renderKpis();
+    updateKPICards();
   }
 
   /* ── Item & Client Database (master data for the ERP) ───────── */
@@ -5085,6 +5581,44 @@
     try { localStorage.setItem(DB_KEY_ITEMS, JSON.stringify(db.items)); } catch (e) { /* ignore */ }
     try { localStorage.setItem(DB_KEY_CLIENTS, JSON.stringify(db.clients)); } catch (e) { /* ignore */ }
     try { localStorage.removeItem(DB_KEY_LEGACY); } catch (e) { /* ignore */ }
+    dbSig = dbStorageSig();
+  }
+
+  /* ── The database changed OUTSIDE this page ───────────────────────────
+     Two ways that happens, and neither used to reach the open document:
+       · another tab of this browser wrote the same (per-account) keys —
+         delivered as a `storage` event;
+       · a pull from Supabase replaced the local copy — delivered as a
+         `nexora-cloud` event.
+     Both write localStorage, not this page's `db`, so the in-memory copy
+     would otherwise stay stale until a reload. A cheap signature of the two
+     stored values detects it, then the database is re-read and the open
+     document re-resolved against it. */
+  let dbSig = null;
+
+  function dbStorageSig() {
+    const items = dbText(localStorage.getItem(DB_KEY_ITEMS));
+    const clients = dbText(localStorage.getItem(DB_KEY_CLIENTS));
+    return items.length + '|' + clients.length + '|' + items.slice(-48) + '|' + clients.slice(-48);
+  }
+
+  function dbReloadFromStorage() {
+    db = loadDb();
+    dbSig = dbStorageSig();
+    renderDb();
+    /* The working document is re-resolved against the newly read records, so
+       a rate corrected on another device is the rate this document uses. */
+    erpResolveFromDb();
+  }
+
+  /* Re-read only when the stored copy actually differs. Returns true when a
+     reload happened. The first call just records the baseline. */
+  function dbMaybeReload() {
+    const sig = dbStorageSig();
+    if (dbSig === null) { dbSig = sig; return false; }
+    if (sig === dbSig) return false;
+    dbReloadFromStorage();
+    return true;
   }
 
   function dbFindItem(sku) {
@@ -5216,6 +5750,15 @@
   /** Every record for the active tab, in the order that tab is read in
       (items by SKU, clients most-recently-added first). */
   function mdRowsForTab() {
+    /* Saved project / client records (the ERP's Save Record store). They live
+       in `erpRecords`, not `db`, but they browse in the same list + detail
+       pane as items and clients so a record reads exactly like any other
+       master-data entry. `key` is the Primary Key / Record ID. */
+    if (mdTab === 'records') {
+      return recordEntries().map(function (e) {
+        return { kind: 'record', rec: e.rec, key: e.id };
+      });
+    }
     if (mdTab === 'clients') {
       return db.clients.map(function (c) {
         return { kind: 'client', rec: c, key: mdKeyFor('client', c) };
@@ -5234,10 +5777,17 @@
   function mdMatches(row) {
     if (!mdFilter) return true;
     const rec = row.rec || {};
-    const hay = row.kind === 'client'
-      ? [rec.clientName, rec.name, rec.clientAddress, rec.contactPerson, rec.contactNumber, rec.tinRegNo,
-         rec.placeOfSupply, rec.defaultProject, rec.poNo, rec.currency]
-      : [rec.sku, rec.name, rec.unit];
+    let hay;
+    if (row.kind === 'client') {
+      hay = [rec.clientName, rec.name, rec.clientAddress, rec.contactPerson, rec.contactNumber, rec.tinRegNo,
+        rec.placeOfSupply, rec.defaultProject, rec.poNo, rec.currency];
+    } else if (row.kind === 'record') {
+      const st = rec.state || {};
+      hay = [row.key, st.client, st.project, st.address, st.contact, st.clientTin, st.ref,
+        st.placeOfSupply, st.poNo, st.currency, st.terms];
+    } else {
+      hay = [rec.sku, rec.name, rec.model, rec.unit];
+    }
     return hay.join(' \u0001 ').toLowerCase().indexOf(mdFilter) !== -1;
   }
 
@@ -5245,6 +5795,10 @@
       the store, so a later "manage" jump cannot target the wrong row. */
   function mdFindSelection() {
     if (!mdSel) return null;
+    if (mdSel.kind === 'record') {
+      const saved = erpRecords[mdSel.key];
+      return (saved && typeof saved === 'object') ? { rec: saved, index: -1 } : null;
+    }
     const list = mdSel.kind === 'client' ? db.clients : db.items;
     for (let i = 0; i < list.length; i++) {
       if (mdKeyFor(mdSel.kind, list[i]) === mdSel.key) return { rec: list[i], index: i };
@@ -5269,6 +5823,20 @@
         '<span class="home-db-meta">' + esc(rec.currency || '') + '</span>' +
       '</button>';
     }
+    if (r.kind === 'record') {
+      const st = rec.state || {};
+      const label = st.client || st.project || 'Untitled record';
+      const sub = (st.client && st.project ? st.project : st.address) || '';
+      const n = Array.isArray(st.lines) ? st.lines.length : 0;
+      return '<button type="button" class="' + cls + '"' + attrs + '>' +
+        '<span class="home-db-main">' +
+          '<span class="home-db-title"><strong>' + esc(r.key) + '</strong></span>' +
+          '<span class="home-db-sub db-mini-name" title="' + esc(label + (sub ? ' \u00b7 ' + sub : '')) + '">' +
+            esc(label + (sub ? ' \u00b7 ' + sub : '')) + '</span>' +
+        '</span>' +
+        '<span class="home-db-meta">' + esc(n + (n === 1 ? ' line' : ' lines')) + '</span>' +
+      '</button>';
+    }
     const info = dbRateInfo(rec.rate);
     return '<button type="button" class="' + cls + '"' + attrs + '>' +
       '<span class="home-db-main">' +
@@ -5285,6 +5853,8 @@
     const ic = $('md-items-count'), cc = $('md-clients-count');
     if (ic) ic.textContent = String(db.items.length);
     if (cc) cc.textContent = String(db.clients.length);
+    const rc = $('md-records-count');
+    if (rc) rc.textContent = String(recordEntries().length);
     const tabs = document.querySelectorAll('.md-tab');
     for (let i = 0; i < tabs.length; i++) {
       const on = tabs[i].getAttribute('data-md-tab') === mdTab;
@@ -5294,12 +5864,14 @@
     const all = mdRowsForTab();
     const rows = all.filter(mdMatches);
     if (!rows.length) {
-      const noun = mdTab === 'clients' ? 'clients' : 'items';
+      const noun = mdTab === 'clients' ? 'clients' : (mdTab === 'records' ? 'saved records' : 'items');
       box.innerHTML = '<p class="md-empty">' + (all.length
         ? 'Nothing matches \u201c' + esc(mdFilter) + '\u201d. Clear the filter to see all ' + all.length + ' ' + noun + '.'
         : (mdTab === 'clients'
             ? 'No clients saved yet. Add one in the Item &amp; Client Database and it will auto-fill the ERP header.'
-            : 'No items saved yet. Add one in the Item &amp; Client Database and it will auto-fill ERP line items.')) + '</p>';
+            : (mdTab === 'records'
+                ? 'No project records saved yet. Fill the Project / Client Header in the Master ERP Engine and click <strong>Save Record</strong> \u2014 it will be listed here.'
+                : 'No items saved yet. Add one in the Item &amp; Client Database and it will auto-fill ERP line items.'))) + '</p>';
       return;
     }
     box.innerHTML = rows.map(mdRowHtml).join('');
@@ -5330,20 +5902,92 @@
 
     if (!mdSel || !found) {
       if (kindPill) kindPill.textContent = 'Nothing selected';
-      box.innerHTML = '<p class="md-empty">Pick ' + (mdTab === 'clients' ? 'a client' : 'an item') +
+      const isRec = mdTab === 'records';
+      box.innerHTML = '<p class="md-empty">Pick ' + (mdTab === 'clients' ? 'a client' : (isRec ? 'a saved record' : 'an item')) +
         ' from the list to read its full details here. ' +
-        'This view is read-only \u2014 adding, editing and deleting stay in the Item &amp; Client Database.</p>';
+        (isRec
+          ? 'This view is read-only \u2014 the <strong>Load in Master ERP Engine</strong> button opens a record for editing.'
+          : 'This view is read-only \u2014 adding, editing and deleting stay in the Item &amp; Client Database.') + '</p>';
       return;
     }
 
     const rec = found.rec;
-    if (kindPill) kindPill.textContent = mdSel.kind === 'client' ? 'Client' : 'Item';
+    if (kindPill) {
+      kindPill.textContent = mdSel.kind === 'client' ? 'Client'
+        : (mdSel.kind === 'record' ? 'Saved record' : 'Item');
+    }
+    box.innerHTML = mdDetailHtml(mdSel.kind, rec, mdManageHtml(mdSel.kind, mdSel.key), mdSel.kind === 'record' ? mdSel.key : '');
+  }
 
-    if (mdSel.kind === 'client') {
+  /* ── The one read-only detail body, shared by both views ──────────────
+     The Master Database browse view renders it into its pane; the Item &
+     Client Database renders the SAME html into the details drawer, so a field
+     added here can never appear in one screen and be missing from the other.
+     `actions` is the only view-specific part: the browse view links across to
+     the management page, the drawer offers that record's own Edit instead
+     (it is already the management page). */
+  function mdDetailHtml(kind, rec, actions, recId) {
+    /* Saved project / client record: the header it was saved with, then its
+       line items. `rec` is the { savedAt, state } entry, `recId` its Primary
+       Key. Amounts follow the document's own rule — a Delivery Note record has
+       no pricing, so those columns are simply absent for that mode. */
+    if (kind === 'record') {
+      const st = (rec && rec.state) || {};
+      const cur = Calc.TOOL_CURRENCIES[st.currency] ? st.currency : 'LKR';
+      const money = function (v) { return Calc.fmtToolMoney(v, cur); };
+      const cell = function (v) {
+        return (v === null || v === undefined || String(v).trim() === '') ? '\u2014' : String(v);
+      };
+      const lines = Array.isArray(st.lines) ? st.lines : [];
+      const showMoney = st.mode !== 'delivery';
+      let lineTotal = 0, priced = false;
+      const body = lines.map(function (l, i) {
+        const amt = Calc.boqAmount(l.qty, l.rate);
+        if (amt !== null) { lineTotal += amt; priced = true; }
+        return '<tr>' +
+          '<td class="q-num">' + (i + 1) + '</td>' +
+          '<td class="md-line-desc">' + esc(l.name || 'Untitled line') +
+            (l.model ? '<br><span class="row-muted">' + esc(l.model) + '</span>' : '') + '</td>' +
+          '<td>' + esc(cell(l.unit)) + '</td>' +
+          '<td class="text-right">' + esc(cell(l.qty)) + '</td>' +
+          (showMoney
+            ? '<td class="text-right">' + esc(cell(l.rate)) + '</td>' +
+              '<td class="text-right">' + (amt === null ? '\u2014' : esc(money(amt))) + '</td>'
+            : '') +
+        '</tr>';
+      }).join('');
+      const table = lines.length
+        ? '<p class="md-detail-sub md-lines-title">Line items (' + lines.length + ')</p>' +
+          '<div class="md-lines"><table class="data-table"><thead><tr>' +
+            '<th class="q-num">No</th><th>Description</th><th>Unit</th><th class="text-right">Qty</th>' +
+            (showMoney ? '<th class="text-right">Rate</th><th class="text-right">Amount</th>' : '') +
+          '</tr></thead><tbody>' + body + '</tbody></table></div>'
+        : '<p class="md-empty">No line items were saved in this record.</p>';
+      const modeLabel = (ERP_MODES[st.mode] && ERP_MODES[st.mode].label) || st.mode || '';
+      const title = (st.client || '') + (st.client && st.project ? ' \u00b7 ' : '') + (st.project || '');
+      return '<h3 class="md-detail-title">' + esc(recId || '') + '</h3>' +
+        '<p class="md-detail-sub">' + (title ? esc(title) : 'Saved project / client record') + '</p>' +
+        mdField('Saved', mdWhen(Date.parse((rec && rec.savedAt) || '')), 'Date not recorded') +
+        mdField('Document mode', modeLabel) +
+        mdField('Client name', st.client) +
+        mdField('Project name', st.project) +
+        mdField('Address', st.address) +
+        mdField('Contact', st.contact) +
+        mdField('Purchaser TIN', st.clientTin) +
+        mdField('Place of supply', st.placeOfSupply) +
+        mdField('PO no', st.poNo) +
+        mdField('Reference', st.ref) +
+        mdField('Date of invoice', st.date) +
+        mdField('Currency', st.currency) +
+        (showMoney && priced ? mdField('Line total', money(lineTotal)) : '') +
+        table +
+        (actions || '');
+    }
+
+    if (kind === 'client') {
       const name = rec.clientName || rec.name || '';
       const site = rec.defaultProject ? 'Site: ' + rec.defaultProject : '';
-      box.innerHTML =
-        '<h3 class="md-detail-title">' + esc(name) + '</h3>' +
+      return '<h3 class="md-detail-title">' + esc(name) + '</h3>' +
         '<p class="md-detail-sub">' + (site || 'Saved client record') + '</p>' +
         mdField('Contact person', rec.contactPerson) +
         mdField('Contact number', rec.contactNumber) +
@@ -5356,34 +6000,101 @@
         mdField('Ship to', rec.shipTo) +
         mdField('Default currency', rec.currency) +
         mdField('Added', mdWhen(rec.addedAt), 'Date not recorded') +
-        mdManageHtml('client');
-      return;
+        (actions || '');
     }
 
     const info = dbRateInfo(rec.rate);
     const rateShown = info.state === 'set' ? Calc.fmtNum(info.value)
       : (info.state === 'invalid' ? 'Invalid \u2014 re-enter it' : 'Not set');
     const rateBlank = info.state !== 'set';
-    box.innerHTML =
-      '<h3 class="md-detail-title">' + esc(rec.sku || '') + '</h3>' +
+    return '<h3 class="md-detail-title">' + esc(rec.sku || '') + '</h3>' +
       '<p class="md-detail-sub">' + esc(rec.name || 'Untitled item') + '</p>' +
       mdField('Item name', rec.name) +
+      mdField('Model no', rec.model) +
       mdField('Unit', rec.unit) +
       mdField('Default unit rate', rateShown, '', rateBlank ? 'md-blank' : '') +
       mdField('Rate status', info.state === 'set'
         ? 'Used when this SKU is picked in the ERP'
         : dbRateTitle(info), '', 'md-note') +
       mdField('Added', mdWhen(rec.addedAt), 'Date not recorded') +
-      mdManageHtml('item');
+      (actions || '');
   }
 
-  /* The one deliberate exit from this view. Row clicks never leave it; this
-     labelled button is the only way across, and it opens the full database
-     with that record loaded into its edit form. */
-  function mdManageHtml(kind) {
+  /* The one deliberate exit from the browse view. Row clicks never leave it;
+     this labelled button is the only way across, and it opens the full database
+     with that record loaded into its edit form. The drawer on the database page
+     passes '' here instead — there is nowhere to be sent. */
+  function mdManageHtml(kind, key) {
+    /* A saved record exits INTO the ERP form — the read-only pane never edits,
+       and `erpLoadRecordById()` is the same path the ERP's own Load Record
+       button uses, so the record arrives exactly as Save Record stored it. */
+    if (kind === 'record') {
+      return '<div class="md-actions">' +
+        '<button type="button" class="btn btn-primary btn-sm md-manage" data-md-kind="record" data-md-key="' + esc(key || '') + '">' +
+          'Load in Master ERP Engine &rarr;</button></div>';
+    }
     return '<div class="md-actions">' +
       '<button type="button" class="btn btn-ghost btn-sm md-manage" data-md-kind="' + kind + '">' +
         'Manage in Item &amp; Client Database &rarr;</button></div>';
+  }
+
+  /* ── Details drawer on the Item & Client Database page ────────────────
+     A row click (anywhere but the pencil or the ✕) opens the record's details
+     in the same panel the browse view shows. The selection is stored as
+     { kind, key } rather than an index, so the drawer keeps pointing at the
+     right record after a sort, an edit or a delete — and it re-renders from
+     renderDb(), so it can never show a stale snapshot. */
+  /* `var`, not `let`: renderDb() can run from a cloud/storage event before this
+     line is evaluated, and every use below is falsy-safe. */
+  var dbDetailSel = null;
+
+  function dbDetailRecord() {
+    if (!dbDetailSel) return null;
+    const list = dbDetailSel.kind === 'client' ? db.clients : db.items;
+    for (let i = 0; i < list.length; i++) {
+      if (mdKeyFor(dbDetailSel.kind, list[i]) === dbDetailSel.key) return list[i];
+    }
+    return null;
+  }
+
+  function dbDetailIndex() {
+    if (!dbDetailSel) return -1;
+    const list = dbDetailSel.kind === 'client' ? db.clients : db.items;
+    for (let i = 0; i < list.length; i++) {
+      if (mdKeyFor(dbDetailSel.kind, list[i]) === dbDetailSel.key) return i;
+    }
+    return -1;
+  }
+
+  function renderDbDetail() {
+    const body = $('db-detail-body');
+    const overlay = $('db-detail-drawer');
+    if (!body || !overlay) return;
+    if (!dbDetailSel) return;
+    const rec = dbDetailRecord();
+    if (!rec) { closeDbDetail(); return; }      // deleted from under us
+    const kind = dbDetailSel.kind;
+    body.innerHTML = mdDetailHtml(kind, rec, '');
+    const kindEl = $('db-detail-drawer-kind');
+    if (kindEl) kindEl.textContent = (kind === 'client' ? 'Client record' : 'Item record') +
+      ' \u00b7 saved in the database above';
+    const editBtn = $('db-detail-drawer-edit');
+    if (editBtn) editBtn.textContent = kind === 'client' ? 'Edit this client' : 'Edit this item';
+  }
+
+  function openDbDetail(kind, rec) {
+    if (!rec) return;
+    const overlay = $('db-detail-drawer');
+    if (!overlay) return;
+    dbDetailSel = { kind: kind === 'client' ? 'client' : 'item', key: mdKeyFor(kind, rec) };
+    overlay.hidden = false;
+    renderDbDetail();
+  }
+
+  function closeDbDetail() {
+    dbDetailSel = null;
+    const overlay = $('db-detail-drawer');
+    if (overlay) overlay.hidden = true;
   }
 
   function renderMasterData() { renderMasterDataList(); renderMasterDataDetail(); }
@@ -5391,7 +6102,7 @@
   /** Entry point used by the Home card's rows and "View all" link.
       With no arguments the view opens on the full, uncapped list. */
   function openMasterData(kind, key) {
-    mdTab = (kind === 'client') ? 'clients' : 'items';
+    mdTab = (kind === 'client') ? 'clients' : (kind === 'record' ? 'records' : 'items');
     mdFilter = '';
     const search = $('md-search');
     if (search) search.value = '';
@@ -5450,8 +6161,7 @@
       const detail = recordDetail(e.rec);
       const label = recordLabel(e.rec);
       const lines = recordLineCount(e.rec);
-      const title = label + (detail ? ' \u00b7 ' + detail : '');
-      return '<button type="button" class="home-db-row" data-rec="' + esc(e.id) + '" title="Load this record into the Master ERP Engine">' +
+      const title = label + (detail ? ' \u00b7 ' + detail : '');        return '<button type="button" class="home-db-row" data-rec="' + esc(e.id) + '" title="View this record&rsquo;s details">' +
         '<span class="home-db-main">' +
           '<span class="home-db-title"><strong>' + esc(e.id) + '</strong></span>' +
           '<span class="home-db-sub db-mini-name" title="' + esc(title) + '">' + esc(title) + '</span>' +
@@ -5497,11 +6207,17 @@
       itemsBody.innerHTML = dbItemsBySku().map(function (pair) {
         const it = pair.it, i = pair.i;
         const info = dbRateInfo(it.rate);
-        return '<div class="db-row db-grid-items" data-id="' + i + '">' +
+        /* The whole row is a click target for the read-only details drawer
+           (see the row-click wiring); the pencil and the ✕ inside it keep their
+           own actions. tabindex makes that reachable from the keyboard, and
+           the label names what Enter does. */
+        return '<div class="db-row db-grid-items" data-id="' + i + '" tabindex="0" role="group"' +
+          ' aria-label="' + esc('Details for item ' + it.sku + ' \u2014 press Enter to open') + '">' +
           '<span class="db-sku" title="' + esc(it.sku) + '"><strong>' + esc(it.sku) + '</strong></span>' +
           '<span class="db-name" title="' + esc(it.name || '') + '">' + esc(it.name) + '</span>' +
+          '<span class="db-model" title="' + esc(it.model || '') + '">' + esc(it.model || '\u2014') + '</span>' +
           '<span class="db-unit">' + esc(it.unit) + '</span>' +
-          '<span class="db-rate qr-amount db-rate-' + info.state + '" title="' + dbRateTitle(info) + '">' +
+          '<span class="db-rate db-rate-' + info.state + '" title="' + esc(info.text + ' \u2014 ' + dbRateTitle(info)) + '">' +
             esc(info.text) + '</span>' +
           '<span class="db-del db-actions">' +
             '<button type="button" class="qr-edit db-item-edit" data-id="' + i + '" aria-label="Edit item" title="Edit item">' + toolIconSvg('edit') + '</button>' +
@@ -5518,7 +6234,8 @@
       clientBody.innerHTML = db.clients.map(function (c, i) {
         const site = c.defaultProject ? ' \u00b7 Site: ' + c.defaultProject : '';
         const fullAddress = (c.address || '\u2014') + site;
-        return '<div class="db-row db-grid-clients" data-id="' + i + '">' +
+        return '<div class="db-row db-grid-clients" data-id="' + i + '" tabindex="0" role="group"' +
+          ' aria-label="' + esc('Details for client ' + c.name + ' \u2014 press Enter to open') + '">' +
           '<span class="db-sku" title="' + esc(c.name) + '"><strong>' + esc(c.name) + '</strong></span>' +
           '<span class="db-name db-addr" title="' + esc(fullAddress) + '">' + esc(fullAddress) + '</span>' +
           '<span class="db-unit">' + esc(c.currency) + '</span>' +
@@ -5547,6 +6264,9 @@
     $('erp-client-name-list').innerHTML = db.clients.map(function (c) {
       return '<option value="' + esc(c.name) + '"></option>';
     }).join('');
+    /* An open details drawer is re-rendered from the same store, so an edit or
+       a rename is reflected in it instead of leaving a stale snapshot behind. */
+    if (dbDetailSel) renderDbDetail();
   }
 
   /* ── Edit session ────────────────────────────────────────────
@@ -5557,7 +6277,7 @@
   const dbEditing = { item: -1, client: -1 };
   let dbEditCurrency = '';
 
-  const DB_ITEM_FIELDS = ['db-item-sku', 'db-item-name', 'db-item-unit', 'db-item-rate'];
+  const DB_ITEM_FIELDS = ['db-item-sku', 'db-item-name', 'db-item-model', 'db-item-unit', 'db-item-rate'];
   const DB_CLIENT_FIELDS = ['db-client-name', 'db-client-project', 'db-client-address', 'db-client-contact',
     'db-client-contactno', 'db-client-tin', 'db-client-posupply', 'db-client-pono', 'db-client-termsdt',
     'db-client-shipto'];
@@ -5634,6 +6354,7 @@
     dbEditing.item = idx;
     $('db-item-sku').value = it.sku || '';
     $('db-item-name').value = it.name || '';
+    $('db-item-model').value = it.model || '';
     $('db-item-unit').value = it.unit || '';
     // Pre-fill with what is stored, including an unreadable value, so the
     // item can be repaired rather than silently reset.
@@ -5685,6 +6406,9 @@
     const record = {
       sku: sku,
       name: name,
+      /* Make / Model. Stored with the item so the ERP's Model No column can
+         auto-fill from the SKU exactly like the name, unit and rate do. */
+      model: $('db-item-model').value.trim(),
       unit: $('db-item-unit').value.trim() || 'Nr',
       rate: storedRateFromInput($('db-item-rate').value),
       /* The only timestamp a database record has, and the only way the KPI
@@ -5695,11 +6419,16 @@
     };
     if (editIdx > -1 && db.items[editIdx]) {
       // Update in place — never append a duplicate row.
+      const before = db.items[editIdx];
       db.items[editIdx] = Object.assign({}, db.items[editIdx], record);
       saveDb();
+      /* The record changed, so pull the edit into any open document that
+         references this SKU (see "Database → document sync"). Runs before
+         renderDb() so the toast arrives with the updated table. */
+      syncDocumentWithDbItem(before, db.items[editIdx]);
       renderDb();
       resetDbForm('item');
-      pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' updated — ' + db.items.length + ' SKUs' });
+      logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' updated — ' + db.items.length + ' SKUs' });
       renderKpis();
       updateKPICards();
       return;
@@ -5708,7 +6437,7 @@
     saveDb();
     resetDbForm('item');   // blank the form for the next entry
     renderDb();
-    pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' added — ' + db.items.length + ' SKUs' });
+    logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' added — ' + db.items.length + ' SKUs' });
     renderKpis();
     updateKPICards();
   }
@@ -5745,12 +6474,16 @@
     };
     if (editIdx > -1 && db.clients[editIdx]) {
       // Update in place — never append a duplicate row.
+      const before = db.clients[editIdx];
       db.clients[editIdx] = Object.assign({}, db.clients[editIdx], record);
       dbEditCurrency = '';
       saveDb();
+      // Same as the item side: an open document referencing this customer
+      // follows the edit rather than keeping the old details.
+      syncDocumentWithDbClient(before, db.clients[editIdx]);
       renderDb();
       resetDbForm('client');
-      pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' updated — ' + db.clients.length + ' clients' });
+      logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' updated — ' + db.clients.length + ' clients' });
       renderKpis();
       updateKPICards();
       return;
@@ -5759,7 +6492,7 @@
     saveDb();
     resetDbForm('client'); // blank the form for the next entry
     renderDb();
-    pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' added — ' + db.clients.length + ' clients' });
+    logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' added — ' + db.clients.length + ' clients' });
     renderKpis();
     updateKPICards();
   }
@@ -5851,7 +6584,17 @@
          institute line that sit beside it. */
       recipientTitle: '', recipientCompany: '',
       meta: {},
-      lines: [],           // { id, sku, name, model, unit, qty, rate }
+      // { id, sku, name, model, unit, qty, rate, src }
+      // `src` records which values the MASTER DATABASE supplied to this line,
+      // so a later edit to that database record can refresh the line without
+      // overwriting a description/unit/rate the user typed themselves.
+      lines: [],
+      /* Which client record the header was filled from, and exactly which
+         values it adopted. Same purpose as a line's `src`: it is what lets a
+         Client Database edit flow into this document while a value the user
+         typed over here stays theirs. Null = the header was not filled from
+         the database. */
+      clientSrc: null,
       discount: '', vat: '18',
       terms: '',
       /* The Library entry this working document belongs to. Empty means the
@@ -5874,12 +6617,17 @@
       if (!Calc.TOOL_CURRENCIES[out.currency]) out.currency = 'LKR';
       out.meta = (out.meta && typeof out.meta === 'object') ? out.meta : {};
       out.lines = Array.isArray(out.lines) ? out.lines : [];
+      out.clientSrc = (out.clientSrc && typeof out.clientSrc === 'object') ? out.clientSrc : null;
       /* Heal anything saved before numeric filtering existed: a qty or rate
          stored as "100 00" / "NaN" is repaired to a clean number (0 when it
          cannot be read at all) instead of being carried into the totals. */
       out.lines = out.lines.map(function (l) {
         if (!l || typeof l !== 'object') return l;
         const row = Object.assign({}, l);
+        // Make / Model was added to the item database later, so an older line
+        // may not carry the key at all — give it one and the render, the sync
+        // and the exports all read the same field.
+        row.model = dbText(row.model);
         if (row.qty !== '' && row.qty !== undefined && row.qty !== null) row.qty = String(num0(row.qty));
         if (row.rate !== '' && row.rate !== undefined && row.rate !== null) row.rate = String(num0(row.rate));
         return row;
@@ -6114,7 +6862,15 @@
 
   // Mirror of renderErpHeader: pull every live input into erpState so a
   // snapshot always captures exactly what is on screen.
+  /* The ERP inputs are the source of truth only once they have been PAINTED
+     from the state. The boot sequence runs showView() before the first
+     renderErp(), so on a cold start straight into #/erp the inputs are still
+     the empty HTML defaults — reading them back would wipe the document that
+     was just loaded from storage. This flag makes that impossible. */
+  let erpDomPainted = false;
+
   function readErpHeader() {
+    if (!erpDomPainted) return;
     const val = function (id) { const el = document.getElementById(id); return el ? el.value : undefined; };
     if (val('erp-project') !== undefined) erpState.project = val('erp-project');
     if (val('erp-client') !== undefined) erpState.client = val('erp-client');
@@ -6182,6 +6938,9 @@
       tabs[i].setAttribute('aria-selected', on ? 'true' : 'false');
     }
     renderErpModeFields();
+    // From here on the inputs mirror the state, so they may be read back
+    // (see readErpHeader).
+    erpDomPainted = true;
   }
 
   function renderErp() {
@@ -6212,14 +6971,16 @@
   }
 
   function addErpRow(sku) {
-    const row = { id: uid(), sku: sku || '', name: '', model: '', unit: 'Nr', qty: '', rate: '' };
+    const row = { id: uid(), sku: sku || '', name: '', model: '', unit: 'Nr', qty: '', rate: '', src: null };
     if (sku) {
       const it = dbFindItem(sku);
       if (it) {
         row.sku = it.sku;
         row.name = it.name;
+        row.model = dbText(it.model);
         row.unit = it.unit;
         row.rate = erpRateForItem(it);
+        row.src = erpLineSrc(it);   // what the database supplied to this line
       }
     }
     erpState.lines.push(row);
@@ -6237,17 +6998,275 @@
     if (!it) return; // unknown key — keep whatever the user typed
     row.sku = it.sku;
     row.name = it.name;
+    /* Make / Model rides with the rest of the record, so the quotation's
+       second description line and the delivery note's Model No column fill
+       in from the SKU too (see erpLineSrc). */
+    row.model = dbText(it.model);
     row.unit = it.unit;
     /* Auto-fill the Rate from the saved default. Every finite rate fills in,
        including 0 (a legitimately free line); only a missing or unreadable
        database rate leaves the cell blank. */
     row.rate = erpRateForItem(it);
+    /* Re-selecting the SKU is an explicit "take it from the database" — so the
+       line is re-linked to the record here, discarding any earlier override. */
+    row.src = erpLineSrc(it);
     sortErpLines();
     saveErp();
     renderErpRows();
     // put the cursor back on the qty cell of the same row
     const again = document.querySelector('.qr-row[data-id="' + row.id + '"] .erp-qty');
     if (again) again.focus();
+  }
+
+  /* ── Database → document sync ────────────────────────────────────────
+     THE PROBLEM THIS SOLVES
+     An in-progress document only ever holds COPIES of what the master
+     database supplied: a line's name / unit / rate at the moment its SKU was
+     picked, and the header's client fields at the moment the client was
+     chosen. Correcting the database afterwards left those copies frozen, so
+     a loaded record kept printing the old rate — the item database looked
+     like it was not feeding the invoice at all.
+
+     THE RULE, IN ONE SENTENCE
+     A database edit flows into the open document for every field that still
+     holds the value the database supplied, and a value typed by hand on the
+     document is never overwritten.
+
+     FIELD BY FIELD, NOT RECORD BY RECORD
+     `row.src` and `erpState.clientSrc` remember what the database supplied.
+     A field still equal to it is LINKED and follows the record; a field that
+     now differs was typed by hand — a deliberate per-document override — and
+     is left exactly as it is. Overriding a description for one invoice does
+     not stop the rate from following the database, and editing the database
+     does not silently undo an override.
+
+     A line re-picking its SKU is an explicit "take it from the database" and
+     re-links every field (erpFillFromSku), so there is always a way back.
+
+     DOCUMENTS SAVED BEFORE THIS EXISTED
+     They carry no provenance. For those the database's PREVIOUS value is the
+     yardstick — knowable exactly when an edit happens — so a line that was
+     plainly populated from the record does follow the edit while one typed
+     over does not. On the re-resolve paths (Load Record, entering the view)
+     there is no "previous" value to compare against, so a legacy line is only
+     ever linked where it already equals the record — which changes no value
+     and simply records its provenance for next time.
+
+     WHAT IS DELIBERATELY NOT TOUCHED
+     A finalized Library entry. Nothing here writes to History: it rewrites
+     the WORKING DRAFT (`calcmall_erp_v1`) only, so an invoice already saved to
+     the Library stays exactly as issued, historically accurate. Deleting a
+     database record likewise never edits a document — the record simply stops
+     resolving. */
+  function dbText(v) { return v === null || v === undefined ? '' : String(v); }
+
+  /* Same text, ignoring case and surrounding whitespace: a value retyped as
+     "Nr " or "nr" is still the value the database supplied. */
+  function dbSame(a, b) {
+    return dbText(a).trim().toLowerCase() === dbText(b).trim().toLowerCase();
+  }
+
+  function dbSkuKey(v) { return dbText(v).trim().toLowerCase(); }
+
+  /* What a record supplies to a document line. One shape for both the
+     "before" and the "after" side of an edit. */
+  function erpLineSrc(it) {
+    return { name: dbText(it.name), model: dbText(it.model), unit: dbText(it.unit), rate: erpRateForItem(it) };
+  }
+
+  /* Apply one record to one line. Returns how many fields changed and how many
+     were kept because they had been typed by hand. */
+  function erpApplyItemToLine(row, before, after) {
+    const src = (row.src && typeof row.src === 'object') ? row.src : erpLineSrc(before);
+    const want = erpLineSrc(after);
+    let changed = 0;
+    let kept = 0;
+    const nextSrc = {};
+    ['name', 'model', 'unit', 'rate'].forEach(function (f) {
+      if (dbSame(row[f], src[f])) {
+        if (!dbSame(row[f], want[f])) { row[f] = want[f]; changed += 1; }
+        nextSrc[f] = want[f];
+      } else {
+        kept += 1;
+        // Not linked — keep measuring against the value it WAS linked to, so
+        // this field stays an override for every later edit too.
+        nextSrc[f] = src[f];
+      }
+    });
+    row.src = nextSrc;
+    return { changed: changed, kept: kept };
+  }
+
+  /* Every line referencing this SKU, after an edit to that record. */
+  function erpSyncLinesForItem(before, after) {
+    const oldKey = dbSkuKey(before && before.sku);
+    if (!oldKey || !after) return { lines: 0, changed: 0, kept: 0, renamed: false };
+    const newSku = dbText(after.sku).trim() || dbText(before.sku).trim();
+    const renamed = dbSkuKey(newSku) !== oldKey;
+    let lines = 0;
+    let changed = 0;
+    let kept = 0;
+    erpState.lines.forEach(function (row) {
+      if (dbSkuKey(row.sku) !== oldKey) return;
+      const res = erpApplyItemToLine(row, before, after);
+      changed += res.changed;
+      kept += res.kept;
+      lines += 1;
+      // Re-keying a record is the same item under a new SKU: the lines that
+      // referenced it follow, so they still resolve afterwards.
+      if (renamed) row.sku = newSku;
+    });
+    return { lines: lines, changed: changed, kept: kept, renamed: renamed };
+  }
+
+  /* The client half: which database fields a document header mirrors. */
+  const DB_TO_ERP_CLIENT = [
+    ['clientName', 'client'],
+    ['defaultProject', 'project'],
+    ['clientAddress', 'address'],
+    ['contactPerson', 'contact'],
+    ['contactNumber', 'clientPhone'],
+    ['tinRegNo', 'clientTin'],
+    ['placeOfSupply', 'placeOfSupply'],
+    ['poNo', 'poNo'],
+    ['deliveryTerms', 'deliveryTerms'],
+    ['shipTo', 'shipTo']
+  ];
+
+  /* Apply one client record to the open header. Matches on the document's
+     client name OR the name recorded when it was selected, so a record that
+     is renamed in the database is still recognised as the same customer. */
+  function erpSyncClientForRecord(before, after) {
+    if (!before || !after) return { matched: false, changed: 0, kept: 0 };
+    const beforeName = dbText(before.clientName || before.name);
+    if (!beforeName) return { matched: false, changed: 0, kept: 0 };
+    readErpHeader();   // while the page is open, the inputs are the truth
+    const src = (erpState.clientSrc && typeof erpState.clientSrc === 'object') ? erpState.clientSrc : null;
+    const srcV = (src && src.v && typeof src.v === 'object') ? src.v : {};
+    if (!dbSame(erpState.client, beforeName) && !(src && dbSame(src.name, beforeName))) {
+      return { matched: false, changed: 0, kept: 0 };   // a different client
+    }
+    const nextV = {};
+    let changed = 0;
+    let kept = 0;
+    DB_TO_ERP_CLIENT.forEach(function (pair) {
+      const dbField = pair[0];
+      const field = pair[1];
+      const want = dbText(after[dbField]);
+      const was = Object.prototype.hasOwnProperty.call(srcV, field) ? srcV[field] : dbText(before[dbField]);
+      if (dbSame(erpState[field], was)) {
+        if (!dbSame(erpState[field], want)) { erpState[field] = want; changed += 1; }
+        nextV[field] = want;
+      } else {
+        kept += 1;
+        nextV[field] = was;
+      }
+    });
+    /* Currency goes through the tool-currency API rather than straight into
+       the state, so the banner, the money labels and every other calculator
+       stay in step. Only followed while the document still holds the
+       currency this client supplied. */
+    const curWant = dbText(after.currency);
+    const curWas = Object.prototype.hasOwnProperty.call(srcV, 'currency') ? srcV.currency : dbText(before.currency);
+    let curNow = curWas;
+    if (dbSame(erpState.currency, curWas)) {
+      if (curWant && !dbSame(curWant, curWas) && Calc.TOOL_CURRENCIES[curWant]) {
+        setToolCurrency('erp', curWant);
+        curNow = curWant;
+        changed += 1;
+      }
+    } else {
+      kept += 1;
+    }
+    nextV.currency = curNow;
+    erpState.clientSrc = { name: dbText(after.clientName || after.name) || beforeName, v: nextV };
+    return { matched: true, changed: changed, kept: kept };
+  }
+
+  /* The customer referenced by the open document, resolved against the
+     database as it stands now. */
+  function erpResolveClientFromDb() {
+    const src = (erpState.clientSrc && typeof erpState.clientSrc === 'object') ? erpState.clientSrc : null;
+    const name = dbText(erpState.client) || (src ? dbText(src.name) : '');
+    const rec = name ? dbFindClient(name) : null;
+    if (!rec) return { matched: false, changed: 0, kept: 0 };
+    return erpSyncClientForRecord(rec, rec);
+  }
+
+  /* Re-resolve the WHOLE open document against the database as it stands now.
+     Run on Load Record and on entering the engine, so an edit made in another
+     tab — or synced down from another device — is picked up too. Renders only
+     when a value actually changed, so simply opening the page never repaints
+     the sheet over hand-typed text. */
+  function erpResolveFromDb() {
+    readErpHeader();
+    let lines = 0;
+    let changed = 0;
+    let kept = 0;
+    erpState.lines.forEach(function (row) {
+      const it = dbFindItem(row.sku);
+      if (!it) return;
+      const res = erpApplyItemToLine(row, it, it);
+      lines += 1;
+      changed += res.changed;
+      kept += res.kept;
+    });
+    /* Repaint the rows BEFORE the client half reads the header back. The
+       client sync starts with readErpHeader(), which reads the inputs and the
+       row cells into the state — and with a stale table on screen that would
+       write the OLD line values straight back over the ones just refreshed
+       above (measured: the line's `src` moved to the new rate while the cell
+       itself snapped back). Ordering the render first makes the DOM agree
+       with the state before anything reads it. */
+    if (changed) renderErpRows();
+    const clientRes = erpResolveClientFromDb();
+    saveErp();   // records any provenance learned above, even with no change
+    if (changed || clientRes.changed) {
+      renderErpHeader();
+      renderErpRows();
+      schedulePdfPreview();
+      updateErpSummary();
+    }
+    return { lines: lines, changed: changed, kept: kept, client: clientRes };
+  }
+
+  /* A database save has landed. Pull it into the open document right away and
+     say what happened — including how many hand-typed values were
+     deliberately kept, so a kept value is never mistaken for a missed update.
+     The ERP inputs exist on every page, so this is live whether or not the
+     engine happens to be the visible view. */
+  function syncDocumentWithDbItem(before, after) {
+    const res = erpSyncLinesForItem(before, after);
+    if (!res.lines) return res;
+    saveErp();
+    renderErpRows();
+    schedulePdfPreview();
+    updateErpSummary();
+    const label = dbText((after && after.sku) || (before && before.sku));
+    if (res.changed) {
+      showToast('Item "' + label + '" updated — ' + res.lines + ' line' + (res.lines === 1 ? '' : 's') +
+        ' in the open document ' + (res.lines === 1 ? 'was' : 'were') + ' refreshed from the database' +
+        (res.renamed ? ' (SKU renamed too)' : '') + '.' +
+        (res.kept ? ' ' + res.kept + ' value' + (res.kept === 1 ? '' : 's') + ' you typed here kept as-is.' : ''));
+    } else if (res.kept) {
+      showToast('Item "' + label + '" updated — the open document kept its own values for ' + res.lines +
+        ' line' + (res.lines === 1 ? '' : 's') + '. Pick the SKU again to take the database values.');
+    }
+    return res;
+  }
+
+  function syncDocumentWithDbClient(before, after) {
+    const res = erpSyncClientForRecord(before, after);
+    if (!res.matched) return res;
+    saveErp();
+    renderErpHeader();
+    schedulePdfPreview();
+    if (res.changed) {
+      showToast('Client record updated — ' + res.changed + ' field' + (res.changed === 1 ? '' : 's') +
+        ' in the open document updated to match.' +
+        (res.kept ? ' ' + res.kept + ' value' + (res.kept === 1 ? '' : 's') + ' you typed here kept as-is.' : ''));
+    }
+    return res;
   }
 
   function erpApplyProject(name) {
@@ -6388,6 +7407,27 @@
           ' \u2014 this client has no saved currency of its own.');
       }
     }
+    /* Record what this selection supplied, field by field — AFTER the currency
+       handling above, so the recorded currency is the one actually applied.
+       This is the whole mechanism behind "edit the client, the open document
+       follows": a later edit refreshes the fields still holding THESE values,
+       and leaves a field you have since typed over alone. */
+    erpState.clientSrc = {
+      name: erpState.client,
+      v: {
+        client: erpState.client,
+        project: erpState.project,
+        address: erpState.address,
+        contact: erpState.contact,
+        clientPhone: erpState.clientPhone,
+        clientTin: erpState.clientTin,
+        placeOfSupply: erpState.placeOfSupply,
+        poNo: erpState.poNo,
+        deliveryTerms: erpState.deliveryTerms,
+        shipTo: erpState.shipTo,
+        currency: erpState.currency
+      }
+    };
     saveErp();
     renderErpHeader();
     renderErpRows();
@@ -6480,7 +7520,26 @@
     erpState.lines = Array.isArray(erpState.lines) ? erpState.lines : [];
     saveErp();
     setToolCurrency('erp', erpState.currency);
+    /* Reading the record is also the moment to notice that the stored master
+       database changed outside this page (another tab, or a cloud pull), so
+       the re-resolve below compares against the current records. */
+    dbMaybeReload();
+    /* Paint BEFORE the re-resolve below. `erpResolveFromDb()` starts with
+       `readErpHeader()`, which takes the live INPUTS as the truth — so
+       re-resolving first would read the previous document's header straight
+       back over the record that was just loaded, and the load would appear to
+       swap only the line items. (This was the real "Load Record doesn't
+       populate" bug: the record was loaded and then immediately overwritten.)
+       With the inputs mirroring the loaded state first, the re-resolve can
+       safely refresh what the master database still supplies. */
     renderErp();
+    /* A saved RECORD is a reusable template, not a finalized document: its
+       SKUs and client are re-resolved against the master database as it
+       stands now, so a rate corrected since the record was saved is the rate
+       this load uses. Only fields still holding what the database supplied
+       are refreshed — anything typed into the record is left alone, and a
+       Library entry (a finished document) is never touched. */
+    erpResolveFromDb();
     erpRecordMeta(id);
     if (!silent) window.alert('Record "' + id + '" loaded — header, items and totals restored.');
     return true;
@@ -6559,8 +7618,235 @@
     rate: ['rate', 'unitrate', 'unitprice', 'price', 'ratecurrency', 'rateusd', 'ratelkr']
   };
 
+  /* ── Excel writing (ExcelJS) ─────────────────────────────────────────
+     WHY A SECOND SPREADSHEET LIBRARY IS LOADED
+
+     The bundled SheetJS build can READ cell styles but silently DROPS them
+     when it writes: a cell's `s` object never reaches the file — only number
+     formats survive. Checked directly rather than assumed: a workbook written
+     with a bold, bordered, shaded cell came back with one default font and an
+     empty border. Bold rows, borders, shading and frozen panes were therefore
+     impossible through it, which is why every export arrived as a flat,
+     unstyled grid.
+
+     The work is split by DIRECTION, not by feature:
+       SheetJS  → reading (import), because it also reads legacy .xls
+       ExcelJS  → every write: styles, merges, frozen panes, live formulas
+     ------------------------------------------------------------------ */
+  const XL_FONT = 'Calibri';
+  const XL_MONEY_FMT = '#,##0.00';
+  const XL_QTY_FMT = '0.###';
+  const XL_THIN = { style: 'thin', color: { argb: 'FF000000' } };
+  const XL_BOX = { top: XL_THIN, left: XL_THIN, bottom: XL_THIN, right: XL_THIN };
+  const XL_HEAD_FILL = 'FFD9E1F2';   // table / section header shading
+  const XL_BAND_FILL = 'FFEDF1F9';   // label shading inside the info blocks
+
+  function xlReady() { return typeof ExcelJS !== 'undefined'; }
+
+  /* The house style, applied to one cell. Every option is optional, so a
+     cell can be given just the border it needs. */
+  function xlStyle(cell, o) {
+    const opts = o || {};
+    if (opts.bold || opts.italic || opts.underline || opts.size || opts.color) {
+      cell.font = {
+        name: XL_FONT,
+        bold: !!opts.bold,
+        italic: !!opts.italic,
+        underline: !!opts.underline,
+        size: opts.size || 11,
+        color: { argb: opts.color || 'FF000000' }
+      };
+    }
+    if (opts.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+    if (opts.box) cell.border = XL_BOX;
+    if (opts.align || opts.wrap || opts.valign) {
+      cell.alignment = { horizontal: opts.align || 'left', vertical: opts.valign || 'middle', wrapText: !!opts.wrap };
+    }
+    if (opts.numFmt) cell.numFmt = opts.numFmt;
+    return cell;
+  }
+
+  /* One cell. `value` may be a string, a number or a formula object
+     ({ formula, result }); null and undefined become an empty string so a
+     bordered block keeps its grid instead of collapsing. */
+  function xlPut(ws, r, c, value, opts) {
+    const cell = ws.getCell(r, c);
+    cell.value = (value === undefined || value === null) ? '' : value;
+    return xlStyle(cell, opts);
+  }
+
+  /* A merged band — or a single cell when the range is 1x1 — with the value
+     in its master cell. The style is applied to EVERY cell of the range:
+     Excel takes the fill and font from the master but draws borders per cell,
+     so a box around a merged band needs each member styled, not just the
+     first. */
+  function xlBand(ws, r1, c1, r2, c2, value, opts) {
+    if (r1 !== r2 || c1 !== c2) ws.mergeCells(r1, c1, r2, c2);
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) xlStyle(ws.getCell(r, c), opts);
+    }
+    const cell = ws.getCell(r1, c1);
+    cell.value = (value === undefined || value === null) ? '' : value;
+    return cell;
+  }
+
+  function xlWidths(ws, widths) {
+    for (let i = 0; i < widths.length; i++) ws.getColumn(i + 1).width = widths[i];
+  }
+
+  /* A4 portrait, one page wide — so an export prints like the PDF does. */
+  function xlPage(ws) {
+    ws.pageSetup = {
+      paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 }
+    };
+  }
+
+  /* A number the totals can use, from whatever the state holds. `num0` is the
+     same sanitiser the inputs use, so a spreadsheet can never contain NaN. */
+  function xlNum(v) { return Calc.round2(num0(v)); }
+
+  /* Live formula cell: the formula the user can edit, plus the value it
+     currently evaluates to so a viewer that does not recalculate still shows
+     the right figure. */
+  function xlFormula(expr, result) { return { formula: expr, sharedFormula: undefined, result: result }; }
+
+  /* ── DOWNLOAD SEAM ────────────────────────────────────────────────────
+     THE ONLY PLACE IN THE APP THAT WRITES A FILE TO DISK. Both file
+     producers (the .xlsx export and the JSON backup) come through here, so
+     there is exactly one thing to audit and one thing to switch off.
+
+     Loading the page with `?nodl=1` (or setting `window.__NEXORA_NO_DOWNLOAD
+     = true`) turns the disk write off and records what WOULD have been
+     written in `window.__nexoraDownloads` — file name, mime type, exact byte
+     length. That is a real assertion on the real bytes, with nothing written
+     to the machine, so an export can be verified repeatedly while iterating
+     instead of downloading once per attempt. Test hook, not a user feature;
+     without the flag this behaves exactly as before. */
+  function nexoraNoDownload() {
+    try {
+      if (window.__NEXORA_NO_DOWNLOAD === true) return true;
+      return /(^|[?&])nodl=1(&|$)/.test(String(window.location.search || ''));
+    } catch (e) { return false; }
+  }
+
+  function nexoraSaveFile(content, filename, mime) {
+    let blob;
+    if (content instanceof Blob) blob = content;
+    else blob = new Blob([content], { type: mime || 'application/octet-stream' });
+    if (nexoraNoDownload()) {
+      const rec = { filename: filename, type: blob.type, bytes: blob.size, at: new Date().toISOString() };
+      window.__nexoraDownloads = window.__nexoraDownloads || [];
+      window.__nexoraDownloads.push(rec);
+      console.info('[nodl] download suppressed (no file written):', filename, blob.size + ' bytes');
+      return rec;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ } }, 5000);
+    return null;
+  }
+
+  function xlDownload(buffer, filename) {
+    nexoraSaveFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  }
+
+  async function xlSave(wb, filename) {
+    let buffer = null;
+    try {
+      buffer = await wb.xlsx.writeBuffer();
+    } catch (e) {
+      showToast('Could not build the spreadsheet: ' + ((e && e.message) || e), 'error');
+      return false;
+    }
+    xlDownload(buffer, filename);
+    return true;
+  }
+
+  /* File names cannot carry a path separator or any of : * ? " < > | */
+  function xlFileName(text) {
+    return String(text || 'Document').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() + '.xlsx';
+  }
+
+  /* ── Import template ─────────────────────────────────────────────────
+     Built from the SAME field/value rows the template always shipped, but
+     written with real formatting: a shaded bold header row, a border on every
+     cell, frozen headings, and column widths sized to the content — a usable
+     form rather than a bare data dump. */
+  async function xlWriteImportTemplate(headerRows, itemRows) {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Nexora Engine';
+
+    /* Sheet 1 — the document header, as Field | Value pairs the importer
+       matches by name. The title and the one-line instruction above the table
+       match no field alias, so they are ignored on import. */
+    const h = wb.addWorksheet('Header');
+    xlWidths(h, [24, 52]);
+    let hr = 1;
+    xlBand(h, hr, 1, hr, 2, 'Nexora Engine — ERP import template',
+      { bold: true, size: 13, align: 'center', fill: XL_HEAD_FILL, box: true });
+    hr++;
+    xlBand(h, hr, 1, hr, 2, 'Fill in the Value column, then use Import Excel / CSV in the Master ERP Engine.',
+      { italic: true, size: 9, box: true, wrap: true });
+    hr++;
+    const headIdx = hr;
+    xlPut(h, hr, 1, 'Field', { bold: true, fill: XL_HEAD_FILL, box: true });
+    xlPut(h, hr, 2, 'Value', { bold: true, fill: XL_HEAD_FILL, box: true });
+    hr++;
+    for (let i = 1; i < headerRows.length; i++) {
+      xlPut(h, hr, 1, String(headerRows[i][0] === undefined ? '' : headerRows[i][0]),
+        { bold: true, fill: XL_BAND_FILL, box: true });
+      xlPut(h, hr, 2, headerRows[i][1] === undefined ? '' : headerRows[i][1], { box: true });
+      hr++;
+    }
+    h.views = [{ state: 'frozen', ySplit: headIdx }];
+
+    /* Sheet 2 — the line items. Row 1 is the header row and it is FROZEN, so
+       the column names stay on screen while the rows are filled in. */
+    const it = wb.addWorksheet('Items');
+    xlWidths(it, [14, 48, 10, 10, 15]);
+    ['SKU', 'Description', 'Unit', 'Qty', 'Rate'].forEach(function (t, i) {
+      xlPut(it, 1, i + 1, t, {
+        bold: true, fill: XL_HEAD_FILL, box: true, valign: 'middle',
+        align: (i === 3 || i === 4) ? 'right' : (i === 2 ? 'center' : 'left')
+      });
+    });
+    it.getRow(1).height = 22;
+    const itemFmt = function (c) { return c === 4 ? XL_MONEY_FMT : (c === 3 ? XL_QTY_FMT : undefined); };
+    let ir = 2;
+    for (let i = 1; i < itemRows.length; i++) {
+      const src = itemRows[i];
+      for (let c = 0; c < 5; c++) {
+        xlPut(it, ir, c + 1, src[c] === undefined ? '' : src[c], {
+          box: true,
+          align: (c === 3 || c === 4) ? 'right' : (c === 2 ? 'center' : 'left'),
+          numFmt: itemFmt(c)
+        });
+      }
+      ir++;
+    }
+    /* A few empty ruled rows so the template is usable the moment it opens.
+       The importer skips any row with no description, quantity or rate. */
+    for (let e = 0; e < 6; e++) {
+      for (let c = 0; c < 5; c++) {
+        xlPut(it, ir, c + 1, '', { box: true, numFmt: itemFmt(c) });
+      }
+      ir++;
+    }
+    it.views = [{ state: 'frozen', ySplit: 1 }];
+    xlPage(h);
+    xlPage(it);
+    await xlSave(wb, 'Nexora-Engine-ERP-import-template.xlsx');
+  }
+
   function erpImportTemplate() {
-    if (typeof XLSX === 'undefined') {
+    if (!xlReady()) {
       showToast('The spreadsheet library did not load (offline?) — the template needs one online page load.', 'error');
       return;
     }
@@ -6587,10 +7873,7 @@
       ['VLV-04', 'Gate valve 2 inch', 'No', 4, 2500],
       ['TEST-01', 'Testing & commissioning', 'Lot', 1, 15000]
     ];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(headerRows), 'Header');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(itemRows), 'Items');
-    XLSX.writeFile(wb, 'Nexora-Engine-ERP-import-template.xlsx');
+    xlWriteImportTemplate(headerRows, itemRows);
   }
 
   function erpImportFile(file) {
@@ -6929,64 +8212,553 @@
       '</div>';
   }
 
-  // Shared AOA (array of arrays) snapshot of the active document — drives
-  // both the Excel (.xlsx) and CSV exports so the two stay identical.
-  function mxSheetAoa() {
-    // The same totals the sheet prints, so an exported spreadsheet can never
-    // show a discount or VAT row the selected template does not have.
-    const t = erpDocTotals();
-    const dateStr = erpDateStr();
-    const rows = [];
-    rows.push([brandDocTitle()]);
-    if (mxLegalName() !== brandDocTitle()) rows.push([mxLegalName()]);
-    if (brand.address) rows.push(['Reg. Address: ' + brand.address]);
-    const contactLine = [brandPhone(), brandEmail(), brand.website].filter(function (v) { return v && String(v).trim() !== ''; }).join(' | ');
-    if (contactLine) rows.push(['Contact: ' + contactLine]);
-    if (brand.spec) rows.push([brand.spec]);
-    rows.push([]);
-    rows.push(['Supplier', '', 'Purchaser', '']);
-    rows.push(['Date of Invoice', dateStr, ERP_MODES[erpState.mode].noLabel || 'Doc No', erpState.ref || '']);
-    rows.push(["Supplier's TIN", brand.tin || '', "Purchaser's TIN", erpState.clientTin || '']);
-    rows.push(["Supplier's Name", mxLegalName(), "Purchaser's Name", erpState.client || '']);
-    rows.push(['Address', brand.address || '', 'Address', erpState.address || '']);
-    // Same source as the PDF: a phone extracted from the contact line, never
-    // the contact person's name.
-    rows.push(['Telephone No', brandPhone() || '', 'Telephone No', purchaserPhone()]);
-    rows.push(['Date of Supply', dateStr, 'Place of Supply', erpState.placeOfSupply || '']);
-    if (erpState.poNo) rows.push(['', '', 'PO No', erpState.poNo]);
-    rows.push([]);
-    rows.push(['NO', 'DESCRIPTION', 'UNIT', 'QTY', 'RATE (' + erpState.currency + ')', 'AMOUNT (' + erpState.currency + ')']);
-    let idx = 0;
-    erpState.lines.forEach(function (l) {
-      idx += 1;
-      // num0 through the same sanitizer the inputs use: the spreadsheet can
-      // never contain a literal "NaN" cell, and round2 keeps binary float
-      // noise (0.1 + 0.2 style tails) out of the money columns.
-      const amt = erpLineAmount(l);
-      rows.push([idx, l.name || l.sku || '', l.unit || '', Calc.round2(num0(l.qty)), Calc.round2(num0(l.rate)),
-        amt === null ? 0 : Calc.round2(amt)]);
-    });
-    rows.push([]);
-    rows.push(['', '', '', '', 'Sub Total', Calc.round2(num0(t.sub))]);
-    if (erpTemplate() === 'quotation') {
-      rows.push(['', '', '', '', 'Estimated Freight', Calc.round2(num0(t.freight))]);
-    }
-    if (t.discPct > 0) {
-      rows.push(['', '', '', '', 'Discount (' + Calc.fmtPct(t.discPct) + ')', Calc.round2(-num0(t.disc))]);
-      rows.push(['', '', '', '', 'Taxable Sub Total', Calc.round2(num0(t.net))]);
-    }
-    if (t.vatPct > 0) {
-      rows.push(['', '', '', '', Calc.fmtPct(t.vatPct) + ' VAT', Calc.round2(num0(t.vat))]);
-    }
-    rows.push(['', '', '', '', 'TOTAL', Calc.round2(num0(t.final))]);
-    const w = Calc.amountInWords(t.final) || 'Zero';
-    rows.push(['Due amount in words:', (FM_CUR_WORDS[erpState.currency] || 'Rupees') + ' ' + w + ' Only']);
-    return rows;
+  /* ── Excel export — ONE WRITER PER DOCUMENT TEMPLATE ─────────────────
+     The writer is chosen from the same `template` field the PDF templates are
+     chosen from, which is what makes an export impossible to disagree with the
+     sheet it came from:
+
+       invoice   → No / Description / Unit / Qty / Rate / Amount, then
+                   Sub Total → Discount → (amount after discount) → VAT → TOTAL
+       quotation → Item / Description of Item / Unit / Qty / Rate / Amount,
+                   then Sub Total → Estimated Freight → Total, with NO VAT,
+                   discount or TIN row anywhere (the quotation letter has none)
+       delivery  → Item No / Description of Item / Model No / Unit / Qty and
+                   NOTHING ELSE — a delivery note carries no pricing, so no
+                   Rate, Amount, Discount or VAT cell exists in it
+
+     Every calculated figure is a LIVE FORMULA over the cells above it rather
+     than a baked number, so a rate or quantity can be changed in Excel and the
+     totals follow: Amount = Qty x Rate, Sub Total = SUM(rows), VAT = net x pct,
+     Total = net + VAT. Each formula also carries the value it currently
+     evaluates to, so a viewer that does not recalculate still shows the
+     right figure.
+
+     Formatting is real, not implied: a bordered, bold, shaded header row on
+     the item grid, the letterhead and the recipient / client block merged
+     across the sheet, frozen column headings, and widths sized to content. */
+  function xlUnesc(v) {
+    /* esc() escapes five entities for the HTML sheet; a spreadsheet cell wants
+       the plain text back. `&amp;` is decoded LAST so "&amp;lt;" cannot come
+       back as a literal angle bracket. */
+    return String(v == null ? '' : v)
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&');
   }
 
-  function exportErpExcel() {
-    if (typeof XLSX === 'undefined') {
-      window.alert('The spreadsheet library did not load (offline?). Excel export needs one online page load — try again once the page has internet.');
+  /* The column grid shared by all three exports, following the reference
+     workbook's proportions: a narrow leading column, a wide description, then
+     the narrow numeric columns. */
+  /* NOTE: no width here may be exactly 9. ExcelJS treats 9 as the default
+     column width and then writes no `customWidth` flag, so that column comes
+     back unspecified after a save/load round trip (measured: a column set to
+     exactly 9 is undefined on reload while 9.5 survives). 9.5 is the intended
+     width anyway, and it is written explicitly. */
+  const XL_DOC_COLS = [7.5, 40, 9.5, 9.5, 15, 16];
+
+  function xlDocSheet(wb, name) {
+    const ws = wb.addWorksheet(name);
+    xlWidths(ws, XL_DOC_COLS);
+    xlPage(ws);
+    ws.views = [{ state: 'frozen', ySplit: 0 }];
+    return ws;
+  }
+
+  /* Rows 1-5 of every template: the same letterhead band the PDF prints,
+     each line merged across the sheet and centred exactly as the PDF
+     centres it. Row 5 is the spacer the master leaves before the title. */
+  function xlDocLetterhead(ws, d) {
+    const addr = xlUnesc(d.supplierAddress);
+    xlBand(ws, 1, 1, 1, 6, xlUnesc(d.supplierName), { bold: true, size: 15, align: 'center' });
+    xlBand(ws, 2, 1, 2, 6, addr ? 'Reg. Address: ' + addr : '', { size: 9, align: 'center' });
+    xlBand(ws, 3, 1, 3, 6, xlUnesc(d.supplierContact), { size: 9, align: 'center' });
+    xlBand(ws, 4, 1, 4, 6, xlUnesc(d.tagline), { size: 9, italic: true, align: 'center' });
+    xlBand(ws, 5, 1, 5, 6, '', { size: 6 });
+  }
+
+  /* The document's own heading — TAX INVOICE / PRO FORMA INVOICE / QUOTATION /
+     DELIVERY NOTE, taken from the selected Document Mode and never hardcoded. */
+  function xlDocTitle(ws, r, text, align) {
+    xlBand(ws, r, 1, r, 6, xlUnesc(text), {
+      bold: true, size: 14, align: align || 'center', box: true, valign: 'middle'
+    });
+    ws.getRow(r).height = 24;
+  }
+
+  /* One row of the invoice's two-column Supplier / Purchaser grid: a shaded
+     label in A with its value merged through C, then the right-hand label in D
+     with its value merged through F. Every cell is bordered, so the block
+     reads as one ruled table whatever the values are — the same two-column
+     shape the master draws, not a flat list of key/value lines. */
+  function xlDocPairRow(ws, r, lLabel, lValue, rLabel, rValue) {
+    const lab = { bold: true, fill: XL_BAND_FILL, box: true, valign: 'top', wrap: true, size: 9 };
+    const val = { box: true, valign: 'top', wrap: true, size: 9.5 };
+    xlPut(ws, r, 1, lLabel, lab);
+    xlBand(ws, r, 2, r, 3, lValue, val);
+    xlPut(ws, r, 4, rLabel, lab);
+    xlBand(ws, r, 5, r, 6, rValue, val);
+  }
+
+  /* The item grid's heading row — bordered, bold and shaded, with the money
+     columns right-aligned — and the frozen pane set under it so the column
+     names stay on screen while the rows are read. */
+  function xlItemHeadRow(ws, r, heads) {
+    const aligns = ['center', 'left', 'center', 'right', 'right', 'right'];
+    heads.forEach(function (t, i) {
+      xlPut(ws, r, i + 1, t, {
+        bold: true, fill: XL_HEAD_FILL, box: true, size: 9.5, valign: 'middle', align: aligns[i]
+      });
+    });
+    ws.getRow(r).height = 22;
+    ws.views = [{ state: 'frozen', ySplit: r }];
+    return r;
+  }
+
+  /* A totals line: label right-aligned across the description columns, figure
+     in the amount column. */
+  function xlTotalRow(ws, r, label, value, fill) {
+    xlBand(ws, r, 1, r, 5, label, { bold: true, size: 10, align: 'right', box: true, valign: 'middle', fill: fill });
+    xlPut(ws, r, 6, value, { bold: true, size: 10, align: 'right', box: true, valign: 'middle', numFmt: XL_MONEY_FMT, fill: fill });
+    return r;
+  }
+
+  /* One bordered line-item row on the six-column grid. `amountFormula` is
+     passed in so the quotation and the invoice — whose amount column sits on
+     the same column letter — share the row builder and cannot drift. */
+  function xlItemRow(ws, r, n, desc, unit, qty, rate, amount, amountFormula) {
+    xlPut(ws, r, 1, n, { box: true, size: 9, align: 'center', valign: 'top' });
+    xlPut(ws, r, 2, desc, { box: true, size: 9, valign: 'top', wrap: true });
+    xlPut(ws, r, 3, unit, { box: true, size: 9, align: 'center', valign: 'top' });
+    xlPut(ws, r, 4, qty, { box: true, size: 9, align: 'right', valign: 'top', numFmt: XL_QTY_FMT });
+    xlPut(ws, r, 5, rate, { box: true, size: 9, align: 'right', valign: 'top', numFmt: XL_MONEY_FMT });
+    xlPut(ws, r, 6, amountFormula ? xlFormula(amountFormula, amount) : amount,
+      { box: true, size: 9, align: 'right', valign: 'top', numFmt: XL_MONEY_FMT });
+  }
+
+  /* The footer every template closes with, in the sheet's own words. */
+  function xlDocWords(ws, r, d) {
+    xlBand(ws, r, 1, r, 6, 'Due amount in words : ' + xlUnesc(d.amountInWords),
+      { box: true, wrap: true, size: 9.5, italic: true });
+    return r + 1;
+  }
+
+  /* ══ Template 1 · Tax / Commercial Invoice + Pro Forma Invoice ══ */
+  function xlInvoiceSheet(wb, d) {
+    const ws = xlDocSheet(wb, 'Invoice');
+    const cur = d.currencyCode || 'LKR';
+    xlDocLetterhead(ws, d);
+    xlDocTitle(ws, 6, d.documentType);
+
+    /* The Supplier / Purchaser grid, in the invoice's own field order. */
+    let r = 7;
+    xlDocPairRow(ws, r++, 'Date of Invoice', xlUnesc(d.invoiceDate), xlUnesc(d.docNoLabel), xlUnesc(d.docNo));
+    xlDocPairRow(ws, r++, "Supplier's TIN", xlUnesc(d.supplierTin), "Purchaser's TIN", xlUnesc(d.clientTin));
+    xlDocPairRow(ws, r++, "Supplier's Name", xlUnesc(d.supplierName), "Purchaser's Name", xlUnesc(d.clientName));
+    xlDocPairRow(ws, r++, 'Address', xlUnesc(d.supplierAddress), 'Address', xlUnesc(d.clientAddress));
+    xlDocPairRow(ws, r++, 'Telephone No', xlUnesc(d.supplierPhone), 'Telephone No', xlUnesc(d.clientPhone));
+    xlDocPairRow(ws, r++, 'Date of Supply', xlUnesc(d.supplyDate), 'Place of Supply', xlUnesc(d.placeOfSupply));
+    if (d.poNo) xlDocPairRow(ws, r++, 'PO No', xlUnesc(d.poNo), '', '');
+
+    /* Additional Information — one full-width band (the sheet's own box). */
+    r++;
+    xlBand(ws, r, 1, r, 6, 'Additional Information : ' + (xlUnesc(d.projectName) || xlUnesc(d.poNo)),
+      { box: true, wrap: true, size: 9.5, valign: 'top' });
+    r++;
+
+    xlItemHeadRow(ws, r, ['No', 'Description', 'Unit', 'Qty', 'Rate (' + cur + ')', 'Amount (' + cur + ')']);
+    const first = r + 1;
+    let rr = first;
+    d.items.forEach(function (it, i) {
+      const qty = Calc.round2(num0(it.qty));
+      const rate = Calc.round2(num0(it.rate));
+      xlItemRow(ws, rr, i + 1, xlUnesc(it.description), xlUnesc(it.unit), qty, rate,
+        Calc.round2(qty * rate), 'D' + rr + '*E' + rr);
+      rr++;
+    });
+    const last = Math.max(first, rr - 1);
+
+    /* Totals. The discount / VAT rows appear only when that percentage is
+       actually set, exactly as the sheet omits them — and each figure is a
+       formula over the cells above it, so the totals are live. */
+    r = rr;
+    const subCell = 'F' + r;
+    xlTotalRow(ws, r, 'Sub Total', xlFormula('SUM(F' + first + ':F' + last + ')', Calc.round2(num0(d.subTotal))));
+    let netCell = subCell;
+    r++;
+    const discPct = num0(d.discountPct);
+    if (discPct > 0) {
+      xlTotalRow(ws, r, 'Discount (' + Calc.fmtPct(discPct) + ')',
+        xlFormula('-' + subCell + '*' + discPct + '%', -Calc.round2(num0(d.discount))));
+      const discCell = 'F' + r;
+      r++;
+      xlTotalRow(ws, r, '', xlFormula(subCell + '+' + discCell, Calc.round2(num0(d.netTotal))));
+      netCell = 'F' + r;
+      r++;
+    }
+    const vatPct = num0(d.vatPct);
+    let vatCell = '';
+    if (vatPct > 0) {
+      xlTotalRow(ws, r, Calc.fmtPct(vatPct) + ' VAT', xlFormula(netCell + '*' + vatPct + '%', Calc.round2(num0(d.vat))));
+      vatCell = 'F' + r;
+      r++;
+    }
+    xlTotalRow(ws, r, 'TOTAL', xlFormula(netCell + (vatCell ? '+' + vatCell : ''), Calc.round2(num0(d.grandTotal))));
+    r += 2;
+
+    r = xlDocWords(ws, r, d);
+    xlBand(ws, r, 1, r, 6, 'Thanking you for making business with us and assuring you our very best services at all times',
+      { italic: true, size: 9, align: 'center', box: true, wrap: true });
+    r++;
+    xlBand(ws, r, 1, r, 6, 'On Behalf of ' + xlUnesc(d.supplierName) + ',', { size: 9.5 });
+    r += 2;
+    xlBand(ws, r, 1, r, 6, 'Authorized Signatory', { bold: true, size: 9.5 });
+    return ws;
+  }
+
+  /* ══ Template 2 · Quotation / Offer (letter style) ══ */
+  function xlQuotationSheet(wb, d) {
+    const ws = xlDocSheet(wb, 'Quotation');
+    const cur = d.currencyCode || 'LKR';
+    xlDocLetterhead(ws, d);
+
+    /* Date written out in full (left) and Our Ref (right) — one row, two
+       merged bands — because a quotation's reference is "Our Ref", not the
+       invoice's boxed "Quotation No". */
+    let r = 6;
+    xlBand(ws, r, 1, r, 3, 'Date : ' + xlUnesc(d.longDate || d.invoiceDate), { size: 9.5, bold: true });
+    xlBand(ws, r, 4, r, 6, 'Our Ref : ' + xlUnesc(d.docNo), { size: 9.5, bold: true, align: 'right' });
+    r += 2;
+
+    /* Recipient address block, laid out like a letter — never boxed fields. */
+    xlBand(ws, r, 1, r, 3, xlUnesc(d.clientName), { size: 9.5, bold: true });
+    r++;
+    xlBand(ws, r, 1, r, 3, xlUnesc(d.recipientTitle), { size: 9.5 });
+    r++;
+    xlBand(ws, r, 1, r, 3, xlUnesc(d.recipientCompany), { size: 9.5 });
+    r++;
+    xlBand(ws, r, 1, r, 4, xlUnesc(d.clientAddress), { size: 9.5, wrap: true, valign: 'top' });
+    r += 2;
+
+    xlBand(ws, r, 1, r, 6, xlUnesc(d.salutation) || 'Dear Sir,', { size: 9.5 });
+    r += 2;
+    /* Subject — centred, bold, underlined: the PURPOSE of the offer. */
+    xlBand(ws, r, 1, r, 6, xlUnesc(d.subject), { size: 11, bold: true, underline: true, align: 'center' });
+    r += 2;
+
+    xlItemHeadRow(ws, r, ['Item', 'Description of Item', 'Unit', 'Qty', 'Rate (' + cur + ')', 'Amount (' + cur + ')']);
+    const first = r + 1;
+    let rr = first;
+    d.items.forEach(function (it, i) {
+      /* The Item column is the row number, and the description carries the
+         optional "Make / Model" line the letter prints beneath the name. */
+      let desc = xlUnesc(it.name || it.description);
+      if (it.model) desc += '\nMake / Model: ' + xlUnesc(it.model);
+      const qty = Calc.round2(num0(it.qty));
+      const rate = Calc.round2(num0(it.rate));
+      xlItemRow(ws, rr, i + 1, desc, xlUnesc(it.unit), qty, rate,
+        Calc.round2(qty * rate), 'D' + rr + '*E' + rr);
+      rr++;
+    });
+    const last = Math.max(first, rr - 1);
+
+    /* Sub Total → Estimated Freight → Total. NO discount and NO VAT: the
+       quotation letter has no such lines, so this sheet has no such cells.
+       Freight is a figure the user typed, so it stays a literal; the two
+       figures that depend on the table are formulas. */
+    r = rr;
+    xlTotalRow(ws, r, 'Sub Total', xlFormula('SUM(F' + first + ':F' + last + ')', Calc.round2(num0(d.subTotal))));
+    const subCell = 'F' + r;
+    r++;
+    xlTotalRow(ws, r, 'Estimated Freight', Calc.round2(num0(d.freight)));
+    const freightCell = 'F' + r;
+    r++;
+    xlTotalRow(ws, r, 'Total', xlFormula(subCell + '+' + freightCell, Calc.round2(num0(d.grandTotal))));
+    r += 2;
+
+    /* Terms & Conditions — colon-separated labels, in the letter's order. */
+    xlBand(ws, r, 1, r, 6, 'Terms & Conditions', { bold: true, underline: true, size: 9.5 });
+    r++;
+    [['Price', d.priceBasis], ['Payment', d.payment], ['Delivery', d.deliveryTerm], ['Validity', d.validity]]
+      .forEach(function (pair) {
+        xlPut(ws, r, 1, pair[0] + ' :', { bold: true, size: 9.5, valign: 'top' });
+        xlBand(ws, r, 2, r, 6, xlUnesc(pair[1]), { size: 9.5, wrap: true, valign: 'top' });
+        r++;
+      });
+    if (d.terms) {
+      xlBand(ws, r, 1, r, 6, xlUnesc(d.terms), { size: 9.5, wrap: true, valign: 'top' });
+      r++;
+    }
+    r++;
+    xlBand(ws, r, 1, r, 6, 'We assure you with our very best services at all times.', { italic: true, size: 9.5 });
+    r += 2;
+    xlBand(ws, r, 1, r, 6, 'Thanking you,', { size: 9.5 });
+    r += 3;
+    xlBand(ws, r, 1, r, 6, xlUnesc(d.preparedBy), { bold: true, size: 9.5 });
+    r++;
+    xlBand(ws, r, 1, r, 6, xlUnesc(d.preparedTitle), { size: 9.5 });
+    r++;
+    xlBand(ws, r, 1, r, 6, xlUnesc(d.supplierName), { size: 9.5 });
+    return ws;
+  }
+
+  /* ══ Template 3 · Delivery Note (receipt / form style) ══ */
+  function xlDeliverySheet(wb, d) {
+    const ws = xlDocSheet(wb, 'Delivery Note');
+    /* Five columns of content: a delivery note has no money columns at all,
+       so the amount column is not merely empty — it does not exist. */
+    xlWidths(ws, [7.5, 46, 24, 10, 10, 6]);
+    xlDocLetterhead(ws, d);
+    xlBand(ws, 6, 1, 6, 5, xlUnesc(d.documentType) || 'DELIVERY NOTE',
+      { bold: true, size: 14, align: 'right', box: true, valign: 'middle' });
+    ws.getRow(6).height = 24;
+
+    let r = 8;
+    xlBand(ws, r, 1, r, 6, 'Delivery Details', { bold: true, underline: true, size: 9.5 });
+    r++;
+    xlDocPairRow(ws, r++, 'Institute', xlUnesc(d.clientName), 'Date', xlUnesc(d.invoiceDate));
+    xlDocPairRow(ws, r++, 'Address', xlUnesc(d.clientAddress), '', '');
+    xlDocPairRow(ws, r++, 'Contact', xlUnesc(d.clientPhone), 'Our Ref', xlUnesc(d.docNo));
+    xlDocPairRow(ws, r++, 'Project', xlUnesc(d.projectName), '', '');
+    r++;
+
+    /* Five headings over a five-column table: no sixth column exists, so no
+       Rate, Amount, Discount or VAT heading can appear here. */
+    xlItemHeadRow(ws, r, ['Item No', 'Description of Item', 'Model No', 'Unit', 'Qty']);
+    const first = r + 1;
+    let rr = first;
+    d.items.forEach(function (it, i) {
+      xlPut(ws, rr, 1, i + 1, { box: true, size: 9, align: 'center', valign: 'top' });
+      xlPut(ws, rr, 2, xlUnesc(it.name || it.description), { box: true, size: 9, valign: 'top', wrap: true });
+      xlPut(ws, rr, 3, xlUnesc(it.model), { box: true, size: 9, align: 'center', valign: 'top' });
+      xlPut(ws, rr, 4, xlUnesc(it.unit), { box: true, size: 9, align: 'center', valign: 'top' });
+      xlPut(ws, rr, 5, Calc.round2(num0(it.qty)), { box: true, size: 9, align: 'right', valign: 'top', numFmt: XL_QTY_FMT });
+      rr++;
+    });
+    r = rr + 1;
+
+    xlBand(ws, r, 1, r, 6, 'Issued By :', { bold: true, underline: true, size: 9.5 });
+    r++;
+    xlBand(ws, r, 1, r, 3, xlUnesc(d.issuedBy), { box: true, size: 9.5, valign: 'middle' });
+    r += 2;
+
+    xlBand(ws, r, 1, r, 6, 'Remarks', { bold: true, underline: true, size: 9.5 });
+    r++;
+    const remarks = xlUnesc(d.remarks);
+    xlBand(ws, r, 1, r, 6, remarks, { box: true, size: 9.5, wrap: true, valign: 'top' });
+    r++;
+    xlBand(ws, r, 1, r, 6, '', { box: true, size: 9.5 });
+    r += 2;
+
+    xlBand(ws, r, 1, r, 6, 'We herewith confirm the receipt of above items are in good condition and complied with the specifications in the offer.',
+      { italic: true, size: 9.5, wrap: true, valign: 'top' });
+    r += 2;
+
+    /* Signature block — Name / Signature / NIC No / Date, for the receiving
+       party to complete on paper. */
+    [['Name', ''], ['Signature', ''], ['NIC No', xlUnesc(d.nicNo)], ['Date', '']].forEach(function (pair) {
+      xlPut(ws, r, 1, pair[0] + ' :', { bold: true, size: 9.5, valign: 'middle' });
+      xlBand(ws, r, 2, r, 3, pair[1], { box: true, size: 9.5, valign: 'middle' });
+      r++;
+    });
+    return ws;
+  }
+
+  const XL_DOC_WRITERS = { invoice: xlInvoiceSheet, quotation: xlQuotationSheet, delivery: xlDeliverySheet };
+
+  /* ── Excel PREVIEW — what the .xlsx will contain ──────────────────
+     "Export as Excel" used to jump straight to a Save As dialog, so the sheet
+     could only be judged after the file existed. The preview is shown first,
+     and it is NOT a second description of the document: the template builders
+     are run against a RECORDING worksheet, so the preview is drawn from the
+     very cells, merges, fills and number formats ExcelJS is about to write.
+     One implementation, two outputs — there is nothing to drift. */
+  function xlRecordSheet(name) {
+    const rec = {
+      name: name,
+      cells: {},     // 'r,c' → { value, font, fill, border, alignment, numFmt }
+      cols: {},
+      rows: {},
+      merges: [],
+      maxRow: 0,
+      maxCol: 0,
+      pageSetup: null,
+      views: null,
+      /* Exactly the surface xlPut / xlBand / xlStyle touch. A recorded cell
+         collects the same style objects xlStyle hands an ExcelJS cell, which
+         is what the preview paints. */
+      getCell: function (r, c) {
+        const k = r + ',' + c;
+        if (!rec.cells[k]) rec.cells[k] = { r: r, c: c, value: '' };
+        if (r > rec.maxRow) rec.maxRow = r;
+        if (c > rec.maxCol) rec.maxCol = c;
+        return rec.cells[k];
+      },
+      mergeCells: function (r1, c1, r2, c2) { rec.merges.push({ r1: r1, c1: c1, r2: r2, c2: c2 }); },
+      getColumn: function (c) {
+        if (!rec.cols[c]) rec.cols[c] = { width: 9 };
+        if (c > rec.maxCol) rec.maxCol = c;
+        return rec.cols[c];
+      },
+      getRow: function (r) {
+        if (!rec.rows[r]) rec.rows[r] = { height: 15 };
+        if (r > rec.maxRow) rec.maxRow = r;
+        return rec.rows[r];
+      }
+    };
+    return rec;
+  }
+
+  /* Run the REAL builder against the recorder — the sheet description the file
+     is made from. */
+  function xlDocPlan(d) {
+    const fake = {
+      creator: '', calcProperties: {}, sheets: [],
+      addWorksheet: function (n) { const s = xlRecordSheet(n); this.sheets.push(s); return s; }
+    };
+    (XL_DOC_WRITERS[d.template] || xlInvoiceSheet)(fake, d);
+    return fake.sheets[fake.sheets.length - 1];
+  }
+
+  function xlArgbToHex(argb) {
+    const s = String(argb == null ? '' : argb).replace(/^#/, '');
+    return '#' + (s.length === 8 ? s.slice(2) : s);
+  }
+
+  /* The figure a viewer that does not recalculate would show: a formula cell's
+     cached `result`, then the cell's own number format. */
+  function xlCellText(v, numFmt) {
+    if (v && typeof v === 'object' && 'formula' in v) return xlCellText(v.result, numFmt);
+    if (v === undefined || v === null) return '';
+    if (typeof v !== 'number' || !isFinite(v)) return String(v);
+    if (numFmt === XL_MONEY_FMT) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return String(Math.round(v * 1000) / 1000);
+  }
+
+  /* The sheet as a read-only ruled table: merged bands span, fills/weights are
+     the real ones, and a formula cell is flagged with its formula so the user
+     can see the figure is calculated rather than typed. */
+  function xlSheetPreviewHtml(sheet) {
+    if (!sheet) return '';
+    const covered = {};
+    const spans = {};
+    sheet.merges.forEach(function (m) {
+      spans[m.r1 + ',' + m.c1] = { rs: m.r2 - m.r1 + 1, cs: m.c2 - m.c1 + 1 };
+      for (let r = m.r1; r <= m.r2; r++) {
+        for (let c = m.c1; c <= m.c2; c++) {
+          if (r === m.r1 && c === m.c1) continue;
+          covered[r + ',' + c] = true;
+        }
+      }
+    });
+
+    let cols = '';
+    for (let c = 1; c <= sheet.maxCol; c++) {
+      const w = (sheet.cols[c] && sheet.cols[c].width) || 9;
+      cols += '<col style="width:' + Math.max(26, Math.round(w * 7.2 + 6)) + 'px">';
+    }
+
+    let body = '';
+    for (let r = 1; r <= sheet.maxRow; r++) {
+      let tds = '';
+      for (let c = 1; c <= sheet.maxCol; c++) {
+        if (covered[r + ',' + c]) continue;
+        const cell = sheet.cells[r + ',' + c];
+        const sp = spans[r + ',' + c];
+        const value = cell ? cell.value : '';
+        const isFormula = !!(value && typeof value === 'object' && 'formula' in value);
+        const st = [];
+        if (cell && cell.font) {
+          if (cell.font.bold) st.push('font-weight:700');
+          if (cell.font.italic) st.push('font-style:italic');
+          if (cell.font.underline) st.push('text-decoration:underline');
+          if (cell.font.size) st.push('font-size:' + Math.max(8, cell.font.size) + 'px');
+        }
+        if (cell && cell.fill && cell.fill.fgColor) st.push('background:' + xlArgbToHex(cell.fill.fgColor.argb));
+        if (cell && cell.border) st.push('border:1px solid rgba(15,23,42,0.6)');
+        if (cell && cell.alignment) {
+          st.push('text-align:' + (cell.alignment.horizontal || 'left'));
+          st.push('vertical-align:' + (cell.alignment.vertical === 'top' ? 'top' : (cell.alignment.vertical === 'middle' ? 'middle' : 'bottom')));
+        }
+        tds += '<td' + (sp ? ' colspan="' + sp.cs + '"' + (sp.rs > 1 ? ' rowspan="' + sp.rs + '"' : '') : '') +
+          (st.length ? ' style="' + st.join(';') + '"' : '') +
+          (isFormula ? ' class="xl-formula" title="Live formula: =' + esc(value.formula) + '"' : '') +
+          '>' + esc(xlCellText(value, cell && cell.numFmt)) + '</td>';
+      }
+      const h = sheet.rows[r] && sheet.rows[r].height;
+      body += '<tr' + (h ? ' style="height:' + Math.round(h * 1.33) + 'px"' : '') + '>' + tds + '</tr>';
+    }
+    return '<table class="xl-sheet"><colgroup>' + cols + '</colgroup><tbody>' + body + '</tbody></table>';
+  }
+
+  /* Show the sheet and resolve TRUE only if the user asks for the download.
+     If the modal is missing for any reason the export proceeds rather than
+     being silently blocked — a preview must never become a dead end. */
+  function previewErpExcel() {
+    const modal = $('xl-preview-modal');
+    const host = $('xl-preview-sheet');
+    const note = $('xl-preview-note');
+    const meta = $('xl-preview-meta');
+    const dl = $('xl-preview-download');
+    const cancelBtn = $('xl-preview-cancel');
+    const closeBtn = $('xl-preview-close');
+    const titleEl = $('xl-preview-title');
+    if (!modal || !host || !dl || !cancelBtn) return Promise.resolve(true);
+
+    let d = null;
+    let sheet = null;
+    try {
+      d = erpDocData();
+      sheet = xlDocPlan(d);
+    } catch (e) {
+      return Promise.resolve(true);
+    }
+    if (!sheet) return Promise.resolve(true);
+
+    const docTitle = (xlUnesc(d.documentType) + ' ' + xlUnesc(d.docNo)).trim() || 'Document';
+    const fileName = xlFileName(docTitle);
+    if (titleEl) titleEl.textContent = 'Excel preview — ' + docTitle;
+    if (note) {
+      note.textContent = 'This is the sheet that will be saved, drawn from the same cells the .xlsx '
+        + 'is written from: ' + sheet.maxCol + ' columns x ' + sheet.maxRow + ' rows on sheet "' + sheet.name
+        + '", A4 portrait fit to one page wide. Amount, Sub Total, VAT and TOTAL are live formulas rather than '
+        + 'fixed numbers — hover a boxed figure to see it. Nothing downloads until you click Download.';
+    }
+    if (meta) meta.textContent = fileName + ' · values in ' + (d.currencyCode || 'LKR');
+    host.innerHTML = xlSheetPreviewHtml(sheet);
+
+    modal.hidden = false;
+    try { dl.focus(); } catch (e) { /* ignore */ }
+
+    return new Promise(function (resolve) {
+      const done = function (ok) {
+        document.removeEventListener('keydown', onKey, true);
+        dl.removeEventListener('click', onDownload);
+        cancelBtn.removeEventListener('click', onCancel);
+        if (closeBtn) closeBtn.removeEventListener('click', onCancel);
+        modal.removeEventListener('click', onBackdrop);
+        modal.hidden = true;
+        resolve(ok);
+      };
+      const onDownload = function () { done(true); };
+      const onCancel = function () { done(false); };
+      const onBackdrop = function (e) { if (e.target === modal) done(false); };
+      const onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); done(false); }
+        else if (e.key === 'Enter' && document.activeElement === dl) { e.preventDefault(); done(true); }
+      };
+      dl.addEventListener('click', onDownload);
+      cancelBtn.addEventListener('click', onCancel);
+      if (closeBtn) closeBtn.addEventListener('click', onCancel);
+      modal.addEventListener('click', onBackdrop);
+      document.addEventListener('keydown', onKey, true);
+    });
+  }
+
+  async function exportErpExcel() {
+    if (!xlReady()) {
+      window.alert('The spreadsheet library did not load (offline?). Excel export needs one online page load - try again once the page has internet.');
       return;
     }
     if (!erpState.lines.length) {
@@ -6995,12 +8767,21 @@
       err.hidden = false;
       return;
     }
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(mxSheetAoa());
-    ws['!cols'] = [{ wch: 6 }, { wch: 42 }, { wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 18 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Document');
-    XLSX.writeFile(wb, (ERP_MODES[erpState.mode].doc + ' ' + (erpState.ref || '')).trim() + '.xlsx');
-    erpRefreshLibraryEntry();   // refresh a saved entry; never create one
+    /* Review first, download only on an explicit confirm. */
+    const go = await previewErpExcel();
+    if (!go) return;
+    /* The SAME data the PDF is built from, so the two cannot disagree. */
+    const d = erpDocData();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Nexora Engine';
+    /* Excel recalculates every formula when the file opens, so the Amount and
+       the totals are never a stale cached figure. */
+    wb.calcProperties.fullCalcOnLoad = true;
+    (XL_DOC_WRITERS[d.template] || xlInvoiceSheet)(wb, d);
+    const title = (xlUnesc(d.documentType) + ' ' + xlUnesc(d.docNo)).trim();
+    xlSave(wb, xlFileName(title || 'Document')).then(function (ok) {
+      if (ok) erpRefreshLibraryEntry();   // refresh a saved entry; never create one
+    });
   }
 
   // The template prefixes the site with 'www.' — strip any protocol / www.
@@ -8167,7 +9948,13 @@
     try { if (input.showPicker) input.showPicker(); } catch (e) { /* ignore */ }
   }
 
-  function buildErpDoc() {
+  /* The ONE description of the document currently being built. The printed
+     sheet and every spreadsheet export are generated from this same object,
+     which is what stops an export from drifting away from the PDF: a mode
+     that has no rate column in the sheet has no rate column in the
+     spreadsheet either, because both read the same `template` field and the
+     same item rows. */
+  function erpDocData() {
     const mode = ERP_MODES[erpState.mode];
     // erpDocTotals() is erpTotals() for the invoice modes and the
     // Sub-total + Freight figure for a quotation, so the sheet, the summary
@@ -8204,11 +9991,9 @@
     const curWord = FM_CUR_WORDS[erpState.currency] || 'Rupees';
     const inWords = curWord + ' "' + (Calc.amountInWords(t.final) || 'Zero') + '" Only';
 
-    // One self-contained document — the template owns the table, totals and
-    // footer, so nothing is spliced in afterwards.
-    pdfPreviewHtml =
-      '<div class="quo-doc mx-doc">' +
-        generatePrintHTML({
+    // One self-contained document. Returned as plain data — the template (and
+    // each spreadsheet writer) owns its own table, totals and footer.
+    return {
           /* Only the supplier's OWN artwork is ever drawn: an uploaded
              full-width letterhead replaces the header, otherwise their logo
              fills the master's fixed logo region and the header text is
@@ -8269,6 +10054,9 @@
           // `grandTotal` mean the same thing in both layouts.
           subTotal: t.sub,
           discount: t.disc || 0,
+          // The PERCENTAGE (not the amount), so a spreadsheet can write the
+          // Discount label and its live "-sub * pct%" formula.
+          discountPct: t.discPct || 0,
           netTotal: t.net || 0,
           vatPct: t.vatPct || 0,
           vat: t.vat || 0,
@@ -8276,8 +10064,11 @@
           grandTotal: t.final,
           currencyCode: erpState.currency,
           amountInWords: esc(inWords)
-        }) +
-      '</div>';
+        };
+  }
+
+  function buildErpDoc() {
+    pdfPreviewHtml = '<div class="quo-doc mx-doc">' + generatePrintHTML(erpDocData()) + '</div>';
     // Offscreen copy (keeps every legacy/history path that reads #erp-doc
     // working) plus the visible sheet the user can type into.
     $('erp-doc').innerHTML = pdfPreviewHtml;
@@ -8316,12 +10107,18 @@
      a saved reusable RECORD (Save Record) is not a Library entry at all. */
   function erpLibraryPayload() {
     const t = erpDocTotals();
+    const recEl = $('erp-record-id');
     return {
       type: 'pdf', tool: 'erp',
       toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
       title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
       total: erpDocType() ? erpMoney(t.final) : '',
       client: erpState.client || '',
+      project: erpState.project || '',
+      /* The Primary Key / Record ID from the Project/Client Header names the
+         JOB, so the Library can tell ten versions of one project apart from
+         ten different projects. */
+      recordId: recEl ? recEl.value.trim() : '',
       ref: erpState.ref || ''
     };
   }
@@ -8336,7 +10133,7 @@
     try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
   }
 
-  // Keep drafts only for entries that still exist (mirrors pushHistory).
+  // Keep drafts only for Library entries that still exist.
   function pruneDrafts() {
     const live = {};
     for (let i = 0; i < history.length; i++) {
@@ -8345,7 +10142,86 @@
     draftStore = live;
   }
 
-  function erpSaveToLibrary() {
+  /* ── Revision cap: warn at 3 versions of one job ──────────────────
+     Re-saving a revised quote is legitimate, so this is a WARNING, never a
+     block and never a deletion. The job is identified by the Primary Key /
+     Record ID when the document has one, and by client + project name when
+     it does not. */
+  const LIBRARY_VERSION_WARN_AT = 3;
+
+  /* One job, one key — used by the ERP and by every mini-tool, so "3 versions
+     of this project" means the same thing everywhere. The job is named by the
+     Primary Key / Record ID when the document has one, and by client +
+     project/title when it does not; the tool id is part of the key so two
+     tools can never group each other's documents. */
+  function libraryJobKey(tool, rec) {
+    const t = String(tool || '');
+    const id = dbText(rec && rec.recordId).trim().toLowerCase();
+    if (id) return t + '|rec:' + id;
+    const c = dbText(rec && rec.client).trim().toLowerCase();
+    const p = dbText(rec && (rec.project || rec.title)).trim().toLowerCase();
+    return t + '|cp:' + c + '\u0001' + p;
+  }
+
+  function libraryVersionCount(tool, key) {
+    let n = 0;
+    for (let i = 0; i < history.length; i++) {
+      const h = history[i];
+      if (!h || h.tool !== tool) continue;
+      if (libraryJobKey(tool, h) === key) n++;
+    }
+    return n;
+  }
+
+  function erpLibraryKey(rec) { return libraryJobKey('erp', rec); }
+  function erpLibraryVersionCount(key) { return libraryVersionCount('erp', key); }
+
+  /* ── Automatic expiry: opt-in, per document ───────────────────────
+     A Library entry is KEPT FOREVER unless the user has switched auto-expiry
+     on for that one row (`autoExpire === true`). Flagged rows are removed
+     once they have been untouched for the inactivity window — "untouched"
+     meaning neither reopened nor re-saved (`touchedAt`). A finalized invoice
+     or quotation is therefore never deleted for being old; only a document
+     the user explicitly flagged for it is ever swept, and the sweep reports
+     what it removed. */
+  const LIBRARY_EXPIRE_DAYS = 30;
+  const LIBRARY_EXPIRE_MS = LIBRARY_EXPIRE_DAYS * 24 * 60 * 60 * 1000;
+
+  function libraryExpiryDue(h, now) {
+    if (!h || h.autoExpire !== true) return false;
+    const touched = Number(h.touchedAt || h.at || 0);
+    if (!(touched > 0)) return true;   // flagged with no clock: age unknown, treat as due
+    return (now - touched) > LIBRARY_EXPIRE_MS;
+  }
+
+  /* How many flagged documents the boot sweep removed (0 in the normal case,
+     since nothing is flagged unless the user flagged it). */
+  let libraryExpiredOnBoot = 0;
+
+  function sweepExpiredLibrary() {
+    const now = Date.now();
+    const keep = [];
+    const gone = [];
+    for (let i = 0; i < history.length; i++) {
+      if (libraryExpiryDue(history[i], now)) gone.push(history[i]);
+      else keep.push(history[i]);
+    }
+    if (!gone.length) return 0;
+    history = keep;
+    for (let i = 0; i < gone.length; i++) delete draftStore[gone[i].id];
+    saveHistory();
+    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
+    return gone.length;
+  }
+
+  /* Opening or re-downloading a document counts as activity for its clock. */
+  function touchLibraryEntry(h) {
+    if (!h) return;
+    h.touchedAt = Date.now();
+    saveHistory();
+  }
+
+  async function erpSaveToLibrary() {
     const err = $('erp-error');
     if (!erpState.lines.length) {
       if (err) { err.textContent = 'Add at least one item before saving the document to the Library.'; err.hidden = false; }
@@ -8358,6 +10234,23 @@
       ? history.find(function (h) { return h.id === erpState.libraryId; })
       : null;
 
+    if (!existing) {
+      /* One job, many versions. Past the cap, ask before adding another row —
+         cancellable, and nothing is removed either way. */
+      const versions = erpLibraryVersionCount(erpLibraryKey(payload));
+      if (versions >= LIBRARY_VERSION_WARN_AT) {
+        const label = payload.recordId || payload.project || payload.client || 'This project';
+        const go = await confirmAction({
+          title: 'Save another version?',
+          message: '“' + label + '” already has ' + versions + ' saved versions in your Library. Save another one anyway? Nothing is deleted — you can remove older versions from the Library whenever you like.',
+          confirmLabel: 'Save anyway',
+          cancelLabel: 'Cancel'
+        });
+        if (!go) return;
+      }
+    }
+
+    const now = Date.now();
     if (existing) {
       // Same document, saved again → update in place, never a second row.
       existing.type = payload.type;
@@ -8366,8 +10259,12 @@
       existing.title = payload.title;
       existing.total = payload.total;
       existing.client = payload.client;
+      existing.project = payload.project;
+      existing.recordId = payload.recordId;
       existing.ref = payload.ref;
-      existing.at = Date.now();
+      existing.at = now;
+      existing.touchedAt = now;          // re-saving IS activity
+      if (existing.autoExpire !== true) existing.autoExpire = false;
       if (snapshot) draftStore[existing.id] = { tool: 'erp', state: snapshot };
       saveErp();
       saveHistory();
@@ -8375,7 +10272,8 @@
       showToast('Library entry updated — \u201c' + payload.title + '\u201d');
     } else {
       erpState.libraryId = uid();
-      const entry = Object.assign({ id: erpState.libraryId, at: Date.now() }, payload);
+      /* autoExpire starts OFF for every new document. */
+      const entry = Object.assign({ id: erpState.libraryId, at: now, touchedAt: now, autoExpire: false }, payload);
       history.unshift(entry);
       if (history.length > 60) history = history.slice(0, 60);
       if (snapshot) draftStore[entry.id] = { tool: 'erp', state: snapshot };
@@ -8404,7 +10302,10 @@
     h.title = payload.title;
     h.total = payload.total;
     h.client = payload.client;
+    h.project = payload.project;
+    h.recordId = payload.recordId;
     h.ref = payload.ref;
+    h.touchedAt = Date.now();          // re-downloading IS activity
     const snapshot = erpLibrarySnapshot();
     if (snapshot) draftStore[h.id] = { tool: 'erp', state: snapshot };
     saveErp();
@@ -8412,6 +10313,282 @@
     erpWriteDrafts();
     renderHistory();
     return true;
+  }
+
+  /* ── Mini-tool Library saves ──────────────────────────────────────────
+     Every Other Utilities tool now has the SAME contract the ERP has:
+
+       Export to PDF / Copy Summary → performs the action and records it in
+         the activity feed. NEVER writes a Library row.
+       Save to Library             → the ONLY writer. One row per project /
+         session, updated in place when the same session is saved again.
+
+     Two registries, both keyed by tool id:
+       TOOL_DOC      what the document IS (title, total, client, ref) — the
+                     SAME object the activity feed logs, so a feed entry and
+                     a saved row can never describe one document two ways.
+       TOOL_SNAPSHOT what it takes to rebuild it, so “View / Load draft”
+                     restores the tool rather than just navigating to it.
+
+     The remembered entry id lives in `toolLibraryIds`, keyed by tool. That is
+     what makes repeated saves update one row even for a tool with no client
+     or project field of its own (Pricing, Breakeven, FX, GPA). Resetting a
+     tool clears its id, so the next save starts a NEW document. */
+  const TOOL_LIBRARY_KEY = 'calcmall_tool_library_v1';
+  let toolLibraryIds = (function () {
+    try {
+      const raw = localStorage.getItem(TOOL_LIBRARY_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) { return {}; }
+  })();
+  function saveToolLibraryIds() {
+    try { localStorage.setItem(TOOL_LIBRARY_KEY, JSON.stringify(toolLibraryIds)); } catch (e) { /* ignore */ }
+  }
+  /* A new project/session → the next save is a new row, not an overwrite. */
+  function clearToolLibraryId(tool) {
+    if (!tool || !toolLibraryIds[tool]) return;
+    delete toolLibraryIds[tool];
+    saveToolLibraryIds();
+  }
+  function toolLabel(tool) { return (TOOLS[tool] && TOOLS[tool].short) || 'tool'; }
+
+  const TOOL_DOC = {
+    'scope-guard': function () {
+      const p = state.project;
+      if (!p) return null;
+      const cur = Calc.TOOL_CURRENCIES[p.currency] || Calc.TOOL_CURRENCIES.USD;
+      return {
+        type: 'copy', tool: 'scope-guard', toolName: 'Scope Guard — Project Change & Scope',
+        title: p.name || 'Scope Guard project',
+        total: cur.symbol.trim() + ' ' + Calc.fmtNum(Number(p.price) || 0)
+      };
+    },
+    qr: function () {
+      let t = 0;
+      for (let i = 0; i < qrRows.length; i++) { const a = qrAmount(qrRows[i]); if (a !== null) t += a; }
+      return {
+        type: 'pdf', tool: 'qr', toolName: 'Quantity & Rate Calculator',
+        title: 'Quantity & Rate sheet',
+        total: Calc.TOOL_CURRENCIES[qrCur()].symbol.trim() + ' ' + Calc.fmtNum(t)
+      };
+    },
+    boq: function () {
+      return {
+        type: 'pdf', tool: 'boq', toolName: 'Quotation',
+        title: boqState.meta.client || 'Quotation',
+        client: boqState.meta.client || '',
+        ref: boqState.meta.ref || '',
+        total: quoMoney(Calc.boqFinal(Calc.boqSubTotal(boqState.lines), num(boqState.discount), num(boqState.vat)))
+      };
+    },
+    invoice: function () {
+      let t = 0;
+      for (let i = 0; i < invState.lines.length; i++) { const a = invLineAmount(invState.lines[i]); if (a !== null) t += a; }
+      return {
+        type: 'pdf', tool: 'invoice', toolName: 'Smart Invoice & Document Builder',
+        title: invState.meta.client || INV_DOC_TYPES[invState.docType].label,
+        client: invState.meta.client || '',
+        ref: invState.meta.ref || invState.meta.invoice || '',
+        total: invMoney(t)
+      };
+    },
+    pricing: function () {
+      const r = Calc.pricingCalc(prState.cost, prState.overhead, prState.target, prState.mode);
+      if (r.price === null) return null;
+      return { type: 'copy', tool: 'pricing', toolName: 'Margin & Markup Pricing Calculator', title: 'Pricing summary', total: prMoney(r.price) };
+    },
+    duty: function () {
+      const r = Calc.dutyCalc(dutyState.cif, {
+        duty: dutyState.duty, pal: dutyState.pal, cess: dutyState.cess,
+        sscl: dutyState.sscl, vat: dutyState.vat
+      });
+      if (!r) return null;
+      return { type: 'copy', tool: 'duty', toolName: 'Import Tax & Landed Cost Calculator', title: 'Import duty breakdown', total: dutyMoney(r.landed) };
+    },
+    variation: function () {
+      const r = Calc.variationCalc(varState.original, varState.added);
+      if (!r) return null;
+      return {
+        type: 'pdf', tool: 'variation', toolName: 'Variation & Change Order Generator',
+        title: varState.project || 'Contract variation', project: varState.project || '',
+        total: varMoney(r.revised)
+      };
+    },
+    breakeven: function () {
+      const r = Calc.breakevenCalc(bkState.net, bkState.overhead, bkState.days, bkState.admin, bkState.dayhours, bkState.tax);
+      if (!r || r.hourly === null) return null;
+      return { type: 'copy', tool: 'breakeven', toolName: 'Freelance Rate & Overhead Breakeven Calculator', title: 'Rate & overhead breakeven', total: bkMoney(r.hourly) + '/h' };
+    },
+    fx: function () {
+      const r = Calc.fxFeeCalc(fxState.target, fxState.pct, fxState.fixed, fxState.markup);
+      if (!r || r.invoice === null) return null;
+      return { type: 'copy', tool: 'fx', toolName: 'Cross-Border FX & Fee Adjuster', title: 'Fee-adjusted invoice amount', total: fxMoney(r.invoice) };
+    },
+    gpa: function () {
+      const g = Calc.gpaRequired(gpState.current, gpState.done, gpState.target, gpState.remaining);
+      const c = Calc.courseNeeded(gpState.courseCur, gpState.courseTarget, gpState.courseWeight);
+      if (!g && !c) return null;
+      return { type: 'copy', tool: 'gpa', toolName: 'Academic GPA & Target Grade Planner', title: 'GPA forecast', total: '' };
+    },
+    retainer: function () {
+      const r = Calc.retainerCalc(rtState.hours, rtState.hourly, rtState.overhead, rtState.margin, rtState.sla);
+      if (!r) return null;
+      return {
+        type: 'copy', tool: 'retainer', toolName: 'Retainer & SLA Pricing Estimator',
+        title: rtState.client || 'Retainer pricing', client: rtState.client || '', total: rtMoney(r.price) + '/mo'
+      };
+    },
+    delay: function () {
+      const r = Calc.delayCalc(dlState.contract, dlState.penaltyPct, dlState.capPct, dlState.days, dlState.overhead);
+      if (!r) return null;
+      return {
+        type: 'copy', tool: 'delay', toolName: 'Project Delay & Damages Impact Calculator',
+        title: dlState.project || 'Delay impact', project: dlState.project || '', total: dlMoney(r.total)
+      };
+    }
+  };
+
+  /* The state a reopen needs. Deep-copied, so editing the live tool after a
+     save can never mutate the saved snapshot. */
+  function toolSnapOf(tool) {
+    const copy = function (v) { try { return JSON.parse(JSON.stringify(v)); } catch (e) { return null; } };
+    if (tool === 'scope-guard') return { tool: tool, state: copy(state) };
+    if (tool === 'qr') return { tool: tool, state: { rows: copy(qrRows) } };
+    if (tool === 'boq') return { tool: tool, state: copy(boqState) };
+    if (tool === 'invoice') return { tool: tool, state: copy(invState) };
+    if (tool === 'pricing') return { tool: tool, state: copy(prState) };
+    if (tool === 'duty') return { tool: tool, state: copy(dutyState) };
+    if (tool === 'variation') return { tool: tool, state: copy(varState) };
+    if (tool === 'breakeven') return { tool: tool, state: copy(bkState) };
+    if (tool === 'fx') return { tool: tool, state: copy(fxState) };
+    if (tool === 'gpa') return { tool: tool, state: copy(gpState) };
+    if (tool === 'retainer') return { tool: tool, state: copy(rtState) };
+    if (tool === 'delay') return { tool: tool, state: copy(dlState) };
+    return null;
+  }
+
+  /* Rebuild a tool from a saved snapshot. Every branch merges onto the tool's
+     own empty shape first, so a snapshot written by an older build — one that
+     predates a field — can never leave that field undefined. */
+  function restoreToolSnapshot(tool, snap) {
+    if (!snap || typeof snap !== 'object') return false;
+    try {
+      const merge = function (empty, saved) { return Object.assign(empty, (saved && typeof saved === 'object') ? saved : {}); };
+      if (tool === 'scope-guard') {
+        state = merge(emptyState(), snap.state);
+        state.requests = Array.isArray(state.requests) ? state.requests : [];
+        saveState(); renderAll();
+      } else if (tool === 'qr') {
+        qrRows = (snap.state && Array.isArray(snap.state.rows)) ? snap.state.rows : [];
+        saveQr(); renderQr();
+      } else if (tool === 'boq') {
+        boqState = merge(emptyBoq(), snap.state);
+        if (!Array.isArray(boqState.lines)) boqState.lines = [];
+        saveBoq(); renderBoq();
+      } else if (tool === 'invoice') {
+        invState = merge(emptyInv(), snap.state);
+        if (!Array.isArray(invState.lines)) invState.lines = [];
+        saveInv(); renderInv();
+      } else if (tool === 'pricing') {
+        prState = merge(emptyPricing(), snap.state);
+        savePricing(); fillPricingForm();
+      } else if (tool === 'duty') {
+        dutyState = merge(emptyDuty(), snap.state);
+        saveDuty(); fillDutyForm();
+      } else if (tool === 'variation') {
+        varState = merge(emptyVariation(), snap.state);
+        saveVariation(); fillVariationForm();
+      } else if (tool === 'breakeven') {
+        bkState = merge(emptyBreakeven(), snap.state);
+        saveBreakeven(); fillBreakevenForm();
+      } else if (tool === 'fx') {
+        fxState = merge(emptyFx(), snap.state);
+        saveFx(); fillFxForm();
+      } else if (tool === 'gpa') {
+        gpState = merge(emptyGpa(), snap.state);
+        saveGpa(); fillGpaForm();
+      } else if (tool === 'retainer') {
+        rtState = merge(emptyRetainer(), snap.state);
+        saveRetainer(); fillRetainerForm();
+      } else if (tool === 'delay') {
+        dlState = merge(emptyDelay(), snap.state);
+        saveDelay(); fillDelayForm();
+      } else {
+        return false;
+      }
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* The ONE writer for a mini-tool Library row, mirroring erpSaveToLibrary:
+     create on the first save, update in place on every later save. */
+  async function saveToolToLibrary(tool) {
+    const docFn = TOOL_DOC[tool];
+    if (!docFn) return;
+    const payload = docFn();
+    if (!payload) {
+      showToast('Fill in the ' + toolLabel(tool) + ' first \u2014 there is nothing to save yet.', 'error');
+      return;
+    }
+    const existing = toolLibraryIds[tool]
+      ? history.find(function (h) { return h.id === toolLibraryIds[tool]; })
+      : null;
+
+    if (!existing) {
+      /* Same rule as the ERP: past the cap, ask before adding another row.
+         A warning only — nothing is ever deleted here. */
+      const key = libraryJobKey(tool, payload);
+      const versions = libraryVersionCount(tool, key);
+      if (versions >= LIBRARY_VERSION_WARN_AT) {
+        const label = payload.title || toolLabel(tool);
+        const go = await confirmAction({
+          title: 'Save another version?',
+          message: '\u201c' + label + '\u201d already has ' + versions + ' saved versions in your Library. Save another one anyway? Nothing is deleted \u2014 you can remove older versions from the Library whenever you like.',
+          confirmLabel: 'Save anyway',
+          cancelLabel: 'Cancel'
+        });
+        if (!go) return;
+      }
+    }
+
+    const now = Date.now();
+    const snap = toolSnapOf(tool);
+    if (existing) {
+      existing.type = payload.type;
+      existing.tool = payload.tool;
+      existing.toolName = payload.toolName;
+      existing.title = payload.title;
+      existing.total = payload.total;
+      existing.client = payload.client || '';
+      existing.project = payload.project || '';
+      existing.ref = payload.ref || '';
+      existing.at = now;
+      existing.touchedAt = now;          // re-saving IS activity
+      if (existing.autoExpire !== true) existing.autoExpire = false;
+      if (snap) draftStore[existing.id] = snap;
+      saveHistory();
+      erpWriteDrafts();
+      showToast('Library entry updated \u2014 \u201c' + payload.title + '\u201d');
+    } else {
+      const id = uid();
+      toolLibraryIds[tool] = id;
+      /* autoExpire starts OFF for every new document. */
+      const entry = Object.assign({ id: id, at: now, touchedAt: now, autoExpire: false }, payload);
+      history.unshift(entry);
+      if (history.length > 60) history = history.slice(0, 60);
+      if (snap) draftStore[entry.id] = snap;
+      pruneDrafts();
+      saveToolLibraryIds();
+      saveHistory();
+      erpWriteDrafts();
+      showToast('Saved to Library \u2014 \u201c' + payload.title + '\u201d');
+    }
+    renderHistory();
+    renderActivity();
+    renderKpis();
+    updateKPICards();
+    renderStorageStatus();
   }
 
   async function resetErp() {
@@ -8452,6 +10629,8 @@
     brand = emptyBrand();
     history = [];
     draftStore = {};
+    toolLibraryIds = {};
+    activityLog = [];
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(QR_KEY);
@@ -8467,6 +10646,8 @@
       localStorage.removeItem(DL_KEY);
       localStorage.removeItem(HISTORY_KEY);
       localStorage.removeItem(HISTORY_DRAFTS_KEY);
+      localStorage.removeItem(ACTIVITY_KEY);
+      localStorage.removeItem(TOOL_LIBRARY_KEY);
       localStorage.removeItem(ERP_KEY);
       localStorage.removeItem(DB_KEY);
       localStorage.removeItem(BRAND_KEY);
@@ -8551,16 +10732,11 @@
       }
     } catch (e) { /* ignore */ }
     const payload = { app: 'Nexora Engine', version: 1, exportedAt: new Date().toISOString(), entries: n, data: data };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'nexora-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ } }, 1500);
-    showToast('Backup downloaded \u2014 ' + n + (n === 1 ? ' entry saved.' : ' entries saved.'));
+    const rec = nexoraSaveFile(JSON.stringify(payload, null, 2),
+      'nexora-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
+    showToast(rec
+      ? 'Backup prepared \u2014 ' + n + (n === 1 ? ' entry' : ' entries') + ' ready (downloads are suppressed in test mode).'
+      : 'Backup downloaded \u2014 ' + n + (n === 1 ? ' entry saved.' : ' entries saved.'));
     renderStorageStatus();
   }
   function restoreBackupFile(file) {
@@ -8830,6 +11006,7 @@
         if (!$('auth-modal').hidden) closeAuthModal();
         if (!$('gate-modal').hidden) closeGateModal();
         if (!$('legal-modal').hidden) $('legal-modal').hidden = true;
+        if ($('db-detail-drawer') && !$('db-detail-drawer').hidden) closeDbDetail();
       }
     });
 
@@ -9133,6 +11310,7 @@
     $('dt-copy').addEventListener('click', copyDutyBreakdown);
     $('dt-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset import duty calculator?', message: 'This clears the CIF value, units and all tax rates.', confirmLabel: 'Reset', danger: true }))) return;
+      clearToolLibraryId('duty');
       dutyState = emptyDuty();
       saveDuty();
       fillDutyForm();
@@ -9154,6 +11332,7 @@
     $('vr-pdf').addEventListener('click', gateClick(exportVariationPdf));
     $('vr-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset variation builder?', message: 'This clears the project details, costs and work description.', confirmLabel: 'Reset', danger: true }))) return;
+      clearToolLibraryId('variation');
       varState = emptyVariation();
       saveVariation();
       fillVariationForm();
@@ -9175,6 +11354,7 @@
     $('bk-copy').addEventListener('click', copyBreakevenSummary);
     $('bk-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset breakeven calculator?', message: 'This clears your income target, overhead and time settings.', confirmLabel: 'Reset', danger: true }))) return;
+      clearToolLibraryId('breakeven');
       bkState = emptyBreakeven();
       saveBreakeven();
       fillBreakevenForm();
@@ -9206,6 +11386,7 @@
     $('fx-copy').addEventListener('click', copyFxInvoice);
     $('fx-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset FX & fee adjuster?', message: 'This clears the payout target and fee rates.', confirmLabel: 'Reset', danger: true }))) return;
+      clearToolLibraryId('fx');
       fxState = emptyFx();
       saveFx();
       fillFxForm();
@@ -9229,6 +11410,7 @@
     $('gp-copy').addEventListener('click', copyGpaSummary);
     $('gp-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset GPA planner?', message: 'This clears your progress, targets and course weights.', confirmLabel: 'Reset', danger: true }))) return;
+      clearToolLibraryId('gpa');
       gpState = emptyGpa();
       saveGpa();
       fillGpaForm();
@@ -9284,6 +11466,10 @@
       showView('home');
     });
     $('history-clear').addEventListener('click', clearHistory);
+    const dedupeBtn = $('history-dedupe');
+    if (dedupeBtn) dedupeBtn.addEventListener('click', removeDuplicateHistory);
+    const noteBtn = $('history-notifications');
+    if (noteBtn) noteBtn.addEventListener('click', removeNotificationsFromLibrary);
     const histList = $('history-list');
     histList.addEventListener('click', function (e) {
       const btn = e.target.closest('button[data-hact]');
@@ -9792,6 +11978,16 @@
     $('erp-pdf').addEventListener('click', gateClick(exportErpPdf));
     $('erp-export-xlsx').addEventListener('click', gateClick(exportErpExcel));
     $('erp-save').addEventListener('click', erpSaveToLibrary);
+    /* Every mini-tool's Save to Library button, found by its data attribute so
+       adding a tool needs no new binding here. Not credit-gated: saving your
+       own work is not a tool execution (the ERP's save is ungated too). */
+    const toolSaveBtns = document.querySelectorAll('[data-tool-save]');
+    for (let i = 0; i < toolSaveBtns.length; i++) {
+      (function (btn) {
+        const tool = btn.getAttribute('data-tool-save');
+        btn.addEventListener('click', function () { saveToolToLibrary(tool); });
+      })(toolSaveBtns[i]);
+    }
     $('erp-reset').addEventListener('click', resetErp);
 
     // ── ERP Record store (Primary Key save / load / delete) ────
@@ -9825,7 +12021,14 @@
       const edit = e.target.closest('.db-item-edit');
       if (edit) { startEditDbItem(Number(edit.getAttribute('data-id'))); return; }
       const del = e.target.closest('.db-item-del');
-      if (!del) return;
+      if (!del) {
+        /* Anything else on the row -> the read-only details drawer, exactly as
+           the Master Database browse view behaves. Additive: the two buttons
+           above were handled first and returned. */
+        const row = e.target.closest('.db-row');
+        if (row) openDbDetail('item', db.items[Number(row.getAttribute('data-id'))]);
+        return;
+      }
       const idx = Number(del.getAttribute('data-id'));
       const rec = db.items[idx];
       if (!(await confirmAction({
@@ -9838,7 +12041,7 @@
       noteDbRemoval('item', idx);
       saveDb();
       renderDb();
-      pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
+      logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
       renderKpis();
       updateKPICards();
     });
@@ -9846,7 +12049,11 @@
       const edit = e.target.closest('.db-client-edit');
       if (edit) { startEditDbClient(Number(edit.getAttribute('data-id'))); return; }
       const del = e.target.closest('.db-client-del');
-      if (!del) return;
+      if (!del) {
+        const row = e.target.closest('.db-row');
+        if (row) openDbDetail('client', db.clients[Number(row.getAttribute('data-id'))]);
+        return;
+      }
       const idx = Number(del.getAttribute('data-id'));
       const rec = db.clients[idx];
       if (!(await confirmAction({
@@ -9859,7 +12066,7 @@
       noteDbRemoval('client', idx);
       saveDb();
       renderDb();
-      pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
+      logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
       renderKpis();
       updateKPICards();
     });
@@ -9867,6 +12074,48 @@
     if (itemCancel) itemCancel.addEventListener('click', function () { resetDbForm('item'); });
     const clientCancel = $('db-client-cancel');
     if (clientCancel) clientCancel.addEventListener('click', function () { resetDbForm('client'); });
+
+    /* ── Details drawer (Item & Client Database) ────────────────────────
+       Rows are focusable, so the same details the mouse opens are reachable
+       from the keyboard: Enter or Space on a focused row. A focused pencil or
+       ✕ inside the row keeps its own activation (handled by the click wiring).
+       The three exits are the backdrop, the ✕/Close buttons, and Escape. */
+    (function wireDbDetail() {
+      const overlay = $('db-detail-drawer');
+      if (!overlay) return;
+      function openFromRow(row) {
+        const isClient = row.classList.contains('db-grid-clients');
+        const idx = Number(row.getAttribute('data-id'));
+        openDbDetail(isClient ? 'client' : 'item', isClient ? db.clients[idx] : db.items[idx]);
+      }
+      ['db-item-rows', 'db-client-rows'].forEach(function (id) {
+        const box = $(id);
+        if (!box) return;
+        box.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+          if (!e.target.closest) return;
+          if (e.target.closest('.db-item-edit, .db-item-del, .db-client-edit, .db-client-del')) return;
+          const row = e.target.closest('.db-row');
+          if (!row) return;
+          e.preventDefault();
+          openFromRow(row);
+        });
+      });
+      overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeDbDetail();
+      });
+      [$('db-detail-drawer-close'), $('db-detail-drawer-close-btn')].forEach(function (btn) {
+        if (btn) btn.addEventListener('click', function () { closeDbDetail(); });
+      });
+      const detailEdit = $('db-detail-drawer-edit');
+      if (detailEdit) detailEdit.addEventListener('click', function () {
+        const idx = dbDetailIndex();
+        const kind = dbDetailSel && dbDetailSel.kind;
+        closeDbDetail();
+        if (idx === -1 || !kind) return;
+        if (kind === 'client') startEditDbClient(idx); else startEditDbItem(idx);
+      });
+    })();
 
     /* Public edit hooks — `id` is the item's SKU or the client's name, which
        are this app's natural primary keys for the two collections. Called by
@@ -9927,6 +12176,7 @@
             return '<tr>' +
               '<td><strong>' + esc(it.sku) + '</strong></td>' +
               '<td class="db-name">' + esc(it.name || '\u2014') + '</td>' +
+              '<td class="db-model">' + esc(it.model || '\u2014') + '</td>' +
               '<td>' + esc(it.unit || '\u2014') + '</td>' +
               '<td class="text-right db-rate db-rate-' + dbRateInfo(it.rate).state + '" title="' + dbRateTitle(dbRateInfo(it.rate)) + '">' + esc(dbRateInfo(it.rate).text) + '</td>' +
               '<td class="w70"><span class="db-actions">' +
@@ -10012,7 +12262,7 @@
         saveDb();
         renderDb();
         refreshDbDrawer('items');
-        pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
+        logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
         renderKpis();
         updateKPICards();
       });
@@ -10036,7 +12286,7 @@
         saveDb();
         renderDb();
         refreshDbDrawer('clients');
-        pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
+        logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
         renderKpis();
         updateKPICards();
       });
@@ -10146,7 +12396,8 @@
     const mdTabs = document.querySelectorAll('.md-tab');
     for (let i = 0; i < mdTabs.length; i++) {
       mdTabs[i].addEventListener('click', function () {
-        mdTab = this.getAttribute('data-md-tab') === 'clients' ? 'clients' : 'items';
+        const want = this.getAttribute('data-md-tab');
+        mdTab = (want === 'clients' || want === 'records') ? want : 'items';
         mdSel = null;                 // a different list is a different record set
         renderMasterData();
       });
@@ -10162,6 +12413,12 @@
     if (mdDetailBox) mdDetailBox.addEventListener('click', function (e) {
       const btn = e.target.closest ? e.target.closest('.md-manage') : null;
       if (!btn) return;
+      // A saved record's one exit is the ERP FORM, and it runs the ERP's own
+      // Load Record path — the read-only pane never edits anything itself.
+      if (btn.getAttribute('data-md-kind') === 'record') {
+        erpLoadRecordById(btn.getAttribute('data-md-key'));
+        return;
+      }
       const found = mdFindSelection();
       showView('db');
       if (!found) return;
@@ -10173,15 +12430,17 @@
     // ── Home: saved project/client records preview ─────────────
     const recViewAll = $('home-records-viewall');
     if (recViewAll) recViewAll.addEventListener('click', function () {
-      showView('db');
-      const card = $('db-records-title');
-      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // The full record list is the same read-only browse view the items and
+      // clients use, NOT the Item & Client Database management page.
+      openMasterData('record');
     });
     const recList = $('home-records-list');
     if (recList) recList.addEventListener('click', function (e) {
       const row = e.target.closest ? e.target.closest('.home-db-row') : null;
       if (!row) return;
-      erpLoadRecordById(row.getAttribute('data-rec'));
+      // A row click READS the record; loading it into the editable ERP form is
+      // the labelled button inside the details pane.
+      openMasterData('record', row.getAttribute('data-rec'));
     });
     const recBody = $('db-record-rows');
     if (recBody) recBody.addEventListener('click', function (e) {
@@ -10239,6 +12498,53 @@
       }
     }
   }
+  /* ── A session that arrives AFTER boot ───────────────────────────
+     Email-confirmation links land here: supabase-js exchanges the tokens it
+     found in the URL only once the network answers, which is normally a
+     moment AFTER this page has finished booting and painted itself as a
+     guest. Everything the app reads is namespaced by the account
+     ("u:<email>:"), and that prefix is fixed at module load, so the only
+     correct follow-up is one reload with the session now in storage. Without
+     it the user stays "Guest · Not signed in" with a perfectly good session
+     sitting behind them — the reported bug.
+
+     Guarded by a flag that lives only for this page load, so a reload cannot
+     repeat itself, and gated on the boot state: a page that ALREADY booted
+     signed in never reloads here. */
+  const BOOT_SIGNED_IN = isLoggedIn();
+  let lateSignInReloaded = false;
+  function watchForLateSignIn() {
+    if (BOOT_SIGNED_IN || lateSignInReloaded) return;
+    if (!isLoggedIn()) return;
+    const c = cloud();
+    // A confirmation exchange that is still in flight will report itself.
+    if (c && c.isConfirming && c.isConfirming()) return;
+    lateSignInReloaded = true;
+    reloadApp();
+  }
+
+  /* Cloud events also carry a message meant for the user (a confirmation link
+     that could not be verified, a lost connection). Each distinct message is
+     shown once, so a repaint cannot spam the toast. */
+  let lastCloudNotice = '';
+  function onCloudEvent(e) {
+    renderCloudStatus();
+    /* A pull may have replaced the master database on this device (an item or
+       client edited on another machine). Re-read it and re-resolve the open
+       document rather than leaving the page showing the older records. */
+    dbMaybeReload();
+    const c = cloud();
+    const detail = (e && e.detail) || (c ? c.status() : null) || {};
+    const msg = detail.message || '';
+    if (msg && msg !== lastCloudNotice) {
+      lastCloudNotice = msg;
+      showToast(msg, detail.status === 'offline' ? undefined : 'error');
+    } else if (!msg) {
+      lastCloudNotice = '';
+    }
+    watchForLateSignIn();
+  }
+
   /* Boot hook: hand the storage layer its key rule, then verify the session
      and reconcile the local cache with the account. Deliberately last in the
      boot sequence — the app is already rendered from cache by now, so a slow
@@ -10248,8 +12554,18 @@
     if (!c) { renderCloudStatus(); return; }
     try { c.configure({ email: SESSION_EMAIL, keyFor: userKey }); } catch (e) { /* ignore */ }
     renderCloudStatus();
-    try { c.onChange(function () { renderCloudStatus(); }); } catch (e) { /* ignore */ }
-    window.addEventListener('nexora-cloud', renderCloudStatus);
+    try { c.onChange(function () { onCloudEvent(null); }); } catch (e) { /* ignore */ }
+    window.addEventListener('nexora-cloud', onCloudEvent);
+    /* Another tab of this browser edited the item / client database. The
+       event carries the namespaced key, so only the two database keys are
+       acted on — this page never reloads itself for an unrelated key. */
+    window.addEventListener('storage', function (e) {
+      if (!e || !e.key) return;
+      if (e.key.indexOf('nexora_item_db') === -1 && e.key.indexOf('nexora_client_db') === -1) return;
+      if (dbMaybeReload()) {
+        showToast('The master database changed in another tab — the open document was checked against it.');
+      }
+    });
     c.bootstrap().then(function (res) {
       if (res && res.reload) { window.location.reload(); return; }
       renderCloudStatus();
@@ -10272,6 +12588,11 @@
     initAuthUi();
     hydrateIcons();
     wireEvents();
+    watchResultValues();
+    /* Documents flagged for auto-expiry are swept ONCE per boot, before the
+       Library paints, so an expired row never briefly appears. Only entries
+       the user explicitly flagged are ever candidates. */
+    libraryExpiredOnBoot = sweepExpiredLibrary();
     renderStorageStatus();
     initCloudSync();
   } catch (e) { try { console.error('Nexora Engine boot:', e); } catch (e2) { /* ignore */ } }
@@ -10304,6 +12625,12 @@
   renderDb();
   renderErp();
   renderHistory();
+  /* Say what the sweep did — a silent deletion would be worse than no feature. */
+  if (libraryExpiredOnBoot) {
+    showToast(libraryExpiredOnBoot === 1
+      ? '1 document passed its 30-day auto-delete window and was removed from the Library.'
+      : libraryExpiredOnBoot + ' documents passed their 30-day auto-delete window and were removed from the Library.');
+  }
   initCurrencySelects();
   syncInvCurrencySelect();
   formatAllNumericInputs();

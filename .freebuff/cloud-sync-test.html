@@ -180,6 +180,35 @@ function check(name, cond, detail) {
     check('A3 a NULL rate survives the round trip as null, not 0',
       (items.find(function (i) { return i.sku === 'FIRE-SUP'; }) || {}).rate === null,
       items.find(function (i) { return i.sku === 'FIRE-SUP'; }));
+
+    /* A3b/A3c: a null COLUMN is not proof that no rate was ever set. The row's
+       own payload is the tie-breaker (a row written before the column existed,
+       or one whose column never got filled), and a real column value still wins
+       so "genuinely 0" is never replaced by a stale payload. */
+    fake.store.items = [
+      { user_id: ME.id, id: 'legacy-rate', sku: 'LEGACY', name: 'Legacy row', unit: 'Nr', rate: null,
+        added_at: 3, data: { sku: 'LEGACY', name: 'Legacy row', unit: 'Nr', rate: 242 }, updated_at: new Date().toISOString() },
+      { user_id: ME.id, id: 'col-zero', sku: 'ZERO', name: 'Zero item', unit: 'Nr', rate: 0,
+        added_at: 4, data: { sku: 'ZERO', name: 'Zero item', unit: 'Nr', rate: 999 }, updated_at: new Date().toISOString() },
+      { user_id: ME.id, id: 'both-null', sku: 'NONE', name: 'No rate', unit: 'Nr', rate: null,
+        added_at: 5, data: { sku: 'NONE', name: 'No rate', unit: 'Nr', rate: null }, updated_at: new Date().toISOString() }
+    ];
+    await C.bootstrap();
+    const tie = read('nexora_item_db', []);
+    const bySku = function (s) { return tie.find(function (i) { return i.sku === s; }) || {}; };
+    check('A3b a null rate column keeps the rate the record itself carries',
+      bySku('LEGACY').rate === 242, bySku('LEGACY'));
+    check('A3c a real column rate wins over the payload (0 stays 0)',
+      bySku('ZERO').rate === 0, bySku('ZERO'));
+    check('A3d no rate anywhere still comes back as null',
+      bySku('NONE').rate === null, bySku('NONE'))
+    ;
+    // Restore the original two rows for the push tests below.
+    fake.store.items = [
+      { user_id: ME.id, id: 'fire-det', sku: 'FIRE-DET', name: 'Detection', unit: 'Nr', rate: 10000, added_at: 1, updated_at: new Date().toISOString() },
+      { user_id: ME.id, id: 'fire-sup', sku: 'FIRE-SUP', name: 'Suppression', unit: 'Nr', rate: null, added_at: 2, updated_at: new Date().toISOString() }
+    ];
+    await C.bootstrap();
     check('A4 brand row mapped into the app\'s brand shape',
       read('calcmall_brand_v1', {}).name === 'ACME' && read('calcmall_brand_v1', {}).accountCur === 'LKR');
     check('A5 appearance row fanned out to all three local keys',

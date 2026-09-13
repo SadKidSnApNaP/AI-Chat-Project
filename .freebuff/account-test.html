@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -615,58 +615,6 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 .history-meta { color: var(--faint); font-size: 12.5px; margin-top: 3px; }
 .history-total { color: var(--muted); font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .history-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-
-/* ── Excel export preview ────────────────────────────────────────
-   The sheet is drawn on a light surface so it reads like a spreadsheet
-   rather than like another dark glass panel, and it scrolls inside the
-   dialog because a document sheet is wider than the card. */
-.xl-preview-card { max-width: 920px; }
-.xl-preview-scroll {
-  flex: 1 1 auto;
-  overflow: auto;
-  margin: 4px 0 14px;
-  padding: 12px;
-  max-height: 58vh;
-  border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-}
-.xl-preview-sheet {
-  color: #0b0d17;
-  font-family: Calibri, 'Segoe UI', Arial, sans-serif;
-  font-size: 12px;
-}
-.xl-preview-sheet table.xl-sheet {
-  border-collapse: collapse;   /* adjacent 1px rules read as one, like Excel */
-  table-layout: fixed;
-  min-width: 100%;
-}
-.xl-sheet td {
-  padding: 2px 4px;
-  border: 1px solid transparent;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow: hidden;
-  vertical-align: middle;
-}
-/* A calculated figure, flagged so it is never mistaken for typed text. */
-.xl-sheet td.xl-formula {
-  box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.35);
-  cursor: help;
-}
-/* Per-document retention switch. The default (off) is deliberately the quiet
-   state — "Keep forever" — so a document only looks out of the ordinary once
-   the user has switched auto-delete ON for that one row. */
-.history-retention.is-on {
-  border-color: rgba(248, 113, 113, 0.55);
-  color: #fca5a5;
-}
-.history-retention-mark {
-  font-size: 9px;
-  line-height: 1;
-  vertical-align: 1px;
-  margin-right: 2px;
-}
 @media (max-width: 760px) {
   .history-item { flex-direction: column; align-items: flex-start; }
   .history-actions { justify-content: flex-start; }
@@ -1115,29 +1063,6 @@ textarea { resize: vertical; min-height: 44px; line-height: 1.55; }
 }
 .result-label { font-size: 11px; color: var(--faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .result-value { font-size: 16.5px; font-weight: 800; color: var(--text-strong); font-variant-numeric: tabular-nums; }
-
-/* ── Result figures never clip ───────────────────────────────────────────
-   A calculated figure is ONE unbreakable token ("Rs190,323,232,323"), so at
-   a fixed size it either fits its box or overflows the card — and a clipping
-   ancestor cuts it mid-digit (the KPI cards carry overflow:hidden), which is
-   how the same tool could show a full number in one box and a truncated one
-   in the box beside it. Every result box therefore shares these properties,
-   and `fitResultValues()` in js/app.js shrinks the font to the measured
-   width: nowrap makes that measurement honest, max-width keeps the element
-   inside its card, and min-width lets the flex summary rows give the number
-   the room it needs. `.fit-wrap` is the last resort — at the 10px floor a
-   very long figure wraps onto a second line rather than being cut off. */
-.stat-value,
-.result-value,
-.kpi-value,
-.qr-total-value,
-.boq-sum-line strong {
-  display: block;
-  white-space: nowrap;
-  max-width: 100%;
-  min-width: 0;
-}
-.fit-wrap { white-space: normal !important; overflow-wrap: anywhere; }
 
 /* ── Request history table ──────────────────────────────────────── */
 .table-wrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
@@ -3215,9 +3140,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   .quo-table th { background: #f3f4f6 !important; color: #111827 !important; }
   .quo-table th, .quo-table td { border-color: #000000 !important; color: #111827 !important; }
   .fm-table th, .fm-table td { border: 1px solid #000000 !important; }
-  /* .fm-banner is deliberately absent: it is a dark badge and forcing the
-     text dark too made it a blank block. It keeps its own white text. */
-  .fm-doc, .fm-head, .fm-co h1, .fm-co div, .fm-right > div:not(.fm-banner),
+  .fm-doc, .fm-head, .fm-co h1, .fm-co div, .fm-banner, .fm-right > div,
   .fm-metabox, .fm-meta-col h3, .fm-meta-col div, .fm-words, .fm-terms li,
   .fm-footbox, .fm-bank div, .fm-onbehalfof { color: #111827 !important; }
   .fm-banner { background: #111827 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -3419,10 +3342,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   border-radius: 4px;
   margin-bottom: 6px;
 }
-/* :not(.fm-banner) — the badge is a direct child <div> of .fm-right, so a
-   plain `> div` rule beat `.fm-banner` and made its text #111827 on its own
-   #111827 background. Mirrored in PRINT_DOC_CSS (js/app.js). */
-.fm-right > div:not(.fm-banner) { font-size: 11px; color: #111827; margin-top: 2px; }
+.fm-right > div { font-size: 11px; color: #111827; margin-top: 2px; }
 .fm-metabox {
   display: flex;
   gap: 0;
@@ -4071,18 +3991,6 @@ body.light-theme .tool-launch {
 .md-field dd.md-blank { color: #6b7280; }
 .md-field dd.md-note { font-size: 12px; color: #94a3b8; }
 .md-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-
-/* Saved-record details: the read-only line-item table in the detail pane.
-   `.data-table` carries `min-width: 640px` for the input grids, which would
-   force a horizontal scroll inside this narrow pane, so it is neutralised for
-   this one use — the table then fits the pane like every other md-field. */
-.md-lines-title { margin: 14px 0 6px; }
-.md-lines { margin: 0 0 10px; overflow-x: auto; }
-.md-lines .data-table { min-width: 0; width: 100%; }
-.md-lines .data-table th,
-.md-lines .data-table td { white-space: nowrap; }
-.md-lines .data-table td.md-line-desc { white-space: normal; overflow-wrap: anywhere; }
-.md-lines .row-muted { color: #8b949e; font-size: 12px; }
 @media (max-width: 1000px) {
   .md-layout { grid-template-columns: minmax(0, 1fr); }
   .md-rows { max-height: 320px; }
@@ -4584,7 +4492,7 @@ body.light-theme .tool-launch {
               <button type="button" class="btn btn-ghost" id="erp-export-xlsx"><span class="nav-icon" data-icon="sheet" aria-hidden="true"></span>Export as Excel (.xlsx)</button>
               <button type="button" class="btn btn-ghost" id="erp-reset">Reset document</button>
             </div>
-            <p class="hint" id="erp-save-hint">Typing only updates the working draft on this device — nothing is saved until you click <strong>Save to Library</strong>, which is the only way a document enters your Library. Generating a PDF or Excel file does not save it; exports and summary copies are recorded in the Home activity feed instead.</p>
+            <p class="hint" id="erp-save-hint">Typing only updates the working draft on this device. Click <strong>Save to Library</strong> to put the document in History &amp; Saved Documents — generating a PDF or Excel file does not create an entry.</p>
             <p class="error" id="erp-error" role="alert" hidden></p>
           </section>
         </div>
@@ -4775,7 +4683,7 @@ body.light-theme .tool-launch {
           <span class="tool-badge" data-icon="database" aria-hidden="true"></span>
           <div>
             <h2 class="tool-name">Master Database</h2>
-            <p class="tagline">Browse the items, clients and saved project records behind your documents. Pick a record to read its full details.</p>
+            <p class="tagline">Browse the items and clients behind your documents. Pick a record to read its full details.</p>
           </div>
         </div>
         <p class="privacy-note">Read-only view · Same data the ERP engine uses</p>
@@ -4790,7 +4698,6 @@ body.light-theme .tool-launch {
           <div class="md-tabs" role="tablist" aria-label="What to browse">
             <button type="button" class="md-tab active" id="md-tab-items" data-md-tab="items" role="tab" aria-selected="true">Items <span class="md-tab-count" id="md-items-count">0</span></button>
             <button type="button" class="md-tab" id="md-tab-clients" data-md-tab="clients" role="tab" aria-selected="false">Clients <span class="md-tab-count" id="md-clients-count">0</span></button>
-            <button type="button" class="md-tab" id="md-tab-records" data-md-tab="records" role="tab" aria-selected="false">Saved records <span class="md-tab-count" id="md-records-count">0</span></button>
           </div>
           <input type="text" id="md-search" class="md-search" placeholder="Filter by SKU, name, client or address…" autocomplete="off" aria-label="Filter records">
           <div class="md-rows" id="md-rows" role="tabpanel" aria-labelledby="md-list-title">
@@ -5379,8 +5286,7 @@ body.light-theme .tool-launch {
             placeholder="Your change-order message will appear here when you generate one…"></textarea>
 
           <div class="actions">
-            <button type="button" class="btn btn-primary" id="sg-save" data-tool-save="scope-guard"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-            <button type="button" class="btn btn-ghost" id="msg-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy to Clipboard</button>
+            <button type="button" class="btn btn-primary" id="msg-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy to Clipboard</button>
             <button type="button" class="btn btn-ghost" id="msg-close">Close</button>
           </div>
         </section>
@@ -5466,7 +5372,6 @@ body.light-theme .tool-launch {
         <div class="actions">
           <button type="button" class="btn btn-primary" id="qr-add-row"><span class="nav-icon" data-icon="plus" aria-hidden="true"></span>Add row</button>
           <button type="button" class="btn btn-ghost" id="qr-clear">Clear all</button>
-          <button type="button" class="btn btn-primary" id="qr-save" data-tool-save="qr"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
           <button type="button" class="btn btn-ghost" id="qr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export to PDF</button>
           <span class="tool-free" id="qr-hint">Tip: press Enter on the last row to add the next one.</span>
         </div>
@@ -5610,8 +5515,7 @@ body.light-theme .tool-launch {
 
         <p class="error" id="boq-error" role="alert" hidden></p>
         <div class="actions">
-          <button type="button" class="btn btn-primary" id="boq-save" data-tool-save="boq"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-          <button type="button" class="btn btn-ghost" id="boq-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Download Client Quotation PDF</button>
+          <button type="button" class="btn btn-primary" id="boq-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Download Client Quotation PDF</button>
           <button type="button" class="btn btn-ghost" id="boq-reset">Reset quotation</button>
         </div>
       </section>
@@ -5717,8 +5621,7 @@ body.light-theme .tool-launch {
             <p class="hint" id="pr-note">Margin and markup are two views of the same profit: margin is profit ÷ price, markup is profit ÷ cost.</p>
             <p class="error" id="pr-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="pr-save" data-tool-save="pricing"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="pr-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Pricing Summary</button>
+              <button type="button" class="btn btn-primary" id="pr-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Pricing Summary</button>
               <button type="button" class="btn btn-ghost" id="pr-reset">Reset</button>
             </div>
           </section>
@@ -5839,8 +5742,7 @@ body.light-theme .tool-launch {
             <p class="hint">Percentages are applied on the CIF value exactly as you enter them — Nexora Engine does not apply any country- or HS-code-specific rules. Verify current rates with your customs agent.</p>
             <p class="error" id="dt-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="dt-save" data-tool-save="duty"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="dt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Breakdown</button>
+              <button type="button" class="btn btn-primary" id="dt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Breakdown</button>
               <button type="button" class="btn btn-ghost" id="dt-reset">Reset</button>
             </div>
           </section>
@@ -5931,8 +5833,7 @@ body.light-theme .tool-launch {
             <p class="hint" id="vr-note">The variation PDF includes the work description, cost impact, revised value and a time-extension line — ready for client approval.</p>
             <p class="error" id="vr-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="vr-save" data-tool-save="variation"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="vr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export Variation PDF</button>
+              <button type="button" class="btn btn-primary" id="vr-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export Variation PDF</button>
               <button type="button" class="btn btn-ghost" id="vr-reset">Reset</button>
             </div>
           </section>
@@ -6046,8 +5947,7 @@ body.light-theme .tool-launch {
             <p class="hint" id="bk-note">Breakeven = every cost covered, nothing left over. Price above this to make a profit — the summary shows exactly what each hour must carry.</p>
             <p class="error" id="bk-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="bk-save" data-tool-save="breakeven"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="bk-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="bk-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="bk-reset">Reset</button>
             </div>
           </section>
@@ -6183,8 +6083,7 @@ body.light-theme .tool-launch {
             <p class="hint" id="fx-note">Example: a $1,000 target through Stripe's 2.9% + $0.30 means invoicing $1,030.18 — the fee is charged on the larger amount, so the gross-up compounds.</p>
             <p class="error" id="fx-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="fx-save" data-tool-save="fx"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="fx-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Invoice Amount</button>
+              <button type="button" class="btn btn-primary" id="fx-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Invoice Amount</button>
               <button type="button" class="btn btn-ghost" id="fx-reset">Reset</button>
             </div>
           </section>
@@ -6275,8 +6174,7 @@ body.light-theme .tool-launch {
             <p class="hint" id="gp-note">Required average = the GPA you must hold across every remaining credit to graduate at your target. The assignment score shows what the remaining graded weight must average.</p>
             <p class="error" id="gp-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="gp-save" data-tool-save="gpa"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="gp-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="gp-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="gp-reset">Reset</button>
             </div>
           </section>
@@ -6388,8 +6286,7 @@ body.light-theme .tool-launch {
             <p class="hint" id="rt-note">Set the monthly included hours and your blended rate to price the retainer.</p>
             <p class="error" id="rt-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="rt-save" data-tool-save="retainer"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="rt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="rt-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="rt-reset">Reset</button>
             </div>
           </section>
@@ -6496,8 +6393,7 @@ body.light-theme .tool-launch {
             <p class="hint">Penalty accrues daily on the contract value and is capped when a cap % is set. Nexora Engine does not model grace periods or LD clauses — check your contract.</p>
             <p class="error" id="dl-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="dl-save" data-tool-save="delay"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="dl-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
+              <button type="button" class="btn btn-primary" id="dl-copy"><span class="nav-icon" data-icon="copy" aria-hidden="true"></span>Copy Summary</button>
               <button type="button" class="btn btn-ghost" id="dl-reset">Reset</button>
             </div>
           </section>
@@ -6521,16 +6417,10 @@ body.light-theme .tool-launch {
         <div class="card-head">
           <h2>Saved entries</h2>
           <div class="history-head-actions">
-            <button type="button" class="btn btn-ghost btn-sm" id="history-review" hidden>Review repeats</button>
             <button type="button" class="btn btn-ghost btn-sm" id="history-dedupe" hidden>Remove duplicates</button>
-            <!-- Rows an older build wrote from database notifications rather
-                 than a document save. Offered for removal only while any
-                 remain; never removed on its own. -->
-            <button type="button" class="btn btn-ghost btn-sm" id="history-notifications" hidden>Remove notifications</button>
             <button type="button" class="btn btn-ghost btn-sm" id="history-clear" hidden>Clear all</button>
           </div>
         </div>
-        <div id="history-review-panel" class="history-review" hidden aria-live="polite"></div>
         <div id="history-list" class="history-list"></div>
       </section>
       <div class="actions">
@@ -7052,8 +6942,7 @@ body.light-theme .tool-launch {
             </div>
             <p class="error" id="inv-error" role="alert" hidden></p>
             <div class="actions">
-              <button type="button" class="btn btn-primary" id="inv-save" data-tool-save="invoice"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
-              <button type="button" class="btn btn-ghost" id="inv-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Generate Document PDF</button>
+              <button type="button" class="btn btn-primary" id="inv-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Generate Document PDF</button>
               <button type="button" class="btn btn-ghost" id="inv-reset">Reset document</button>
             </div>
           </section>
@@ -7277,33 +7166,6 @@ body.light-theme .tool-launch {
         <span class="db-detail-actions">
           <button type="button" class="btn btn-primary btn-sm" id="db-detail-drawer-edit">Edit this record</button>
           <button type="button" class="btn btn-ghost btn-sm" id="db-detail-drawer-close-btn">Close</button>
-        </span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Excel export preview. "Export as Excel (.xlsx)" shows the sheet here
-       BEFORE anything is downloaded — and it is not a second description of
-       the document: the template builders are run against a recording
-       worksheet, so this table is drawn from the very cells, merges, fills
-       and number formats the .xlsx is written from. Download only happens on
-       the button below; Cancel/Escape/backdrop return to editing. Rendered by
-       previewErpExcel(). -->
-  <div class="modal-overlay" id="xl-preview-modal" hidden>
-    <div class="drawer-card xl-preview-card" role="dialog" aria-modal="true" aria-labelledby="xl-preview-title">
-      <div class="modal-head">
-        <h2 id="xl-preview-title">Excel preview</h2>
-        <button type="button" class="modal-close" id="xl-preview-close" aria-label="Close preview">&times;</button>
-      </div>
-      <p class="hint" id="xl-preview-note"></p>
-      <div class="xl-preview-scroll">
-        <div id="xl-preview-sheet" class="xl-preview-sheet"></div>
-      </div>
-      <div class="drawer-foot">
-        <span class="drawer-count" id="xl-preview-meta"></span>
-        <span class="db-detail-actions">
-          <button type="button" class="btn btn-primary btn-sm" id="xl-preview-download">Download .xlsx</button>
-          <button type="button" class="btn btn-ghost btn-sm" id="xl-preview-cancel">Cancel</button>
         </span>
       </div>
     </div>
@@ -9026,7 +8888,84 @@ body.light-theme .tool-launch {
   }
 })(typeof window !== 'undefined' ? window : this);
   </script>
-  <script>
+  <!-- TEST HARNESS ONLY (not shipped). Injected immediately before the inline
+     app.js block so the SIGNED-IN Account Settings path can be exercised
+     without a real login. It seeds a syntactically valid session and answers
+     the auth endpoints supabase-js calls, so verifySession() keeps the session
+     instead of clearing it. Everything else falls through to the real fetch. -->
+<script>
+(function () {
+  var KEY = 'sb-oknfjbwfvhctpohusnfk-auth-token';
+  var NOW = Math.floor(Date.now() / 1000);
+  var USER = {
+    id: '00000000-0000-4000-8000-000000000001',
+    aud: 'authenticated', role: 'authenticated',
+    email: 'alex.perera@example.lk',
+    created_at: '2026-02-14T09:24:11.000Z',
+    user_metadata: { full_name: 'Alex Perera', email_verified: true },
+    app_metadata: { provider: 'email', providers: ['email'] },
+    identities: []
+  };
+  window.__testUser = USER;
+  window.__fetchLog = [];
+  // Set __skipSeed before signing out: after the post-logout reload the app
+  // must boot as a real guest, so the harness stops re-seeding the session.
+  if (window.localStorage.getItem('__skipSeed') === '1') {
+    window.localStorage.removeItem(KEY);
+    window.__seeded = false;
+  } else {
+    window.__seeded = true;
+  }
+  if (window.__seeded) window.localStorage.setItem(KEY, JSON.stringify({
+    access_token: 'test.header.payload',
+    refresh_token: 'test-refresh',
+    token_type: 'bearer',
+    expires_in: 3600,
+    expires_at: NOW + 3600,
+    user: USER
+  }));
+
+  var realFetch = window.fetch.bind(window);
+  function json(obj, status) {
+    return Promise.resolve(new Response(JSON.stringify(obj), {
+      status: status || 200,
+      headers: { 'Content-Type': 'application/json' }
+    }));
+  }
+  window.fetch = function (url, init) {
+    var u = String(url);
+    var method = (init && init.method) || 'GET';
+    window.__fetchLog.push(method + ' ' + u);
+    // updateProfile → PUT /auth/v1/user { data: { full_name } }
+    if (u.indexOf('/auth/v1/user') !== -1 && method === 'PUT') {
+      var body = {};
+      try { body = JSON.parse(init.body); } catch (e) { /* ignore */ }
+      window.__lastProfilePut = body;
+      window.__testUser = Object.assign({}, window.__testUser, {
+        user_metadata: Object.assign({}, window.__testUser.user_metadata, {
+          full_name: (body.data && body.data.full_name) || ''
+        })
+      });
+      return json(window.__testUser);
+    }
+    if (u.indexOf('/auth/v1/user') !== -1) return json(window.__testUser);
+    if (u.indexOf('/auth/v1/token') !== -1) {
+      return json({
+        access_token: 'test.header.payload',
+        refresh_token: 'test-refresh',
+        token_type: 'bearer',
+        expires_in: 3600,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        user: window.__testUser
+      });
+    }
+    if (u.indexOf('/rest/v1/') !== -1) return json([]);
+    return realFetch(url, init);
+  };
+})();
+</script>
+
+<script>
 /* Nexora Engine — Business Intelligence & ERP — app.js
  * State (localStorage), rendering, events, message generator,
  * Home↔tool view switching, hours/days time-unit handling.
@@ -9381,17 +9320,11 @@ body.light-theme .tool-launch {
     if (isAdmin()) return { key: 'admin', pill: 'Developer \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
     if (getPlan() === 'premium') return { key: 'premium', pill: 'Premium \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
     const total = meteredToolIds().length;
-    /* Phrased as USED, not remaining. "12 of 13 tools still free" was read —
-       perfectly reasonably — as "12 used", and it was the one line on a
-       fresh account that looked wrong. The tally itself was never stale: it
-       is per account through the namespaced storage shim. */
-    const used = total - freeToolsLeft();
+    const left = freeToolsLeft();
     return {
       key: 'free',
       pill: 'Free plan',
-      credits: used >= total
-        ? 'All ' + total + ' free uses spent'
-        : used + ' of ' + total + ' free uses spent'
+      credits: left > 0 ? left + ' of ' + total + ' tools still free' : 'Free uses used up'
     };
   }
 
@@ -10555,132 +10488,6 @@ body.light-theme .tool-launch {
   const DEFAULT_VIEW = 'home';
   let currentView = '';
 
-  /* ── Result figures must never be clipped ──────────────────────────────
-     Every calculated figure in the app — the dashboard KPIs, each tool's
-     summary boxes, the BOQ / invoice / ERP total lines — is ONE unbreakable
-     token ("Rs190,323,232,323"). At a fixed font size it either fits its box
-     or overflows the card, where a clipping ancestor cuts it mid-digit, so
-     the SAME kind of number reads full in one box and truncated in the box
-     next to it. One pass gives every result box the same treatment: keep the
-     design's size while the figure fits, shrink it when it does not, and
-     wrap only as a last resort — a wrapped number is still readable, a
-     clipped one is simply wrong.
-
-     A MutationObserver drives it, so no renderer has to remember to call it,
-     and showView() re-runs it on entry because a value rendered inside a
-     hidden view has no measurable width. The matching CSS (nowrap +
-     max-width, so the measurement is honest) sits with the other result
-     styles in css/style.css. */
-  const RESULT_VALUE_SELECTOR =
-    '.stat-value, .result-value, .kpi-value, .qr-total-value, .boq-sum-line strong';
-  const RESULT_VALUE_MIN_PX = 10;          // below this the figure wraps instead
-  const RESULT_VALUE_RETRY_FRAMES = 15;    // ~250ms for layout to settle
-  const resultValueBase = new WeakMap();   // element → its design font size
-  let resultValueQueued = false;
-  let resultValueFrames = 0;
-
-  function fitResultValue(el) {
-    if (!el || !el.isConnected) return 'skip';
-    const text = el.textContent;
-    /* Nothing to fit, or not laid out yet ('unlaid'): a figure written while
-       its container is still hidden has no width to measure against, so the
-       pass retries it on the coming frames instead of silently leaving it
-       oversized. */
-    if (!text || text === '\u2014') return 'skip';
-    if (!el.clientWidth) return 'unlaid';
-    let base = resultValueBase.get(el);
-    if (base === undefined) {
-      const size = parseFloat(window.getComputedStyle(el).fontSize);
-      base = size > 0 ? size : 16;
-      resultValueBase.set(el, base);
-    }
-    el.classList.remove('fit-wrap');
-    el.style.fontSize = base + 'px';
-    if (el.scrollWidth <= el.clientWidth) return;   // fits as designed
-    let size = base;
-    while (size > RESULT_VALUE_MIN_PX && el.scrollWidth > el.clientWidth) {
-      size = Math.max(RESULT_VALUE_MIN_PX, size - 0.5);
-      el.style.fontSize = size + 'px';
-    }
-    // Still too wide at the floor: wrap it rather than cut it.
-    if (el.scrollWidth > el.clientWidth) el.classList.add('fit-wrap');
-  }
-
-  function fitResultValues(root) {
-    const scope = (root && root.querySelectorAll) ? root : document;
-    const list = scope.querySelectorAll(RESULT_VALUE_SELECTOR);
-    let unlaid = 0;
-    for (let i = 0; i < list.length; i++) {
-      if (fitResultValue(list[i]) === 'unlaid') unlaid++;
-    }
-    /* Retry only for a full-document pass (never a scoped one), and only a
-       bounded number of frames — a hidden view keeps its figures 'unlaid'
-       for as long as it stays hidden, so an unbounded retry would spin. */
-    if (!root && unlaid) {
-      if (resultValueFrames < RESULT_VALUE_RETRY_FRAMES) {
-        resultValueFrames++;
-        scheduleResultFit();
-      }
-    } else if (!unlaid) {
-      resultValueFrames = 0;
-    }
-  }
-
-  /* The retry path: never resets the frame budget it is spending. */
-  function scheduleResultFit() {
-    if (resultValueQueued) return;
-    resultValueQueued = true;
-    window.requestAnimationFrame(function () {
-      resultValueQueued = false;
-      fitResultValues();
-    });
-  }
-
-  /* The real-change path: a mutation, a resize or a view change restarts the
-     catch-up budget, because it is new information about the layout. */
-  function queueResultFit() {
-    resultValueFrames = 0;
-    scheduleResultFit();
-  }
-
-  function watchResultValues() {
-    if (typeof window.MutationObserver !== 'function') return;
-    const touchesAValue = function (node) {
-      if (!node) return false;
-      const el = node.nodeType === 1 ? node : node.parentElement;
-      return !!(el && el.closest && el.closest(RESULT_VALUE_SELECTOR));
-    };
-    const obs = new MutationObserver(function (records) {
-      for (let i = 0; i < records.length; i++) {
-        const rec = records[i];
-        if (touchesAValue(rec.target)) { queueResultFit(); return; }
-        /* Renderers that rebuild a container (`#results`, `#erp-summary`, …)
-           with innerHTML put the figures in as ADDED NODES of a target that
-           is not itself a value box — checking only the target missed every
-           one of those renders, which is how a large figure could sit
-           un-fitted until the next view change. */
-        const added = rec.addedNodes;
-        for (let j = 0; j < added.length; j++) {
-          const node = added[j];
-          if (node.nodeType !== 1) continue;
-          if (node.matches(RESULT_VALUE_SELECTOR) || node.querySelector(RESULT_VALUE_SELECTOR)) {
-            queueResultFit();
-            return;
-          }
-        }
-      }
-    });
-    /* Text, plus `hidden` — a result panel that is unhidden has to be
-       measured again, and that happens with no text change at all. The
-       `hidden` filter is deliberate: watching `class` or `style` instead
-       would feed the observer its own `.fit-wrap` / font-size writes. */
-    obs.observe(document.body, {
-      subtree: true, childList: true, characterData: true,
-      attributes: true, attributeFilter: ['hidden']
-    });
-    window.addEventListener('resize', queueResultFit);
-  }
-
   function viewFromHash(hash) {
     const raw = String(hash === undefined ? window.location.hash : hash)
       .replace(/^#\/?/, '').trim().toLowerCase();
@@ -10778,10 +10585,6 @@ body.light-theme .tool-launch {
     // Repaint the account surfaces on entry: the plan, credits and sync rows
     // must reflect the store as it stands now, not as it stood at boot.
     if (name === 'account') { renderAuthUi(); renderStorageStatus(); renderCloudStatus(); }
-    /* A figure rendered while its view was hidden has no measurable width, so
-       the fit pass runs again now that the view is on screen. */
-    queueResultFit();
-    fitResultValues();
     closeSidebar();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -10934,7 +10737,6 @@ body.light-theme .tool-launch {
     if (!(revisions >= 0)) { showError(err, 'Revisions must be 0 or more.'); return false; }
 
     const wasNew = !state.project;
-    if (wasNew) clearToolLibraryId('scope-guard');   // a new project is a new document
     state.project = {
       name: $('p-name').value.trim(),
       currency: $('p-currency').value,
@@ -10974,13 +10776,7 @@ body.light-theme .tool-launch {
     const dropEl = $('stat-drop');
     dropEl.textContent = displayDrop(c.drop, hasBaseline);
     dropEl.classList.remove('drop-bad', 'drop-none');
-    /* No baseline and no drop means NEITHER class applies — which used to be
-       written as classList.add(''), and add() throws on an empty token with
-       "The token provided must not be empty". The throw happened inside
-       renderAll(), so it aborted everything the boot sequence does after it
-       (the later renders and the hashchange listener were never registered). */
-    const dropCls = c.drop > 0 ? 'drop-bad' : (hasBaseline ? 'drop-none' : '');
-    if (dropCls) dropEl.classList.add(dropCls);
+    dropEl.classList.add(c.drop > 0 ? 'drop-bad' : (hasBaseline ? 'drop-none' : ''));
 
     $('stat-unbilled').textContent = Calc.fmtMoney(c.unbilled, p.currency);
     $('stat-extra-hours').textContent = Calc.fmtDur(c.committed, p.hoursUnit);
@@ -11538,7 +11334,6 @@ body.light-theme .tool-launch {
 
   async function clearQr() {
     if (!(await confirmAction({ title: 'Clear line items?', message: 'Clear all line items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
-    clearToolLibraryId('qr');       // cleared rows are a new document
     qrRows = [];
     saveQr();
     renderQr();
@@ -11624,14 +11419,6 @@ body.light-theme .tool-launch {
     '.var-doc .q-sigline { width: 200px; border-bottom: 1px solid #111827; height: 26px; }',
     /* Formal document layout (Metrix Engineering format) */
     '.fm-doc { font-size: 12px; }',
-    /* Formal-letter documents (Quantity & Rate, Quotation, Smart Invoice,
-       Variation) are flow-based, unlike the absolutely positioned METRIX /
-       ERP template whose coordinates already carry the master's own margins.
-       Without a page margin of its own the letterhead ran edge-to-edge and
-       the right-aligned Date / Ref / TIN block sat exactly on the paper edge,
-       where a printer or PDF exporter clips it. Scoped to .fm-doc so the
-       master template's geometry is untouched. */
-    '.doc-page > .fm-doc { padding: 15mm 12mm; box-sizing: border-box; }',
     '.fm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 3px solid #111827; padding-bottom: 10px; }',
     '.fm-left { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }',
     '.fm-co { min-width: 0; }',
@@ -11641,11 +11428,7 @@ body.light-theme .tool-launch {
     '.fm-spec { display: block; width: 100%; font-style: italic; font-weight: bold; font-size: 11px; color: #0d1b6e !important; margin: 4px 0 8px 0; }',
     '.fm-right { text-align: right; flex: none; max-width: 42%; }',
     '.fm-banner { display: inline-block; background: #111827; color: #ffffff; font-weight: 700; font-size: 12.5px; letter-spacing: 0.06em; padding: 4px 12px; border-radius: 4px; margin-bottom: 6px; }',
-    /* :not(.fm-banner) — the doc-type badge is a <div> and a direct child of
-       .fm-right, so a plain `> div` rule outranked `.fm-banner` and painted
-       its text #111827 on its own #111827 background: a solid, unreadable
-       block. The badge keeps its own white text and 12.5px size. */
-    '.fm-right > div:not(.fm-banner) { font-size: 11px; color: #111827; margin-top: 2px; }',
+    '.fm-right > div { font-size: 11px; color: #111827; margin-top: 2px; }',
     '.fm-metabox { display: flex; gap: 0; border: 1px solid #111827; border-radius: 4px; margin: 12px 0 10px; }',
     '.fm-meta-col { flex: 1 1 50%; padding: 8px 10px; min-width: 0; }',
     '.fm-meta-col + .fm-meta-col { border-left: 1px solid #111827; }',
@@ -11790,39 +11573,6 @@ body.light-theme .tool-launch {
     const doPrint = function () {
       if (printed) return;
       printed = true;
-      /* Print suppressed in test mode (?nodl=1): the document is still
-         written into the hidden frame — so the exact print payload can be
-         measured in the DOM — but no print dialog opens and no file is
-         produced. Reading the frame is the real check; the dialog is not
-         something a test can usefully assert on anyway. */
-      /* Double-print audit. One user action must produce ONE print payload.
-         In a single measurement two identical payloads arrived from one
-         dispatch and did not reproduce in five later trials, so it is
-         RECORDED rather than assumed either way: every payload carries an
-         ISO timestamp, and a second payload for the same title inside 1.5s
-         logs a warning naming both timestamps. Recording changes no
-         behaviour — nothing is blocked, suppressed or retried here. */
-      const rec = {
-        at: new Date().toISOString(),
-        title: title,
-        bytes: compiledHTML.length,
-        html: compiledHTML,
-        suppressed: nexoraNoDownload()
-      };
-      window.__nexoraPrintouts = window.__nexoraPrintouts || [];
-      const prevPrint = window.__nexoraPrintouts[window.__nexoraPrintouts.length - 1];
-      const gap = prevPrint && prevPrint.at ? (Date.now() - Date.parse(prevPrint.at)) : null;
-      if (prevPrint && prevPrint.title === title && gap !== null && gap < 1500) {
-        console.warn('[print-audit] two print payloads for "' + title + '" landed close together — previous at ' + prevPrint.at +
-          ' (' + prevPrint.bytes + ' bytes), now ' + rec.at + ' (' + rec.bytes + ' bytes), ' + gap + 'ms apart. ' +
-          'Prints are DEFERRED until fonts and images settle, so two separate exports can flush together and this is not ' +
-          'automatically a double-fire. Compare these timestamps with your own clicks before treating it as a bug.');
-      }
-      window.__nexoraPrintouts.push(rec);
-      if (rec.suppressed) {
-        console.info('[nodl] print suppressed (no dialog, no file):', title, compiledHTML.length + ' bytes', rec.at);
-        return;
-      }
       try { win.focus(); win.print(); } catch (e) { /* user can Ctrl+P */ }
     };
     /* Fonts must be in before the first paint request, or the master
@@ -11909,7 +11659,12 @@ body.light-theme .tool-launch {
     // Compile the live values (rows, currency symbols, totals) into a
     // standalone print document — no CDN, no offscreen capture.
     exportViaPrintWindow($('qr-doc'), 'Quantity & Rate sheet');
-    logActivity(TOOL_DOC.qr());
+    pushHistory({
+      type: 'pdf', tool: 'qr', toolName: 'Quantity & Rate Calculator',
+      title: 'Quantity & Rate sheet',
+      total: (function () { let t = 0; for (let i = 0; i < qrRows.length; i++) { const a = qrAmount(qrRows[i]); if (a !== null) t += a; } return Calc.TOOL_CURRENCIES[qrCur()].symbol.trim() + ' ' + Calc.fmtNum(t); })(),
+      draft: { tool: 'qr' }
+    });
   }
 
   /* ── Engineering Quotation & BOQ Generator (tool #03) ──────────── */
@@ -12117,7 +11872,6 @@ body.light-theme .tool-launch {
 
   async function clearBoq() {
     if (!(await confirmAction({ title: 'Clear BOQ items?', message: 'Clear all BOQ items? This cannot be undone.', confirmLabel: 'Clear', danger: true }))) return;
-    clearToolLibraryId('boq');
     boqState.lines = [];
     saveBoq();
     renderBoqRows();
@@ -12126,7 +11880,6 @@ body.light-theme .tool-launch {
 
   async function resetBoq() {
     if (!(await confirmAction({ title: 'Reset quotation?', message: 'This clears the details, items, discount and VAT.', confirmLabel: 'Reset', danger: true }))) return;
-    clearToolLibraryId('boq');
     boqState = emptyBoq();
     saveBoq();
     renderBoq();
@@ -12145,7 +11898,12 @@ body.light-theme .tool-launch {
     // Live values (client, ref, date, items, discount, VAT) were compiled
     // into #quotation-doc by buildBoqDoc() just above.
     exportViaPrintWindow($('quotation-doc'), 'Quotation ' + (boqState.meta.ref || ''));
-    logActivity(TOOL_DOC.boq());
+    pushHistory({
+      type: 'pdf', tool: 'boq', toolName: 'Quotation',
+      title: boqState.meta.client || 'Quotation',
+      total: quoMoney(Calc.boqFinal(Calc.boqSubTotal(boqState.lines), num(boqState.discount), num(boqState.vat))),
+      draft: { tool: 'boq' }
+    });
   }
 
   /* ── Smart Invoice & Document Builder (tool #05) ──────────────── */
@@ -12432,7 +12190,6 @@ body.light-theme .tool-launch {
 
   async function resetInv() {
     if (!(await confirmAction({ title: 'Reset document?', message: 'This clears the type, fields, business details and items.', confirmLabel: 'Reset', danger: true }))) return;
-    clearToolLibraryId('invoice');
     invState = emptyInv();
     saveInv();
     renderInv();
@@ -12447,7 +12204,12 @@ body.light-theme .tool-launch {
     // Live values (doc type, business header + logo, fields, items,
     // currency) were compiled into #inv-doc by buildInvDoc() just above.
     exportViaPrintWindow($('inv-doc'), INV_DOC_TYPES[invState.docType].label + ' ' + (invState.meta.ref || invState.meta.invoice || ''));
-    logActivity(TOOL_DOC.invoice());
+    pushHistory({
+      type: 'pdf', tool: 'invoice', toolName: 'Smart Invoice & Document Builder',
+      title: invState.meta.client || INV_DOC_TYPES[invState.docType].label,
+      total: (function () { let t = 0; for (let i = 0; i < invState.lines.length; i++) { const a = invLineAmount(invState.lines[i]); if (a !== null) t += a; } return invMoney(t); })(),
+      draft: { tool: 'invoice' }
+    });
   }
 
   /* ── Margin & Markup Pricing Calculator (tool #04) ─────────── */
@@ -12528,7 +12290,6 @@ body.light-theme .tool-launch {
 
   async function resetPricing() {
     if (!(await confirmAction({ title: 'Reset pricing calculator?', message: 'This clears cost, overhead and profit target.', confirmLabel: 'Reset', danger: true }))) return;
-    clearToolLibraryId('pricing');
     prState = emptyPricing();
     savePricing();
     fillPricingForm();
@@ -12552,7 +12313,11 @@ body.light-theme .tool-launch {
       'Net profit: ' + prMoney(r.profit) + ' (margin ' + Calc.fmtPct(r.marginPct) + ' · markup ' + Calc.fmtPct(r.markupPct) + ')'
     ];
     const text = lines.join('\n');
-    logActivity(TOOL_DOC.pricing());
+    pushHistory({
+      type: 'copy', tool: 'pricing', toolName: 'Margin & Markup Pricing Calculator',
+      title: 'Pricing summary', total: prMoney(r.price),
+      draft: { tool: 'pricing' }
+    });
     const btn = $('pr-copy');
     const done = function () { flashCopied(btn); };
     const fallback = function () {
@@ -12702,7 +12467,11 @@ body.light-theme .tool-launch {
     }
     lines.push('', 'Percentages applied on CIF as entered — verify current rates with your customs agent.');
     copyText(lines.join('\n'), $('dt-copy'), 'Copy Breakdown');
-    logActivity(TOOL_DOC.duty());
+    pushHistory({
+      type: 'copy', tool: 'duty', toolName: 'Import Tax & Landed Cost Calculator',
+      title: 'Import duty breakdown', total: dutyMoney(r.landed),
+      draft: { tool: 'duty' }
+    });
   }
 
   /* ── Variation & Change Order Generator (tool #07) ────────────── */
@@ -12824,7 +12593,12 @@ body.light-theme .tool-launch {
     // Live values (project, desc, figures, dates) were compiled into
     // #variation-doc by buildVariationDoc() just above.
     exportViaPrintWindow($('variation-doc'), 'Contract variation ' + (varState.project || ''));
-    logActivity(TOOL_DOC.variation());
+    pushHistory({
+      type: 'pdf', tool: 'variation', toolName: 'Variation & Change Order Generator',
+      title: varState.project || 'Contract variation',
+      total: varMoney(Calc.variationCalc(varState.original, varState.added).revised),
+      draft: { tool: 'variation' }
+    });
   }
 
   /* ── Freelance Rate & Overhead Breakeven (tool #08) ───────────── */
@@ -12918,7 +12692,11 @@ body.light-theme .tool-launch {
       'Breakeven covers all costs — price above this to make a profit.'
     ];
     copyText(lines.join('\n'), $('bk-copy'), 'Copy Summary');
-    logActivity(TOOL_DOC.breakeven());
+    pushHistory({
+      type: 'copy', tool: 'breakeven', toolName: 'Freelance Rate & Overhead Breakeven Calculator',
+      title: 'Rate & overhead breakeven', total: bkMoney(r.hourly) + '/h',
+      draft: { tool: 'breakeven' }
+    });
   }
 
   /* ── Cross-Border FX & Fee Adjuster (tool #09) ────────────────── */
@@ -13026,7 +12804,11 @@ body.light-theme .tool-launch {
       'Send exactly ' + fxMoney(r.invoice) + ' to net ' + fxMoney(r.received) + '.'
     ];
     copyText(lines.join('\n'), $('fx-copy'), 'Copy Invoice Amount');
-    logActivity(TOOL_DOC.fx());
+    pushHistory({
+      type: 'copy', tool: 'fx', toolName: 'Cross-Border FX & Fee Adjuster',
+      title: 'Fee-adjusted invoice amount', total: fxMoney(r.invoice),
+      draft: { tool: 'fx' }
+    });
   }
 
   /* ── Academic GPA & Target Grade Planner (tool #10) ───────────── */
@@ -13151,13 +12933,15 @@ body.light-theme .tool-launch {
       }
     }
     copyText(lines.join('\n'), $('gp-copy'), 'Copy Summary');
-    logActivity(TOOL_DOC.gpa());
+    pushHistory({
+      type: 'copy', tool: 'gpa', toolName: 'Academic GPA & Target Grade Planner',
+      title: 'GPA forecast', total: '',
+      draft: { tool: 'gpa' }
+    });
   }
   /* ── History (localStorage) ───────────────────────────────────── */
-  // The Library (History & Saved Documents): DELIBERATE saves only — today
-  // that means the ERP's "Save to Library" button and nothing else. An
-  // export or a summary copy is an action, not a saved document, so those
-  // are recorded in the activity feed (ACTIVITY_KEY) below.
+  // Central event log: every PDF export or summary copy across all tools
+  // records a snapshot (tool, title, total with currency, timestamp).
   const HISTORY_KEY = 'calcmall_history';
   const HISTORY_DRAFTS_KEY = 'calcmall_history_drafts';
 
@@ -13204,107 +12988,50 @@ body.light-theme .tool-launch {
      longer leaves two rows with the same millisecond on the clock. */
   const HISTORY_DEDUPE_MS = 2000;
 
-  /* `pushHistory()` — the generic "append a Library row" helper — is gone
-     deliberately. It was the remaining way a row could reach the Library
-     without the user saving anything: every tool called it on export/copy,
-     so "History & Saved Documents" was really an export log. The Library is
-     now written in exactly ONE place, the ERP's Save to Library button
-     (`erpSaveToLibrary`), and nothing else may append to `history`.
-     Export/copy events are recorded in the activity feed instead — see
-     `logActivity()` below. Do not reintroduce a second writer. */
-
-  /* ── Activity log — NOT the Library ───────────────────────────────
-     Everything that HAPPENED but was not saved as a document is recorded
-     HERE and surfaces in the Home activity feed:
-
-       · database events (an item or client added, edited or removed)
-       · a PDF export or a summary copy from any tool
-
-     None of it goes into `history`. History & Saved Documents is a list of
-     DOCUMENTS, and the ONLY thing that may add a row to it is a deliberate
-     Save to Library. Logging database notifications into `history` is what
-     used to fill the Library with "Item DB updated" rows nobody saved, and
-     logging exports there is what made it read like an export log — so an
-     export now looks the same in the feed while the Library stays clean. */
-  const ACTIVITY_KEY = 'calcmall_activity_v1';
-  function loadActivityLog() {
-    try {
-      const raw = localStorage.getItem(ACTIVITY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) { return []; }
-  }
-  let activityLog = loadActivityLog();
-  function saveActivityLog() {
-    try { localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activityLog)); } catch (e) { /* ignore */ }
-  }
-  /* One-action guard: a click that somehow reaches its handler twice leaves
-     one feed entry, not two. */
-  function isDuplicateActivity(entry) {
-    const last = activityLog[0];
+  function isDuplicateHistory(entry) {
+    const last = history[0];
     if (!last) return false;
     if (Date.now() - last.at > HISTORY_DEDUPE_MS) return false;
-    return String(last.type || '') === String(entry.type || 'db') &&
-      String(last.toolName || '') === String(entry.toolName || '') &&
-      String(last.title || '') === String(entry.title || '');
+    const same = function (a, b) { return String(a || '') === String(b || ''); };
+    return same(last.type, entry.type || 'pdf') &&
+      same(last.tool, entry.tool) &&
+      same(last.toolName, entry.toolName) &&
+      same(last.title, entry.title) &&
+      same(last.client, entry.client) &&
+      same(last.ref, entry.ref) &&
+      same(last.total, entry.total);
   }
-  function logActivity(entry) {
-    if (!entry) return;
-    if (isDuplicateActivity(entry)) return;
-    activityLog.unshift({
+
+  function pushHistory(entry) {
+    if (isDuplicateHistory(entry)) return;
+    history.unshift({
       id: uid(),
-      type: entry.type || 'db',
+      type: entry.type || 'pdf',
       tool: entry.tool || '',
       toolName: entry.toolName || 'Nexora Engine',
       title: entry.title || '\u2014',
       total: entry.total || '',
+      /* Document entries carry the client and the reference so the activity
+         feed can name WHICH document it was. Repeating the document type for
+         every row told the reader nothing; rows logged before these fields
+         existed simply fall back to title/total. */
       client: entry.client || '',
       ref: entry.ref || '',
       at: Date.now()
     });
-    if (activityLog.length > 60) activityLog = activityLog.slice(0, 60);
-    saveActivityLog();
-    renderActivity();
-  }
-  /* The Home feed: saved documents (History) plus the events logged here
-     (database changes, exports and copies), newest first. */
-  function activityFeed() {
-    return history.concat(activityLog).sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
-  }
-  /* Routes in History that are notifications, not documents. Written by an
-     older build that logged database changes into the Library; counted so
-     the user can see exactly how much of the list is noise, and cleared only
-     when they ask. Nothing removes them on its own. */
-  function libraryNotificationCount() {
-    let n = 0;
-    for (let i = 0; i < history.length; i++) if (history[i].type === 'db') n++;
-    return n;
-  }
-  function removeLibraryNotifications() {
-    const before = history.length;
-    history = history.filter(function (h) { return h.type !== 'db'; });
-    const removed = before - history.length;
-    if (removed) {
-      saveHistory();
-      renderHistory();
-      renderActivity();
-      renderKpis();
-      updateKPICards();
+    if (history.length > 60) history = history.slice(0, 60);
+    if (entry.draft) draftStore[history[0].id] = entry.draft;
+    // Prune orphaned drafts (their list entry aged out).
+    const live = {};
+    for (let i = 0; i < history.length; i++) {
+      if (draftStore[history[i].id]) live[history[i].id] = draftStore[history[i].id];
     }
-    return removed;
-  }
-  /* The Library button for it: confirm first, remove only notifications. */
-  async function removeNotificationsFromLibrary() {
-    const n = libraryNotificationCount();
-    if (!n) return;
-    if (!(await confirmAction({
-      title: 'Remove notifications?',
-      message: 'Remove ' + n + ' database notification' + (n === 1 ? '' : 's') + ' from the Library? They were written by an older build that logged item and client edits as if they were saved documents. Your saved documents, and the database records themselves, are not affected.',
-      confirmLabel: 'Remove notifications'
-    }))) return;
-    const removed = removeLibraryNotifications();
-    showToast(removed === 1 ? 'Removed 1 notification from the Library.' : 'Removed ' + removed + ' notifications from the Library.');
+    draftStore = live;
+    saveHistory();
+    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
+    renderHistory();
+    renderActivity();
+    renderKpis();
   }
 
   function renderHistory() {
@@ -13314,12 +13041,10 @@ body.light-theme .tool-launch {
     renderKpis();
     const clearBtn = $('history-clear');
     const dedupeBtn = $('history-dedupe');
-    const noteBtn = $('history-notifications');
     if (!history.length) {
-      list.innerHTML = '<div class="history-empty">Nothing saved yet. Use <strong>Save to Library</strong> in the Master ERP Engine or in any Other Utilities tool to keep a document here — exporting a PDF or copying a summary does not save it.</div>';
+      list.innerHTML = '<div class="history-empty">No saved entries yet. Save a document to the Library, or export a PDF or copy a summary from any tool.</div>';
       if (clearBtn) clearBtn.hidden = true;
       if (dedupeBtn) dedupeBtn.hidden = true;
-      if (noteBtn) noteBtn.hidden = true;
       return;
     }
     list.innerHTML = history.map(function (h) {
@@ -13327,23 +13052,6 @@ body.light-theme .tool-launch {
       const badge = h.type === 'pdf'
         ? '<span class="pill pill-accent">PDF</span>'
         : '<span class="pill pill-muted">Copy</span>';
-      /* Retention is per document and OFF by default, so an entry only ever
-         disappears on its own when the user switched this on for THAT row. */
-      const expiryOn = h.autoExpire === true;
-      const touched = Number(h.touchedAt || h.at || 0);
-      const daysLeft = expiryOn && touched > 0
-        ? Math.max(0, Math.ceil((touched + LIBRARY_EXPIRE_MS - Date.now()) / 86400000))
-        : null;
-      const retention = '<button type="button" class="btn btn-ghost btn-sm history-retention' +
-        (expiryOn ? ' is-on' : '') + '" data-hact="retention" title="' +
-        (expiryOn
-          ? 'Auto-delete is ON for this document: it is removed after ' + LIBRARY_EXPIRE_DAYS + ' days without being opened or re-saved. Click to keep it forever.'
-          : 'Kept forever. Click to auto-delete this document after ' + LIBRARY_EXPIRE_DAYS + ' days without being opened or re-saved.') +
-        '">' +
-        (expiryOn
-          ? '<span class="history-retention-mark" aria-hidden="true">&#9679;</span> Auto-delete in ' + daysLeft + 'd'
-          : 'Keep forever') +
-        '</button>';
       return '<div class="history-item card" data-id="' + h.id + '">' +
         '<div class="history-main">' +
           '<div class="history-title"><strong>' + esc(h.title) + '</strong> ' + badge + '</div>' +
@@ -13353,7 +13061,6 @@ body.light-theme .tool-launch {
         '<div class="history-actions">' +
           '<button type="button" class="btn btn-ghost btn-sm" data-hact="view">View / Load draft</button>' +
           (h.type === 'pdf' ? '<button type="button" class="btn btn-ghost btn-sm" data-hact="pdf">Re-download PDF</button>' : '') +
-          retention +
           '<button type="button" class="btn btn-ghost btn-sm" data-hact="delete">Delete</button>' +
         '</div>' +
       '</div>';
@@ -13361,14 +13068,6 @@ body.light-theme .tool-launch {
     if (clearBtn) clearBtn.hidden = false;
     // Only offered while it would actually do something.
     if (dedupeBtn) dedupeBtn.hidden = duplicateHistoryCount() === 0;
-    /* Notification rows left behind by the old auto-save: offered for removal
-       only while any remain, and never removed without a click. */
-    if (noteBtn) {
-      const n = libraryNotificationCount();
-      noteBtn.hidden = n === 0;
-      if (n) noteBtn.textContent = 'Remove ' + n + ' notification' + (n === 1 ? '' : 's');
-    }
-    renderHistoryReview();
   }
 
   function historyAction(id, act) {
@@ -13377,28 +13076,9 @@ body.light-theme .tool-launch {
     if (act === 'delete') {
       history = history.filter(function (x) { return x.id !== id; });
       delete draftStore[id];
-      /* Any tool whose next save would have updated this row forgets it, so
-         that save starts a new document instead of aiming at a dead id. */
-      const owners = Object.keys(toolLibraryIds);
-      for (let i = 0; i < owners.length; i++) {
-        if (toolLibraryIds[owners[i]] === id) delete toolLibraryIds[owners[i]];
-      }
-      saveToolLibraryIds();
       saveHistory();
       try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
       renderHistory();
-      return;
-    }
-    /* Per-document retention switch: “auto-delete after 30 days of
-       inactivity”. Off by default; this only ever changes the flag. */
-    if (act === 'retention') {
-      h.autoExpire = h.autoExpire !== true;
-      h.touchedAt = Date.now();   // switching it on starts a fresh window
-      saveHistory();
-      renderHistory();
-      showToast(h.autoExpire
-        ? 'Auto-delete on — this document will be removed after ' + LIBRARY_EXPIRE_DAYS + ' days without being opened or re-saved.'
-        : 'Keep forever — this document will not be auto-deleted.');
       return;
     }
     const draft = draftStore[id] || {};
@@ -13430,16 +13110,10 @@ body.light-theme .tool-launch {
         // so it passes the same gate (a guest must not reach a tool here).
         if (!checkAccessAndCredits()) return;
         selectTool(tool);
-        /* Put back what was actually SAVED, and point the tool's next save at
-           this row so re-saving updates it instead of adding a copy. */
-        if (draft && draft.state) restoreToolSnapshot(tool, draft);
-        toolLibraryIds[tool] = h.id;
-        saveToolLibraryIds();
         showView(TOOL_VIEWS[tool]);
       } else {
         showView('home');
       }
-      touchLibraryEntry(h);   // opening it counts as activity for its expiry clock
       return;
     }
     if (act === 'pdf') {
@@ -13453,7 +13127,6 @@ body.light-theme .tool-launch {
       else if (tool === 'qr') qrExportPdf();
       else if (tool === 'variation') exportVariationPdf();
       else if (tool && TOOL_VIEWS[tool]) { selectTool(tool); showView(TOOL_VIEWS[tool]); }
-      touchLibraryEntry(h);   // re-downloading it counts as activity too
       return;
     }
   }
@@ -13484,98 +13157,6 @@ body.light-theme .tool-launch {
       if (seen[key]) dupes++; else seen[key] = true;
     }
     return dupes;
-  }
-
-  /* ── READ-ONLY repeat review ─────────────────────────────────────────
-     Two different questions, deliberately two different tools:
-       · "Remove duplicates" ACTS — same-minute copies of one save.
-       · "Review repeats" only LISTS. It groups entries that describe the SAME
-         record by type + tool + title + client + reference + total, whatever
-         the clock says, and marks which row a dedupe would keep. It exists
-         because a repeated save (or a build that saved on its own) can leave
-         copies minutes apart, and the user should be able to SEE them before
-         removing anything. Nothing in this path writes, moves or deletes. */
-  function repeatKeyOf(h) {
-    return [h.type || '', h.tool || '', h.toolName || '', h.title || '',
-      h.client || '', h.ref || '', h.total || ''].join('\u0001');
-  }
-
-  function historyRepeatGroups() {
-    const groups = {};
-    const order = [];
-    for (let i = 0; i < history.length; i++) {
-      const h = history[i];
-      const key = repeatKeyOf(h);
-      if (!groups[key]) { groups[key] = []; order.push(key); }
-      groups[key].push(h);
-    }
-    // history is newest-first, so each group is already in keep-first order.
-    return order.map(function (k) { return groups[k]; })
-      .filter(function (g) { return g.length > 1; });
-  }
-
-  function historyWhen(at) {
-    return new Date(Number(at) || 0).toLocaleString('en-GB',
-      { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  }
-
-  function renderHistoryReview() {
-    const panel = $('history-review-panel');
-    const btn = $('history-review');
-    if (!panel) return;
-    const groups = historyRepeatGroups();
-    if (btn) {
-      btn.hidden = groups.length === 0;
-      btn.textContent = groups.length === 1 ? 'Review 1 repeat' : 'Review ' + groups.length + ' repeats';
-    }
-    let repeats = 0;
-    let dbRepeats = 0;
-    groups.forEach(function (g) {
-      repeats += g.length - 1;
-      if ((g[0].type || '') === 'db') dbRepeats += g.length;
-    });
-    if (!groups.length) {
-      panel.hidden = true;
-      panel.innerHTML = '';
-      return;
-    }
-
-    const docGroups = groups.filter(function (g) { return (g[0].type || '') !== 'db'; });
-    const activityGroups = groups.filter(function (g) { return (g[0].type || '') === 'db'; });
-
-    const groupHtml = function (g) {
-      const head = g[0];
-      const isActivity = (head.type || '') === 'db';
-      return '<div class="history-repeat-group">' +
-        '<div class="history-repeat-head">' +
-          '<strong>' + esc(head.title || '\u2014') + '</strong>' +
-          '<span class="pill ' + (isActivity ? 'pill-muted' : 'pill-accent') + '">' +
-            (isActivity ? 'database change' : (head.type === 'copy' ? 'copy' : 'PDF')) + '</span>' +
-          '<span class="pill pill-muted">' + g.length + ' copies</span>' +
-        '</div>' +
-        '<div class="history-repeat-meta">' + esc(head.toolName || '') +
-          (head.total ? ' · ' + esc(head.total) : '') +
-          (head.client ? ' · ' + esc(head.client) : '') +
-          (head.ref ? ' · ' + esc(head.ref) : '') + '</div>' +
-        '<ul class="history-repeat-rows">' + g.map(function (h, i) {
-          return '<li><span class="history-repeat-when">' + esc(historyWhen(h.at)) + '</span>' +
-            (i === 0
-              ? '<span class="history-repeat-keep">would be kept</span>'
-              : '<span class="history-repeat-drop">repeat \u2014 remove from the row\u2019s own Delete button</span>') +
-            '</li>';
-        }).join('') + '</ul>' +
-      '</div>';
-    };
-
-    panel.innerHTML =
-      '<div class="history-repeat-summary"><strong>' + repeats + ' of ' + history.length + '</strong> saved ' +
-        (history.length === 1 ? 'entry repeats' : 'entries repeat') +
-        ' another entry with the same title, client, reference and total.' +
-        (docGroups.length ? ' ' + docGroups.length + ' ' + (docGroups.length === 1 ? 'group is a' : 'groups are') + ' document.' : '') +
-        (activityGroups.length ? ' ' + dbRepeats + ' ' + (dbRepeats === 1 ? 'row is a' : 'rows are') +
-          ' database change (an item or client was saved or removed), not a document.' : '') +
-        ' <em>Nothing is deleted here \u2014 this is the list to review. Use <strong>Remove duplicates</strong> for same-minute copies, or each row\u2019s Delete button.</em></div>' +
-      groups.map(groupHtml).join('');
   }
 
   function dedupeHistory() {
@@ -13618,17 +13199,12 @@ body.light-theme .tool-launch {
   }
 
   async function clearHistory() {
-    if (!(await confirmAction({ title: 'Clear history?', message: 'Clear every saved document from the Library? This cannot be undone. Activity-feed notifications are cleared separately, by "Clear activity feed" on the Home page.', confirmLabel: 'Clear everything', danger: true }))) return;
+    if (!(await confirmAction({ title: 'Clear history?', message: 'Clear the entire history? This cannot be undone.', confirmLabel: 'Clear everything', danger: true }))) return;
     history = [];
     draftStore = {};
-    toolLibraryIds = {};            // every tool's remembered row went with it
-    saveToolLibraryIds();
     saveHistory();
     try { localStorage.removeItem(HISTORY_DRAFTS_KEY); } catch (e) { /* ignore */ }
     renderHistory();
-    renderActivity();
-    renderKpis();
-    updateKPICards();
   }
 
   /* ── Retainer & SLA Pricing Estimator (tool #11) ──────────────── */
@@ -13690,7 +13266,6 @@ body.light-theme .tool-launch {
 
   async function resetRetainer() {
     if (!(await confirmAction({ title: 'Reset retainer estimator?', message: 'This clears the client details and pricing inputs.', confirmLabel: 'Reset', danger: true }))) return;
-    clearToolLibraryId('retainer');
     rtState = emptyRetainer();
     saveRetainer();
     fillRetainerForm();
@@ -13714,7 +13289,11 @@ body.light-theme .tool-launch {
       'Net profit / month: ' + rtMoney(r.profit) + ' (margin ' + Calc.fmtPct(r.marginPct) + ')'
     ];
     copyText(lines.join('\n'), $('rt-copy'), 'Copy Summary');
-    logActivity(TOOL_DOC.retainer());
+    pushHistory({
+      type: 'copy', tool: 'retainer', toolName: 'Retainer & SLA Pricing Estimator',
+      title: rtState.client || 'Retainer pricing', total: rtMoney(r.price) + '/mo',
+      draft: { tool: 'retainer' }
+    });
   }
 
   /* ── Project Delay & Damages Impact (tool #12) ────────────────── */
@@ -13779,7 +13358,6 @@ body.light-theme .tool-launch {
 
   async function resetDelay() {
     if (!(await confirmAction({ title: 'Reset delay calculator?', message: 'This clears the contract details and penalty rates.', confirmLabel: 'Reset', danger: true }))) return;
-    clearToolLibraryId('delay');
     dlState = emptyDelay();
     saveDelay();
     fillDelayForm();
@@ -13800,7 +13378,11 @@ body.light-theme .tool-launch {
       'Total damages exposure: ' + dlMoney(r.total) + ' (' + Calc.fmtPct(r.pctOfContract) + ' of contract)'
     ];
     copyText(lines.join('\n'), $('dl-copy'), 'Copy Summary');
-    logActivity(TOOL_DOC.delay());
+    pushHistory({
+      type: 'copy', tool: 'delay', toolName: 'Project Delay & Damages Impact Calculator',
+      title: dlState.project || 'Delay impact', total: dlMoney(r.total),
+      draft: { tool: 'delay' }
+    });
   }
 
   /* ── Brand & settings (shared letterhead + default terms) ───── */
@@ -14226,47 +13808,20 @@ body.light-theme .tool-launch {
     return acc;
   }
 
-  /* COMMITTED value only — and the figures the card then DESCRIBES are the
-     same figures it SUMS.
-
-     The live ERP working draft used to be added in here:
-
-         if (erpDocType()) procVal += erpDocTotals().final;
-
-     which is how a brand-new account with nothing saved could read
-     "LKR 2,809 across 0 documents" — the money came from an unsaved draft
-     while the document count came from `history`, a different scope
-     entirely. `kpiTrends().val` already summed documents only, so the
-     headline and its own 30-day badge disagreed too. The draft is NOT
-     processed value (nothing is saved); it is reported on the pipeline
-     caption instead, and the sub-line below now names what it counted. */
   function currentKPIValues() {
     const activeEst = (erpRecords && typeof erpRecords === 'object') ? Object.keys(erpRecords).length : 0;
     const dbCount = db.items.length + db.clients.length;
     const docCount = history.length;
-    let docVal = 0;
-    for (let i = 0; i < history.length; i++) docVal += kpiTotalNumber(history[i].total);
-    const reqCount = state.requests.length;
-    let reqVal = 0;
-    for (let i = 0; i < reqCount; i++) reqVal += (Number(state.requests[i] && state.requests[i].value) || 0);
-    return {
-      activeEst: activeEst, dbCount: dbCount, docCount: docCount,
-      docVal: docVal, reqCount: reqCount, reqVal: reqVal,
-      procVal: docVal + reqVal
-    };
+    let procVal = 0;
+    for (let i = 0; i < history.length; i++) procVal += kpiTotalNumber(history[i].total);
+    if (erpDocType()) procVal += erpDocTotals().final;
+    procVal += state.requests.reduce(function (s, r) { return s + (r.value || 0); }, 0);
+    return { activeEst: activeEst, dbCount: dbCount, docCount: docCount, procVal: procVal };
   }
 
   function fmtPctShort(val) {
     if (val === 0) return '0%';
     return (val > 0 ? '+' : '') + val.toFixed(1).replace(/\.0$/, '') + '%';
-  }
-
-  /* "a", "a and b", "a, b and c" — for the KPI sub-lines. */
-  function listAnd(items) {
-    const parts = items || [];
-    if (parts.length <= 1) return parts.join('');
-    if (parts.length === 2) return parts[0] + ' and ' + parts[1];
-    return parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
   }
 
   /* `fmt` renders a window figure for the tooltip (money vs a plain count).
@@ -14364,32 +13919,13 @@ body.light-theme .tool-launch {
     const valSub = $('kpi-val-sub');
     if (valSub) {
       const exact = curCode + ' ' + Number(cur.procVal).toLocaleString('en-US', { maximumFractionDigits: 2 });
-      /* Names exactly what the figure above is made of, so a total and a count
-         of zero can never sit on the same line again. */
-      const parts = [];
-      if (cur.docCount > 0) parts.push(cur.docCount === 1 ? '1 saved document' : cur.docCount + ' saved documents');
-      if (cur.reqCount > 0) parts.push(cur.reqCount === 1 ? '1 project request' : cur.reqCount + ' project requests');
-      valSub.textContent = exact + (parts.length ? ' from ' + listAnd(parts) : ' \u2014 nothing processed yet') +
+      valSub.textContent = exact + ' across ' + (cur.docCount === 1 ? '1 document' : cur.docCount + ' documents') +
         (kpiMixedCurrencies() ? ' · mixed currencies' : '');
     }
     const pm = $('pm-caption');
-    if (pm) {
-      const draftVal = erpDocType() ? erpDocTotals().final : 0;
-      const hasCommitted = cur.dbCount > 0 || cur.docCount > 0;
-      let cap;
-      if (hasCommitted) {
-        cap = 'Pipeline active — ' + cur.dbCount + ' DB records and ' + cur.docCount + ' documents ready.';
-        /* Work in progress is real, it just is not "processed" yet: it is
-           named here, with the fact that it is unsaved, rather than folded
-           into a total that claims to be about documents. */
-        if (draftVal > 0) cap += ' Draft on this device: ' + curSym + ' ' + Calc.fmtNum(draftVal) + ' (not saved yet).';
-      } else if (draftVal > 0) {
-        cap = 'Pipeline in progress — a document is open in the ERP engine and nothing is saved yet. Draft on this device: ' + curSym + ' ' + Calc.fmtNum(draftVal) + '.';
-      } else {
-        cap = 'Pipeline idle — open the ERP engine to process a document.';
-      }
-      pm.textContent = cap;
-    }
+    if (pm) pm.textContent = cur.dbCount > 0 || cur.docCount > 0
+      ? 'Pipeline active — ' + cur.dbCount + ' DB records and ' + cur.docCount + ' documents ready.'
+      : 'Pipeline idle — open the ERP engine to process a document.';
     const setBar = function (id, val, cap, label, title) {
       const strong = $(id);
       const bar = strong.closest('.health-item').querySelector('.health-fill');
@@ -14421,15 +13957,12 @@ body.light-theme .tool-launch {
     const list = $('activity-list');
     if (!list) return;
     const clearBtn = $('activity-clear');
-    /* The feed is documents (History) PLUS the automatic database events that
-       are logged here rather than in the Library. */
-    const feed = activityFeed();
-    if (!feed.length) {
+    if (!history.length) {
       list.innerHTML = '<div class="activity-empty">No activity yet — export a PDF, save an ERP record, or update the database and events will appear here.</div>';
       if (clearBtn) clearBtn.hidden = true;
       return;
     }
-    list.innerHTML = feed.slice(0, 12).map(function (h) {
+    list.innerHTML = history.slice(0, 12).map(function (h) {
       const kind = h.type === 'db' ? 'db' : (h.tool === 'erp' ? 'erp' : (h.type === 'copy' ? 'copy' : 'pdf'));
       let head, bits = [];
       if (h.type === 'db') {
@@ -14455,18 +13988,15 @@ body.light-theme .tool-launch {
     }).join('');
     if (clearBtn) clearBtn.hidden = false;
   }
-  /* Clears WHAT THE FEED SHOWS — the automatic database events, including the
-     notification rows an older build wrote into History. Saved documents are
-     never touched, which is what this button's own wording has always
-     promised. */
   async function clearActivity() {
-    if (!(await confirmAction({ title: 'Clear activity feed?', message: 'This clears the activity feed and the database notifications listed in your Library. Saved documents in History are not affected.', confirmLabel: 'Clear feed', danger: true }))) return;
-    activityLog = [];
-    saveActivityLog();
-    removeLibraryNotifications();
+    if (!(await confirmAction({ title: 'Clear activity feed?', message: 'Saved documents in History are not affected.', confirmLabel: 'Clear feed', danger: true }))) return;
+    history = [];
+    draftStore = {};
+    saveHistory();
+    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
+    renderHistory();
     renderActivity();
     renderKpis();
-    updateKPICards();
   }
 
   /* ── Item & Client Database (master data for the ERP) ───────── */
@@ -14779,15 +14309,6 @@ body.light-theme .tool-launch {
   /** Every record for the active tab, in the order that tab is read in
       (items by SKU, clients most-recently-added first). */
   function mdRowsForTab() {
-    /* Saved project / client records (the ERP's Save Record store). They live
-       in `erpRecords`, not `db`, but they browse in the same list + detail
-       pane as items and clients so a record reads exactly like any other
-       master-data entry. `key` is the Primary Key / Record ID. */
-    if (mdTab === 'records') {
-      return recordEntries().map(function (e) {
-        return { kind: 'record', rec: e.rec, key: e.id };
-      });
-    }
     if (mdTab === 'clients') {
       return db.clients.map(function (c) {
         return { kind: 'client', rec: c, key: mdKeyFor('client', c) };
@@ -14806,17 +14327,10 @@ body.light-theme .tool-launch {
   function mdMatches(row) {
     if (!mdFilter) return true;
     const rec = row.rec || {};
-    let hay;
-    if (row.kind === 'client') {
-      hay = [rec.clientName, rec.name, rec.clientAddress, rec.contactPerson, rec.contactNumber, rec.tinRegNo,
-        rec.placeOfSupply, rec.defaultProject, rec.poNo, rec.currency];
-    } else if (row.kind === 'record') {
-      const st = rec.state || {};
-      hay = [row.key, st.client, st.project, st.address, st.contact, st.clientTin, st.ref,
-        st.placeOfSupply, st.poNo, st.currency, st.terms];
-    } else {
-      hay = [rec.sku, rec.name, rec.model, rec.unit];
-    }
+    const hay = row.kind === 'client'
+      ? [rec.clientName, rec.name, rec.clientAddress, rec.contactPerson, rec.contactNumber, rec.tinRegNo,
+         rec.placeOfSupply, rec.defaultProject, rec.poNo, rec.currency]
+      : [rec.sku, rec.name, rec.model, rec.unit];
     return hay.join(' \u0001 ').toLowerCase().indexOf(mdFilter) !== -1;
   }
 
@@ -14824,10 +14338,6 @@ body.light-theme .tool-launch {
       the store, so a later "manage" jump cannot target the wrong row. */
   function mdFindSelection() {
     if (!mdSel) return null;
-    if (mdSel.kind === 'record') {
-      const saved = erpRecords[mdSel.key];
-      return (saved && typeof saved === 'object') ? { rec: saved, index: -1 } : null;
-    }
     const list = mdSel.kind === 'client' ? db.clients : db.items;
     for (let i = 0; i < list.length; i++) {
       if (mdKeyFor(mdSel.kind, list[i]) === mdSel.key) return { rec: list[i], index: i };
@@ -14852,20 +14362,6 @@ body.light-theme .tool-launch {
         '<span class="home-db-meta">' + esc(rec.currency || '') + '</span>' +
       '</button>';
     }
-    if (r.kind === 'record') {
-      const st = rec.state || {};
-      const label = st.client || st.project || 'Untitled record';
-      const sub = (st.client && st.project ? st.project : st.address) || '';
-      const n = Array.isArray(st.lines) ? st.lines.length : 0;
-      return '<button type="button" class="' + cls + '"' + attrs + '>' +
-        '<span class="home-db-main">' +
-          '<span class="home-db-title"><strong>' + esc(r.key) + '</strong></span>' +
-          '<span class="home-db-sub db-mini-name" title="' + esc(label + (sub ? ' \u00b7 ' + sub : '')) + '">' +
-            esc(label + (sub ? ' \u00b7 ' + sub : '')) + '</span>' +
-        '</span>' +
-        '<span class="home-db-meta">' + esc(n + (n === 1 ? ' line' : ' lines')) + '</span>' +
-      '</button>';
-    }
     const info = dbRateInfo(rec.rate);
     return '<button type="button" class="' + cls + '"' + attrs + '>' +
       '<span class="home-db-main">' +
@@ -14882,8 +14378,6 @@ body.light-theme .tool-launch {
     const ic = $('md-items-count'), cc = $('md-clients-count');
     if (ic) ic.textContent = String(db.items.length);
     if (cc) cc.textContent = String(db.clients.length);
-    const rc = $('md-records-count');
-    if (rc) rc.textContent = String(recordEntries().length);
     const tabs = document.querySelectorAll('.md-tab');
     for (let i = 0; i < tabs.length; i++) {
       const on = tabs[i].getAttribute('data-md-tab') === mdTab;
@@ -14893,14 +14387,12 @@ body.light-theme .tool-launch {
     const all = mdRowsForTab();
     const rows = all.filter(mdMatches);
     if (!rows.length) {
-      const noun = mdTab === 'clients' ? 'clients' : (mdTab === 'records' ? 'saved records' : 'items');
+      const noun = mdTab === 'clients' ? 'clients' : 'items';
       box.innerHTML = '<p class="md-empty">' + (all.length
         ? 'Nothing matches \u201c' + esc(mdFilter) + '\u201d. Clear the filter to see all ' + all.length + ' ' + noun + '.'
         : (mdTab === 'clients'
             ? 'No clients saved yet. Add one in the Item &amp; Client Database and it will auto-fill the ERP header.'
-            : (mdTab === 'records'
-                ? 'No project records saved yet. Fill the Project / Client Header in the Master ERP Engine and click <strong>Save Record</strong> \u2014 it will be listed here.'
-                : 'No items saved yet. Add one in the Item &amp; Client Database and it will auto-fill ERP line items.'))) + '</p>';
+            : 'No items saved yet. Add one in the Item &amp; Client Database and it will auto-fill ERP line items.')) + '</p>';
       return;
     }
     box.innerHTML = rows.map(mdRowHtml).join('');
@@ -14931,21 +14423,15 @@ body.light-theme .tool-launch {
 
     if (!mdSel || !found) {
       if (kindPill) kindPill.textContent = 'Nothing selected';
-      const isRec = mdTab === 'records';
-      box.innerHTML = '<p class="md-empty">Pick ' + (mdTab === 'clients' ? 'a client' : (isRec ? 'a saved record' : 'an item')) +
+      box.innerHTML = '<p class="md-empty">Pick ' + (mdTab === 'clients' ? 'a client' : 'an item') +
         ' from the list to read its full details here. ' +
-        (isRec
-          ? 'This view is read-only \u2014 the <strong>Load in Master ERP Engine</strong> button opens a record for editing.'
-          : 'This view is read-only \u2014 adding, editing and deleting stay in the Item &amp; Client Database.') + '</p>';
+        'This view is read-only \u2014 adding, editing and deleting stay in the Item &amp; Client Database.</p>';
       return;
     }
 
     const rec = found.rec;
-    if (kindPill) {
-      kindPill.textContent = mdSel.kind === 'client' ? 'Client'
-        : (mdSel.kind === 'record' ? 'Saved record' : 'Item');
-    }
-    box.innerHTML = mdDetailHtml(mdSel.kind, rec, mdManageHtml(mdSel.kind, mdSel.key), mdSel.kind === 'record' ? mdSel.key : '');
+    if (kindPill) kindPill.textContent = mdSel.kind === 'client' ? 'Client' : 'Item';
+    box.innerHTML = mdDetailHtml(mdSel.kind, rec, mdManageHtml(mdSel.kind));
   }
 
   /* ── The one read-only detail body, shared by both views ──────────────
@@ -14955,64 +14441,7 @@ body.light-theme .tool-launch {
      `actions` is the only view-specific part: the browse view links across to
      the management page, the drawer offers that record's own Edit instead
      (it is already the management page). */
-  function mdDetailHtml(kind, rec, actions, recId) {
-    /* Saved project / client record: the header it was saved with, then its
-       line items. `rec` is the { savedAt, state } entry, `recId` its Primary
-       Key. Amounts follow the document's own rule — a Delivery Note record has
-       no pricing, so those columns are simply absent for that mode. */
-    if (kind === 'record') {
-      const st = (rec && rec.state) || {};
-      const cur = Calc.TOOL_CURRENCIES[st.currency] ? st.currency : 'LKR';
-      const money = function (v) { return Calc.fmtToolMoney(v, cur); };
-      const cell = function (v) {
-        return (v === null || v === undefined || String(v).trim() === '') ? '\u2014' : String(v);
-      };
-      const lines = Array.isArray(st.lines) ? st.lines : [];
-      const showMoney = st.mode !== 'delivery';
-      let lineTotal = 0, priced = false;
-      const body = lines.map(function (l, i) {
-        const amt = Calc.boqAmount(l.qty, l.rate);
-        if (amt !== null) { lineTotal += amt; priced = true; }
-        return '<tr>' +
-          '<td class="q-num">' + (i + 1) + '</td>' +
-          '<td class="md-line-desc">' + esc(l.name || 'Untitled line') +
-            (l.model ? '<br><span class="row-muted">' + esc(l.model) + '</span>' : '') + '</td>' +
-          '<td>' + esc(cell(l.unit)) + '</td>' +
-          '<td class="text-right">' + esc(cell(l.qty)) + '</td>' +
-          (showMoney
-            ? '<td class="text-right">' + esc(cell(l.rate)) + '</td>' +
-              '<td class="text-right">' + (amt === null ? '\u2014' : esc(money(amt))) + '</td>'
-            : '') +
-        '</tr>';
-      }).join('');
-      const table = lines.length
-        ? '<p class="md-detail-sub md-lines-title">Line items (' + lines.length + ')</p>' +
-          '<div class="md-lines"><table class="data-table"><thead><tr>' +
-            '<th class="q-num">No</th><th>Description</th><th>Unit</th><th class="text-right">Qty</th>' +
-            (showMoney ? '<th class="text-right">Rate</th><th class="text-right">Amount</th>' : '') +
-          '</tr></thead><tbody>' + body + '</tbody></table></div>'
-        : '<p class="md-empty">No line items were saved in this record.</p>';
-      const modeLabel = (ERP_MODES[st.mode] && ERP_MODES[st.mode].label) || st.mode || '';
-      const title = (st.client || '') + (st.client && st.project ? ' \u00b7 ' : '') + (st.project || '');
-      return '<h3 class="md-detail-title">' + esc(recId || '') + '</h3>' +
-        '<p class="md-detail-sub">' + (title ? esc(title) : 'Saved project / client record') + '</p>' +
-        mdField('Saved', mdWhen(Date.parse((rec && rec.savedAt) || '')), 'Date not recorded') +
-        mdField('Document mode', modeLabel) +
-        mdField('Client name', st.client) +
-        mdField('Project name', st.project) +
-        mdField('Address', st.address) +
-        mdField('Contact', st.contact) +
-        mdField('Purchaser TIN', st.clientTin) +
-        mdField('Place of supply', st.placeOfSupply) +
-        mdField('PO no', st.poNo) +
-        mdField('Reference', st.ref) +
-        mdField('Date of invoice', st.date) +
-        mdField('Currency', st.currency) +
-        (showMoney && priced ? mdField('Line total', money(lineTotal)) : '') +
-        table +
-        (actions || '');
-    }
-
+  function mdDetailHtml(kind, rec, actions) {
     if (kind === 'client') {
       const name = rec.clientName || rec.name || '';
       const site = rec.defaultProject ? 'Site: ' + rec.defaultProject : '';
@@ -15053,15 +14482,7 @@ body.light-theme .tool-launch {
      this labelled button is the only way across, and it opens the full database
      with that record loaded into its edit form. The drawer on the database page
      passes '' here instead — there is nowhere to be sent. */
-  function mdManageHtml(kind, key) {
-    /* A saved record exits INTO the ERP form — the read-only pane never edits,
-       and `erpLoadRecordById()` is the same path the ERP's own Load Record
-       button uses, so the record arrives exactly as Save Record stored it. */
-    if (kind === 'record') {
-      return '<div class="md-actions">' +
-        '<button type="button" class="btn btn-primary btn-sm md-manage" data-md-kind="record" data-md-key="' + esc(key || '') + '">' +
-          'Load in Master ERP Engine &rarr;</button></div>';
-    }
+  function mdManageHtml(kind) {
     return '<div class="md-actions">' +
       '<button type="button" class="btn btn-ghost btn-sm md-manage" data-md-kind="' + kind + '">' +
         'Manage in Item &amp; Client Database &rarr;</button></div>';
@@ -15131,7 +14552,7 @@ body.light-theme .tool-launch {
   /** Entry point used by the Home card's rows and "View all" link.
       With no arguments the view opens on the full, uncapped list. */
   function openMasterData(kind, key) {
-    mdTab = (kind === 'client') ? 'clients' : (kind === 'record' ? 'records' : 'items');
+    mdTab = (kind === 'client') ? 'clients' : 'items';
     mdFilter = '';
     const search = $('md-search');
     if (search) search.value = '';
@@ -15190,7 +14611,8 @@ body.light-theme .tool-launch {
       const detail = recordDetail(e.rec);
       const label = recordLabel(e.rec);
       const lines = recordLineCount(e.rec);
-      const title = label + (detail ? ' \u00b7 ' + detail : '');        return '<button type="button" class="home-db-row" data-rec="' + esc(e.id) + '" title="View this record&rsquo;s details">' +
+      const title = label + (detail ? ' \u00b7 ' + detail : '');
+      return '<button type="button" class="home-db-row" data-rec="' + esc(e.id) + '" title="Load this record into the Master ERP Engine">' +
         '<span class="home-db-main">' +
           '<span class="home-db-title"><strong>' + esc(e.id) + '</strong></span>' +
           '<span class="home-db-sub db-mini-name" title="' + esc(title) + '">' + esc(title) + '</span>' +
@@ -15457,7 +14879,7 @@ body.light-theme .tool-launch {
       syncDocumentWithDbItem(before, db.items[editIdx]);
       renderDb();
       resetDbForm('item');
-      logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' updated — ' + db.items.length + ' SKUs' });
+      pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' updated — ' + db.items.length + ' SKUs' });
       renderKpis();
       updateKPICards();
       return;
@@ -15466,7 +14888,7 @@ body.light-theme .tool-launch {
     saveDb();
     resetDbForm('item');   // blank the form for the next entry
     renderDb();
-    logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' added — ' + db.items.length + ' SKUs' });
+    pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: sku + ' added — ' + db.items.length + ' SKUs' });
     renderKpis();
     updateKPICards();
   }
@@ -15512,7 +14934,7 @@ body.light-theme .tool-launch {
       syncDocumentWithDbClient(before, db.clients[editIdx]);
       renderDb();
       resetDbForm('client');
-      logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' updated — ' + db.clients.length + ' clients' });
+      pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' updated — ' + db.clients.length + ' clients' });
       renderKpis();
       updateKPICards();
       return;
@@ -15521,7 +14943,7 @@ body.light-theme .tool-launch {
     saveDb();
     resetDbForm('client'); // blank the form for the next entry
     renderDb();
-    logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' added — ' + db.clients.length + ' clients' });
+    pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: name + ' added — ' + db.clients.length + ' clients' });
     renderKpis();
     updateKPICards();
   }
@@ -16553,15 +15975,6 @@ body.light-theme .tool-launch {
        database changed outside this page (another tab, or a cloud pull), so
        the re-resolve below compares against the current records. */
     dbMaybeReload();
-    /* Paint BEFORE the re-resolve below. `erpResolveFromDb()` starts with
-       `readErpHeader()`, which takes the live INPUTS as the truth — so
-       re-resolving first would read the previous document's header straight
-       back over the record that was just loaded, and the load would appear to
-       swap only the line items. (This was the real "Load Record doesn't
-       populate" bug: the record was loaded and then immediately overwritten.)
-       With the inputs mirroring the loaded state first, the re-resolve can
-       safely refresh what the master database still supplies. */
-    renderErp();
     /* A saved RECORD is a reusable template, not a finalized document: its
        SKUs and client are re-resolved against the master database as it
        stands now, so a rate corrected since the record was saved is the rate
@@ -16569,6 +15982,7 @@ body.light-theme .tool-launch {
        are refreshed — anything typed into the record is left alone, and a
        Library entry (a finished document) is never touched. */
     erpResolveFromDb();
+    renderErp();
     erpRecordMeta(id);
     if (!silent) window.alert('Record "' + id + '" loaded — header, items and totals restored.');
     return true;
@@ -16740,50 +16154,16 @@ body.light-theme .tool-launch {
      the right figure. */
   function xlFormula(expr, result) { return { formula: expr, sharedFormula: undefined, result: result }; }
 
-  /* ── DOWNLOAD SEAM ────────────────────────────────────────────────────
-     THE ONLY PLACE IN THE APP THAT WRITES A FILE TO DISK. Both file
-     producers (the .xlsx export and the JSON backup) come through here, so
-     there is exactly one thing to audit and one thing to switch off.
-
-     Loading the page with `?nodl=1` (or setting `window.__NEXORA_NO_DOWNLOAD
-     = true`) turns the disk write off and records what WOULD have been
-     written in `window.__nexoraDownloads` — file name, mime type, exact byte
-     length. That is a real assertion on the real bytes, with nothing written
-     to the machine, so an export can be verified repeatedly while iterating
-     instead of downloading once per attempt. Test hook, not a user feature;
-     without the flag this behaves exactly as before. */
-  function nexoraNoDownload() {
-    try {
-      if (window.__NEXORA_NO_DOWNLOAD === true) return true;
-      return /(^|[?&])nodl=1(&|$)/.test(String(window.location.search || ''));
-    } catch (e) { return false; }
-  }
-
-  function nexoraSaveFile(content, filename, mime) {
-    let blob;
-    if (content instanceof Blob) blob = content;
-    else blob = new Blob([content], { type: mime || 'application/octet-stream' });
-    if (nexoraNoDownload()) {
-      const rec = { filename: filename, type: blob.type, bytes: blob.size, at: new Date().toISOString() };
-      window.__nexoraDownloads = window.__nexoraDownloads || [];
-      window.__nexoraDownloads.push(rec);
-      console.info('[nodl] download suppressed (no file written):', filename, blob.size + ' bytes');
-      return rec;
-    }
+  function xlDownload(buffer, filename) {
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
-    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    a.remove();
-    window.setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ } }, 5000);
-    return null;
-  }
-
-  function xlDownload(buffer, filename) {
-    nexoraSaveFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    document.body.removeChild(a);
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
   }
 
   async function xlSave(wb, filename) {
@@ -17596,196 +16976,7 @@ body.light-theme .tool-launch {
 
   const XL_DOC_WRITERS = { invoice: xlInvoiceSheet, quotation: xlQuotationSheet, delivery: xlDeliverySheet };
 
-  /* ── Excel PREVIEW — what the .xlsx will contain ──────────────────
-     "Export as Excel" used to jump straight to a Save As dialog, so the sheet
-     could only be judged after the file existed. The preview is shown first,
-     and it is NOT a second description of the document: the template builders
-     are run against a RECORDING worksheet, so the preview is drawn from the
-     very cells, merges, fills and number formats ExcelJS is about to write.
-     One implementation, two outputs — there is nothing to drift. */
-  function xlRecordSheet(name) {
-    const rec = {
-      name: name,
-      cells: {},     // 'r,c' → { value, font, fill, border, alignment, numFmt }
-      cols: {},
-      rows: {},
-      merges: [],
-      maxRow: 0,
-      maxCol: 0,
-      pageSetup: null,
-      views: null,
-      /* Exactly the surface xlPut / xlBand / xlStyle touch. A recorded cell
-         collects the same style objects xlStyle hands an ExcelJS cell, which
-         is what the preview paints. */
-      getCell: function (r, c) {
-        const k = r + ',' + c;
-        if (!rec.cells[k]) rec.cells[k] = { r: r, c: c, value: '' };
-        if (r > rec.maxRow) rec.maxRow = r;
-        if (c > rec.maxCol) rec.maxCol = c;
-        return rec.cells[k];
-      },
-      mergeCells: function (r1, c1, r2, c2) { rec.merges.push({ r1: r1, c1: c1, r2: r2, c2: c2 }); },
-      getColumn: function (c) {
-        if (!rec.cols[c]) rec.cols[c] = { width: 9 };
-        if (c > rec.maxCol) rec.maxCol = c;
-        return rec.cols[c];
-      },
-      getRow: function (r) {
-        if (!rec.rows[r]) rec.rows[r] = { height: 15 };
-        if (r > rec.maxRow) rec.maxRow = r;
-        return rec.rows[r];
-      }
-    };
-    return rec;
-  }
-
-  /* Run the REAL builder against the recorder — the sheet description the file
-     is made from. */
-  function xlDocPlan(d) {
-    const fake = {
-      creator: '', calcProperties: {}, sheets: [],
-      addWorksheet: function (n) { const s = xlRecordSheet(n); this.sheets.push(s); return s; }
-    };
-    (XL_DOC_WRITERS[d.template] || xlInvoiceSheet)(fake, d);
-    return fake.sheets[fake.sheets.length - 1];
-  }
-
-  function xlArgbToHex(argb) {
-    const s = String(argb == null ? '' : argb).replace(/^#/, '');
-    return '#' + (s.length === 8 ? s.slice(2) : s);
-  }
-
-  /* The figure a viewer that does not recalculate would show: a formula cell's
-     cached `result`, then the cell's own number format. */
-  function xlCellText(v, numFmt) {
-    if (v && typeof v === 'object' && 'formula' in v) return xlCellText(v.result, numFmt);
-    if (v === undefined || v === null) return '';
-    if (typeof v !== 'number' || !isFinite(v)) return String(v);
-    if (numFmt === XL_MONEY_FMT) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return String(Math.round(v * 1000) / 1000);
-  }
-
-  /* The sheet as a read-only ruled table: merged bands span, fills/weights are
-     the real ones, and a formula cell is flagged with its formula so the user
-     can see the figure is calculated rather than typed. */
-  function xlSheetPreviewHtml(sheet) {
-    if (!sheet) return '';
-    const covered = {};
-    const spans = {};
-    sheet.merges.forEach(function (m) {
-      spans[m.r1 + ',' + m.c1] = { rs: m.r2 - m.r1 + 1, cs: m.c2 - m.c1 + 1 };
-      for (let r = m.r1; r <= m.r2; r++) {
-        for (let c = m.c1; c <= m.c2; c++) {
-          if (r === m.r1 && c === m.c1) continue;
-          covered[r + ',' + c] = true;
-        }
-      }
-    });
-
-    let cols = '';
-    for (let c = 1; c <= sheet.maxCol; c++) {
-      const w = (sheet.cols[c] && sheet.cols[c].width) || 9;
-      cols += '<col style="width:' + Math.max(26, Math.round(w * 7.2 + 6)) + 'px">';
-    }
-
-    let body = '';
-    for (let r = 1; r <= sheet.maxRow; r++) {
-      let tds = '';
-      for (let c = 1; c <= sheet.maxCol; c++) {
-        if (covered[r + ',' + c]) continue;
-        const cell = sheet.cells[r + ',' + c];
-        const sp = spans[r + ',' + c];
-        const value = cell ? cell.value : '';
-        const isFormula = !!(value && typeof value === 'object' && 'formula' in value);
-        const st = [];
-        if (cell && cell.font) {
-          if (cell.font.bold) st.push('font-weight:700');
-          if (cell.font.italic) st.push('font-style:italic');
-          if (cell.font.underline) st.push('text-decoration:underline');
-          if (cell.font.size) st.push('font-size:' + Math.max(8, cell.font.size) + 'px');
-        }
-        if (cell && cell.fill && cell.fill.fgColor) st.push('background:' + xlArgbToHex(cell.fill.fgColor.argb));
-        if (cell && cell.border) st.push('border:1px solid rgba(15,23,42,0.6)');
-        if (cell && cell.alignment) {
-          st.push('text-align:' + (cell.alignment.horizontal || 'left'));
-          st.push('vertical-align:' + (cell.alignment.vertical === 'top' ? 'top' : (cell.alignment.vertical === 'middle' ? 'middle' : 'bottom')));
-        }
-        tds += '<td' + (sp ? ' colspan="' + sp.cs + '"' + (sp.rs > 1 ? ' rowspan="' + sp.rs + '"' : '') : '') +
-          (st.length ? ' style="' + st.join(';') + '"' : '') +
-          (isFormula ? ' class="xl-formula" title="Live formula: =' + esc(value.formula) + '"' : '') +
-          '>' + esc(xlCellText(value, cell && cell.numFmt)) + '</td>';
-      }
-      const h = sheet.rows[r] && sheet.rows[r].height;
-      body += '<tr' + (h ? ' style="height:' + Math.round(h * 1.33) + 'px"' : '') + '>' + tds + '</tr>';
-    }
-    return '<table class="xl-sheet"><colgroup>' + cols + '</colgroup><tbody>' + body + '</tbody></table>';
-  }
-
-  /* Show the sheet and resolve TRUE only if the user asks for the download.
-     If the modal is missing for any reason the export proceeds rather than
-     being silently blocked — a preview must never become a dead end. */
-  function previewErpExcel() {
-    const modal = $('xl-preview-modal');
-    const host = $('xl-preview-sheet');
-    const note = $('xl-preview-note');
-    const meta = $('xl-preview-meta');
-    const dl = $('xl-preview-download');
-    const cancelBtn = $('xl-preview-cancel');
-    const closeBtn = $('xl-preview-close');
-    const titleEl = $('xl-preview-title');
-    if (!modal || !host || !dl || !cancelBtn) return Promise.resolve(true);
-
-    let d = null;
-    let sheet = null;
-    try {
-      d = erpDocData();
-      sheet = xlDocPlan(d);
-    } catch (e) {
-      return Promise.resolve(true);
-    }
-    if (!sheet) return Promise.resolve(true);
-
-    const docTitle = (xlUnesc(d.documentType) + ' ' + xlUnesc(d.docNo)).trim() || 'Document';
-    const fileName = xlFileName(docTitle);
-    if (titleEl) titleEl.textContent = 'Excel preview — ' + docTitle;
-    if (note) {
-      note.textContent = 'This is the sheet that will be saved, drawn from the same cells the .xlsx '
-        + 'is written from: ' + sheet.maxCol + ' columns x ' + sheet.maxRow + ' rows on sheet "' + sheet.name
-        + '", A4 portrait fit to one page wide. Amount, Sub Total, VAT and TOTAL are live formulas rather than '
-        + 'fixed numbers — hover a boxed figure to see it. Nothing downloads until you click Download.';
-    }
-    if (meta) meta.textContent = fileName + ' · values in ' + (d.currencyCode || 'LKR');
-    host.innerHTML = xlSheetPreviewHtml(sheet);
-
-    modal.hidden = false;
-    try { dl.focus(); } catch (e) { /* ignore */ }
-
-    return new Promise(function (resolve) {
-      const done = function (ok) {
-        document.removeEventListener('keydown', onKey, true);
-        dl.removeEventListener('click', onDownload);
-        cancelBtn.removeEventListener('click', onCancel);
-        if (closeBtn) closeBtn.removeEventListener('click', onCancel);
-        modal.removeEventListener('click', onBackdrop);
-        modal.hidden = true;
-        resolve(ok);
-      };
-      const onDownload = function () { done(true); };
-      const onCancel = function () { done(false); };
-      const onBackdrop = function (e) { if (e.target === modal) done(false); };
-      const onKey = function (e) {
-        if (e.key === 'Escape') { e.preventDefault(); done(false); }
-        else if (e.key === 'Enter' && document.activeElement === dl) { e.preventDefault(); done(true); }
-      };
-      dl.addEventListener('click', onDownload);
-      cancelBtn.addEventListener('click', onCancel);
-      if (closeBtn) closeBtn.addEventListener('click', onCancel);
-      modal.addEventListener('click', onBackdrop);
-      document.addEventListener('keydown', onKey, true);
-    });
-  }
-
-  async function exportErpExcel() {
+  function exportErpExcel() {
     if (!xlReady()) {
       window.alert('The spreadsheet library did not load (offline?). Excel export needs one online page load - try again once the page has internet.');
       return;
@@ -17796,9 +16987,6 @@ body.light-theme .tool-launch {
       err.hidden = false;
       return;
     }
-    /* Review first, download only on an explicit confirm. */
-    const go = await previewErpExcel();
-    if (!go) return;
     /* The SAME data the PDF is built from, so the two cannot disagree. */
     const d = erpDocData();
     const wb = new ExcelJS.Workbook();
@@ -19136,18 +18324,12 @@ body.light-theme .tool-launch {
      a saved reusable RECORD (Save Record) is not a Library entry at all. */
   function erpLibraryPayload() {
     const t = erpDocTotals();
-    const recEl = $('erp-record-id');
     return {
       type: 'pdf', tool: 'erp',
       toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
       title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
       total: erpDocType() ? erpMoney(t.final) : '',
       client: erpState.client || '',
-      project: erpState.project || '',
-      /* The Primary Key / Record ID from the Project/Client Header names the
-         JOB, so the Library can tell ten versions of one project apart from
-         ten different projects. */
-      recordId: recEl ? recEl.value.trim() : '',
       ref: erpState.ref || ''
     };
   }
@@ -19162,7 +18344,7 @@ body.light-theme .tool-launch {
     try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
   }
 
-  // Keep drafts only for Library entries that still exist.
+  // Keep drafts only for entries that still exist (mirrors pushHistory).
   function pruneDrafts() {
     const live = {};
     for (let i = 0; i < history.length; i++) {
@@ -19171,86 +18353,7 @@ body.light-theme .tool-launch {
     draftStore = live;
   }
 
-  /* ── Revision cap: warn at 3 versions of one job ──────────────────
-     Re-saving a revised quote is legitimate, so this is a WARNING, never a
-     block and never a deletion. The job is identified by the Primary Key /
-     Record ID when the document has one, and by client + project name when
-     it does not. */
-  const LIBRARY_VERSION_WARN_AT = 3;
-
-  /* One job, one key — used by the ERP and by every mini-tool, so "3 versions
-     of this project" means the same thing everywhere. The job is named by the
-     Primary Key / Record ID when the document has one, and by client +
-     project/title when it does not; the tool id is part of the key so two
-     tools can never group each other's documents. */
-  function libraryJobKey(tool, rec) {
-    const t = String(tool || '');
-    const id = dbText(rec && rec.recordId).trim().toLowerCase();
-    if (id) return t + '|rec:' + id;
-    const c = dbText(rec && rec.client).trim().toLowerCase();
-    const p = dbText(rec && (rec.project || rec.title)).trim().toLowerCase();
-    return t + '|cp:' + c + '\u0001' + p;
-  }
-
-  function libraryVersionCount(tool, key) {
-    let n = 0;
-    for (let i = 0; i < history.length; i++) {
-      const h = history[i];
-      if (!h || h.tool !== tool) continue;
-      if (libraryJobKey(tool, h) === key) n++;
-    }
-    return n;
-  }
-
-  function erpLibraryKey(rec) { return libraryJobKey('erp', rec); }
-  function erpLibraryVersionCount(key) { return libraryVersionCount('erp', key); }
-
-  /* ── Automatic expiry: opt-in, per document ───────────────────────
-     A Library entry is KEPT FOREVER unless the user has switched auto-expiry
-     on for that one row (`autoExpire === true`). Flagged rows are removed
-     once they have been untouched for the inactivity window — "untouched"
-     meaning neither reopened nor re-saved (`touchedAt`). A finalized invoice
-     or quotation is therefore never deleted for being old; only a document
-     the user explicitly flagged for it is ever swept, and the sweep reports
-     what it removed. */
-  const LIBRARY_EXPIRE_DAYS = 30;
-  const LIBRARY_EXPIRE_MS = LIBRARY_EXPIRE_DAYS * 24 * 60 * 60 * 1000;
-
-  function libraryExpiryDue(h, now) {
-    if (!h || h.autoExpire !== true) return false;
-    const touched = Number(h.touchedAt || h.at || 0);
-    if (!(touched > 0)) return true;   // flagged with no clock: age unknown, treat as due
-    return (now - touched) > LIBRARY_EXPIRE_MS;
-  }
-
-  /* How many flagged documents the boot sweep removed (0 in the normal case,
-     since nothing is flagged unless the user flagged it). */
-  let libraryExpiredOnBoot = 0;
-
-  function sweepExpiredLibrary() {
-    const now = Date.now();
-    const keep = [];
-    const gone = [];
-    for (let i = 0; i < history.length; i++) {
-      if (libraryExpiryDue(history[i], now)) gone.push(history[i]);
-      else keep.push(history[i]);
-    }
-    if (!gone.length) return 0;
-    history = keep;
-    for (let i = 0; i < gone.length; i++) delete draftStore[gone[i].id];
-    saveHistory();
-    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
-    return gone.length;
-  }
-
-  /* Opening or re-downloading a document counts as activity for its clock. */
-  function touchLibraryEntry(h) {
-    if (!h) return;
-    h.touchedAt = Date.now();
-    saveHistory();
-  }
-
-  async function erpSaveToLibrary() {
+  function erpSaveToLibrary() {
     const err = $('erp-error');
     if (!erpState.lines.length) {
       if (err) { err.textContent = 'Add at least one item before saving the document to the Library.'; err.hidden = false; }
@@ -19263,23 +18366,6 @@ body.light-theme .tool-launch {
       ? history.find(function (h) { return h.id === erpState.libraryId; })
       : null;
 
-    if (!existing) {
-      /* One job, many versions. Past the cap, ask before adding another row —
-         cancellable, and nothing is removed either way. */
-      const versions = erpLibraryVersionCount(erpLibraryKey(payload));
-      if (versions >= LIBRARY_VERSION_WARN_AT) {
-        const label = payload.recordId || payload.project || payload.client || 'This project';
-        const go = await confirmAction({
-          title: 'Save another version?',
-          message: '“' + label + '” already has ' + versions + ' saved versions in your Library. Save another one anyway? Nothing is deleted — you can remove older versions from the Library whenever you like.',
-          confirmLabel: 'Save anyway',
-          cancelLabel: 'Cancel'
-        });
-        if (!go) return;
-      }
-    }
-
-    const now = Date.now();
     if (existing) {
       // Same document, saved again → update in place, never a second row.
       existing.type = payload.type;
@@ -19288,12 +18374,8 @@ body.light-theme .tool-launch {
       existing.title = payload.title;
       existing.total = payload.total;
       existing.client = payload.client;
-      existing.project = payload.project;
-      existing.recordId = payload.recordId;
       existing.ref = payload.ref;
-      existing.at = now;
-      existing.touchedAt = now;          // re-saving IS activity
-      if (existing.autoExpire !== true) existing.autoExpire = false;
+      existing.at = Date.now();
       if (snapshot) draftStore[existing.id] = { tool: 'erp', state: snapshot };
       saveErp();
       saveHistory();
@@ -19301,8 +18383,7 @@ body.light-theme .tool-launch {
       showToast('Library entry updated — \u201c' + payload.title + '\u201d');
     } else {
       erpState.libraryId = uid();
-      /* autoExpire starts OFF for every new document. */
-      const entry = Object.assign({ id: erpState.libraryId, at: now, touchedAt: now, autoExpire: false }, payload);
+      const entry = Object.assign({ id: erpState.libraryId, at: Date.now() }, payload);
       history.unshift(entry);
       if (history.length > 60) history = history.slice(0, 60);
       if (snapshot) draftStore[entry.id] = { tool: 'erp', state: snapshot };
@@ -19331,10 +18412,7 @@ body.light-theme .tool-launch {
     h.title = payload.title;
     h.total = payload.total;
     h.client = payload.client;
-    h.project = payload.project;
-    h.recordId = payload.recordId;
     h.ref = payload.ref;
-    h.touchedAt = Date.now();          // re-downloading IS activity
     const snapshot = erpLibrarySnapshot();
     if (snapshot) draftStore[h.id] = { tool: 'erp', state: snapshot };
     saveErp();
@@ -19342,282 +18420,6 @@ body.light-theme .tool-launch {
     erpWriteDrafts();
     renderHistory();
     return true;
-  }
-
-  /* ── Mini-tool Library saves ──────────────────────────────────────────
-     Every Other Utilities tool now has the SAME contract the ERP has:
-
-       Export to PDF / Copy Summary → performs the action and records it in
-         the activity feed. NEVER writes a Library row.
-       Save to Library             → the ONLY writer. One row per project /
-         session, updated in place when the same session is saved again.
-
-     Two registries, both keyed by tool id:
-       TOOL_DOC      what the document IS (title, total, client, ref) — the
-                     SAME object the activity feed logs, so a feed entry and
-                     a saved row can never describe one document two ways.
-       TOOL_SNAPSHOT what it takes to rebuild it, so “View / Load draft”
-                     restores the tool rather than just navigating to it.
-
-     The remembered entry id lives in `toolLibraryIds`, keyed by tool. That is
-     what makes repeated saves update one row even for a tool with no client
-     or project field of its own (Pricing, Breakeven, FX, GPA). Resetting a
-     tool clears its id, so the next save starts a NEW document. */
-  const TOOL_LIBRARY_KEY = 'calcmall_tool_library_v1';
-  let toolLibraryIds = (function () {
-    try {
-      const raw = localStorage.getItem(TOOL_LIBRARY_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    } catch (e) { return {}; }
-  })();
-  function saveToolLibraryIds() {
-    try { localStorage.setItem(TOOL_LIBRARY_KEY, JSON.stringify(toolLibraryIds)); } catch (e) { /* ignore */ }
-  }
-  /* A new project/session → the next save is a new row, not an overwrite. */
-  function clearToolLibraryId(tool) {
-    if (!tool || !toolLibraryIds[tool]) return;
-    delete toolLibraryIds[tool];
-    saveToolLibraryIds();
-  }
-  function toolLabel(tool) { return (TOOLS[tool] && TOOLS[tool].short) || 'tool'; }
-
-  const TOOL_DOC = {
-    'scope-guard': function () {
-      const p = state.project;
-      if (!p) return null;
-      const cur = Calc.TOOL_CURRENCIES[p.currency] || Calc.TOOL_CURRENCIES.USD;
-      return {
-        type: 'copy', tool: 'scope-guard', toolName: 'Scope Guard — Project Change & Scope',
-        title: p.name || 'Scope Guard project',
-        total: cur.symbol.trim() + ' ' + Calc.fmtNum(Number(p.price) || 0)
-      };
-    },
-    qr: function () {
-      let t = 0;
-      for (let i = 0; i < qrRows.length; i++) { const a = qrAmount(qrRows[i]); if (a !== null) t += a; }
-      return {
-        type: 'pdf', tool: 'qr', toolName: 'Quantity & Rate Calculator',
-        title: 'Quantity & Rate sheet',
-        total: Calc.TOOL_CURRENCIES[qrCur()].symbol.trim() + ' ' + Calc.fmtNum(t)
-      };
-    },
-    boq: function () {
-      return {
-        type: 'pdf', tool: 'boq', toolName: 'Quotation',
-        title: boqState.meta.client || 'Quotation',
-        client: boqState.meta.client || '',
-        ref: boqState.meta.ref || '',
-        total: quoMoney(Calc.boqFinal(Calc.boqSubTotal(boqState.lines), num(boqState.discount), num(boqState.vat)))
-      };
-    },
-    invoice: function () {
-      let t = 0;
-      for (let i = 0; i < invState.lines.length; i++) { const a = invLineAmount(invState.lines[i]); if (a !== null) t += a; }
-      return {
-        type: 'pdf', tool: 'invoice', toolName: 'Smart Invoice & Document Builder',
-        title: invState.meta.client || INV_DOC_TYPES[invState.docType].label,
-        client: invState.meta.client || '',
-        ref: invState.meta.ref || invState.meta.invoice || '',
-        total: invMoney(t)
-      };
-    },
-    pricing: function () {
-      const r = Calc.pricingCalc(prState.cost, prState.overhead, prState.target, prState.mode);
-      if (r.price === null) return null;
-      return { type: 'copy', tool: 'pricing', toolName: 'Margin & Markup Pricing Calculator', title: 'Pricing summary', total: prMoney(r.price) };
-    },
-    duty: function () {
-      const r = Calc.dutyCalc(dutyState.cif, {
-        duty: dutyState.duty, pal: dutyState.pal, cess: dutyState.cess,
-        sscl: dutyState.sscl, vat: dutyState.vat
-      });
-      if (!r) return null;
-      return { type: 'copy', tool: 'duty', toolName: 'Import Tax & Landed Cost Calculator', title: 'Import duty breakdown', total: dutyMoney(r.landed) };
-    },
-    variation: function () {
-      const r = Calc.variationCalc(varState.original, varState.added);
-      if (!r) return null;
-      return {
-        type: 'pdf', tool: 'variation', toolName: 'Variation & Change Order Generator',
-        title: varState.project || 'Contract variation', project: varState.project || '',
-        total: varMoney(r.revised)
-      };
-    },
-    breakeven: function () {
-      const r = Calc.breakevenCalc(bkState.net, bkState.overhead, bkState.days, bkState.admin, bkState.dayhours, bkState.tax);
-      if (!r || r.hourly === null) return null;
-      return { type: 'copy', tool: 'breakeven', toolName: 'Freelance Rate & Overhead Breakeven Calculator', title: 'Rate & overhead breakeven', total: bkMoney(r.hourly) + '/h' };
-    },
-    fx: function () {
-      const r = Calc.fxFeeCalc(fxState.target, fxState.pct, fxState.fixed, fxState.markup);
-      if (!r || r.invoice === null) return null;
-      return { type: 'copy', tool: 'fx', toolName: 'Cross-Border FX & Fee Adjuster', title: 'Fee-adjusted invoice amount', total: fxMoney(r.invoice) };
-    },
-    gpa: function () {
-      const g = Calc.gpaRequired(gpState.current, gpState.done, gpState.target, gpState.remaining);
-      const c = Calc.courseNeeded(gpState.courseCur, gpState.courseTarget, gpState.courseWeight);
-      if (!g && !c) return null;
-      return { type: 'copy', tool: 'gpa', toolName: 'Academic GPA & Target Grade Planner', title: 'GPA forecast', total: '' };
-    },
-    retainer: function () {
-      const r = Calc.retainerCalc(rtState.hours, rtState.hourly, rtState.overhead, rtState.margin, rtState.sla);
-      if (!r) return null;
-      return {
-        type: 'copy', tool: 'retainer', toolName: 'Retainer & SLA Pricing Estimator',
-        title: rtState.client || 'Retainer pricing', client: rtState.client || '', total: rtMoney(r.price) + '/mo'
-      };
-    },
-    delay: function () {
-      const r = Calc.delayCalc(dlState.contract, dlState.penaltyPct, dlState.capPct, dlState.days, dlState.overhead);
-      if (!r) return null;
-      return {
-        type: 'copy', tool: 'delay', toolName: 'Project Delay & Damages Impact Calculator',
-        title: dlState.project || 'Delay impact', project: dlState.project || '', total: dlMoney(r.total)
-      };
-    }
-  };
-
-  /* The state a reopen needs. Deep-copied, so editing the live tool after a
-     save can never mutate the saved snapshot. */
-  function toolSnapOf(tool) {
-    const copy = function (v) { try { return JSON.parse(JSON.stringify(v)); } catch (e) { return null; } };
-    if (tool === 'scope-guard') return { tool: tool, state: copy(state) };
-    if (tool === 'qr') return { tool: tool, state: { rows: copy(qrRows) } };
-    if (tool === 'boq') return { tool: tool, state: copy(boqState) };
-    if (tool === 'invoice') return { tool: tool, state: copy(invState) };
-    if (tool === 'pricing') return { tool: tool, state: copy(prState) };
-    if (tool === 'duty') return { tool: tool, state: copy(dutyState) };
-    if (tool === 'variation') return { tool: tool, state: copy(varState) };
-    if (tool === 'breakeven') return { tool: tool, state: copy(bkState) };
-    if (tool === 'fx') return { tool: tool, state: copy(fxState) };
-    if (tool === 'gpa') return { tool: tool, state: copy(gpState) };
-    if (tool === 'retainer') return { tool: tool, state: copy(rtState) };
-    if (tool === 'delay') return { tool: tool, state: copy(dlState) };
-    return null;
-  }
-
-  /* Rebuild a tool from a saved snapshot. Every branch merges onto the tool's
-     own empty shape first, so a snapshot written by an older build — one that
-     predates a field — can never leave that field undefined. */
-  function restoreToolSnapshot(tool, snap) {
-    if (!snap || typeof snap !== 'object') return false;
-    try {
-      const merge = function (empty, saved) { return Object.assign(empty, (saved && typeof saved === 'object') ? saved : {}); };
-      if (tool === 'scope-guard') {
-        state = merge(emptyState(), snap.state);
-        state.requests = Array.isArray(state.requests) ? state.requests : [];
-        saveState(); renderAll();
-      } else if (tool === 'qr') {
-        qrRows = (snap.state && Array.isArray(snap.state.rows)) ? snap.state.rows : [];
-        saveQr(); renderQr();
-      } else if (tool === 'boq') {
-        boqState = merge(emptyBoq(), snap.state);
-        if (!Array.isArray(boqState.lines)) boqState.lines = [];
-        saveBoq(); renderBoq();
-      } else if (tool === 'invoice') {
-        invState = merge(emptyInv(), snap.state);
-        if (!Array.isArray(invState.lines)) invState.lines = [];
-        saveInv(); renderInv();
-      } else if (tool === 'pricing') {
-        prState = merge(emptyPricing(), snap.state);
-        savePricing(); fillPricingForm();
-      } else if (tool === 'duty') {
-        dutyState = merge(emptyDuty(), snap.state);
-        saveDuty(); fillDutyForm();
-      } else if (tool === 'variation') {
-        varState = merge(emptyVariation(), snap.state);
-        saveVariation(); fillVariationForm();
-      } else if (tool === 'breakeven') {
-        bkState = merge(emptyBreakeven(), snap.state);
-        saveBreakeven(); fillBreakevenForm();
-      } else if (tool === 'fx') {
-        fxState = merge(emptyFx(), snap.state);
-        saveFx(); fillFxForm();
-      } else if (tool === 'gpa') {
-        gpState = merge(emptyGpa(), snap.state);
-        saveGpa(); fillGpaForm();
-      } else if (tool === 'retainer') {
-        rtState = merge(emptyRetainer(), snap.state);
-        saveRetainer(); fillRetainerForm();
-      } else if (tool === 'delay') {
-        dlState = merge(emptyDelay(), snap.state);
-        saveDelay(); fillDelayForm();
-      } else {
-        return false;
-      }
-      return true;
-    } catch (e) { return false; }
-  }
-
-  /* The ONE writer for a mini-tool Library row, mirroring erpSaveToLibrary:
-     create on the first save, update in place on every later save. */
-  async function saveToolToLibrary(tool) {
-    const docFn = TOOL_DOC[tool];
-    if (!docFn) return;
-    const payload = docFn();
-    if (!payload) {
-      showToast('Fill in the ' + toolLabel(tool) + ' first \u2014 there is nothing to save yet.', 'error');
-      return;
-    }
-    const existing = toolLibraryIds[tool]
-      ? history.find(function (h) { return h.id === toolLibraryIds[tool]; })
-      : null;
-
-    if (!existing) {
-      /* Same rule as the ERP: past the cap, ask before adding another row.
-         A warning only — nothing is ever deleted here. */
-      const key = libraryJobKey(tool, payload);
-      const versions = libraryVersionCount(tool, key);
-      if (versions >= LIBRARY_VERSION_WARN_AT) {
-        const label = payload.title || toolLabel(tool);
-        const go = await confirmAction({
-          title: 'Save another version?',
-          message: '\u201c' + label + '\u201d already has ' + versions + ' saved versions in your Library. Save another one anyway? Nothing is deleted \u2014 you can remove older versions from the Library whenever you like.',
-          confirmLabel: 'Save anyway',
-          cancelLabel: 'Cancel'
-        });
-        if (!go) return;
-      }
-    }
-
-    const now = Date.now();
-    const snap = toolSnapOf(tool);
-    if (existing) {
-      existing.type = payload.type;
-      existing.tool = payload.tool;
-      existing.toolName = payload.toolName;
-      existing.title = payload.title;
-      existing.total = payload.total;
-      existing.client = payload.client || '';
-      existing.project = payload.project || '';
-      existing.ref = payload.ref || '';
-      existing.at = now;
-      existing.touchedAt = now;          // re-saving IS activity
-      if (existing.autoExpire !== true) existing.autoExpire = false;
-      if (snap) draftStore[existing.id] = snap;
-      saveHistory();
-      erpWriteDrafts();
-      showToast('Library entry updated \u2014 \u201c' + payload.title + '\u201d');
-    } else {
-      const id = uid();
-      toolLibraryIds[tool] = id;
-      /* autoExpire starts OFF for every new document. */
-      const entry = Object.assign({ id: id, at: now, touchedAt: now, autoExpire: false }, payload);
-      history.unshift(entry);
-      if (history.length > 60) history = history.slice(0, 60);
-      if (snap) draftStore[entry.id] = snap;
-      pruneDrafts();
-      saveToolLibraryIds();
-      saveHistory();
-      erpWriteDrafts();
-      showToast('Saved to Library \u2014 \u201c' + payload.title + '\u201d');
-    }
-    renderHistory();
-    renderActivity();
-    renderKpis();
-    updateKPICards();
-    renderStorageStatus();
   }
 
   async function resetErp() {
@@ -19658,8 +18460,6 @@ body.light-theme .tool-launch {
     brand = emptyBrand();
     history = [];
     draftStore = {};
-    toolLibraryIds = {};
-    activityLog = [];
     try {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(QR_KEY);
@@ -19675,8 +18475,6 @@ body.light-theme .tool-launch {
       localStorage.removeItem(DL_KEY);
       localStorage.removeItem(HISTORY_KEY);
       localStorage.removeItem(HISTORY_DRAFTS_KEY);
-      localStorage.removeItem(ACTIVITY_KEY);
-      localStorage.removeItem(TOOL_LIBRARY_KEY);
       localStorage.removeItem(ERP_KEY);
       localStorage.removeItem(DB_KEY);
       localStorage.removeItem(BRAND_KEY);
@@ -19761,11 +18559,16 @@ body.light-theme .tool-launch {
       }
     } catch (e) { /* ignore */ }
     const payload = { app: 'Nexora Engine', version: 1, exportedAt: new Date().toISOString(), entries: n, data: data };
-    const rec = nexoraSaveFile(JSON.stringify(payload, null, 2),
-      'nexora-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
-    showToast(rec
-      ? 'Backup prepared \u2014 ' + n + (n === 1 ? ' entry' : ' entries') + ' ready (downloads are suppressed in test mode).'
-      : 'Backup downloaded \u2014 ' + n + (n === 1 ? ' entry saved.' : ' entries saved.'));
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'nexora-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ } }, 1500);
+    showToast('Backup downloaded \u2014 ' + n + (n === 1 ? ' entry saved.' : ' entries saved.'));
     renderStorageStatus();
   }
   function restoreBackupFile(file) {
@@ -20339,7 +19142,6 @@ body.light-theme .tool-launch {
     $('dt-copy').addEventListener('click', copyDutyBreakdown);
     $('dt-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset import duty calculator?', message: 'This clears the CIF value, units and all tax rates.', confirmLabel: 'Reset', danger: true }))) return;
-      clearToolLibraryId('duty');
       dutyState = emptyDuty();
       saveDuty();
       fillDutyForm();
@@ -20361,7 +19163,6 @@ body.light-theme .tool-launch {
     $('vr-pdf').addEventListener('click', gateClick(exportVariationPdf));
     $('vr-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset variation builder?', message: 'This clears the project details, costs and work description.', confirmLabel: 'Reset', danger: true }))) return;
-      clearToolLibraryId('variation');
       varState = emptyVariation();
       saveVariation();
       fillVariationForm();
@@ -20383,7 +19184,6 @@ body.light-theme .tool-launch {
     $('bk-copy').addEventListener('click', copyBreakevenSummary);
     $('bk-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset breakeven calculator?', message: 'This clears your income target, overhead and time settings.', confirmLabel: 'Reset', danger: true }))) return;
-      clearToolLibraryId('breakeven');
       bkState = emptyBreakeven();
       saveBreakeven();
       fillBreakevenForm();
@@ -20415,7 +19215,6 @@ body.light-theme .tool-launch {
     $('fx-copy').addEventListener('click', copyFxInvoice);
     $('fx-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset FX & fee adjuster?', message: 'This clears the payout target and fee rates.', confirmLabel: 'Reset', danger: true }))) return;
-      clearToolLibraryId('fx');
       fxState = emptyFx();
       saveFx();
       fillFxForm();
@@ -20439,7 +19238,6 @@ body.light-theme .tool-launch {
     $('gp-copy').addEventListener('click', copyGpaSummary);
     $('gp-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset GPA planner?', message: 'This clears your progress, targets and course weights.', confirmLabel: 'Reset', danger: true }))) return;
-      clearToolLibraryId('gpa');
       gpState = emptyGpa();
       saveGpa();
       fillGpaForm();
@@ -20497,8 +19295,6 @@ body.light-theme .tool-launch {
     $('history-clear').addEventListener('click', clearHistory);
     const dedupeBtn = $('history-dedupe');
     if (dedupeBtn) dedupeBtn.addEventListener('click', removeDuplicateHistory);
-    const noteBtn = $('history-notifications');
-    if (noteBtn) noteBtn.addEventListener('click', removeNotificationsFromLibrary);
     const histList = $('history-list');
     histList.addEventListener('click', function (e) {
       const btn = e.target.closest('button[data-hact]');
@@ -21007,16 +19803,6 @@ body.light-theme .tool-launch {
     $('erp-pdf').addEventListener('click', gateClick(exportErpPdf));
     $('erp-export-xlsx').addEventListener('click', gateClick(exportErpExcel));
     $('erp-save').addEventListener('click', erpSaveToLibrary);
-    /* Every mini-tool's Save to Library button, found by its data attribute so
-       adding a tool needs no new binding here. Not credit-gated: saving your
-       own work is not a tool execution (the ERP's save is ungated too). */
-    const toolSaveBtns = document.querySelectorAll('[data-tool-save]');
-    for (let i = 0; i < toolSaveBtns.length; i++) {
-      (function (btn) {
-        const tool = btn.getAttribute('data-tool-save');
-        btn.addEventListener('click', function () { saveToolToLibrary(tool); });
-      })(toolSaveBtns[i]);
-    }
     $('erp-reset').addEventListener('click', resetErp);
 
     // ── ERP Record store (Primary Key save / load / delete) ────
@@ -21070,7 +19856,7 @@ body.light-theme .tool-launch {
       noteDbRemoval('item', idx);
       saveDb();
       renderDb();
-      logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
+      pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
       renderKpis();
       updateKPICards();
     });
@@ -21095,7 +19881,7 @@ body.light-theme .tool-launch {
       noteDbRemoval('client', idx);
       saveDb();
       renderDb();
-      logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
+      pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
       renderKpis();
       updateKPICards();
     });
@@ -21291,7 +20077,7 @@ body.light-theme .tool-launch {
         saveDb();
         renderDb();
         refreshDbDrawer('items');
-        logActivity({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
+        pushHistory({ type: 'db', tool: '', toolName: 'Item DB updated', title: 'Item removed — ' + db.items.length + ' SKUs left' });
         renderKpis();
         updateKPICards();
       });
@@ -21315,7 +20101,7 @@ body.light-theme .tool-launch {
         saveDb();
         renderDb();
         refreshDbDrawer('clients');
-        logActivity({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
+        pushHistory({ type: 'db', tool: '', toolName: 'Client DB updated', title: 'Client removed — ' + db.clients.length + ' left' });
         renderKpis();
         updateKPICards();
       });
@@ -21425,8 +20211,7 @@ body.light-theme .tool-launch {
     const mdTabs = document.querySelectorAll('.md-tab');
     for (let i = 0; i < mdTabs.length; i++) {
       mdTabs[i].addEventListener('click', function () {
-        const want = this.getAttribute('data-md-tab');
-        mdTab = (want === 'clients' || want === 'records') ? want : 'items';
+        mdTab = this.getAttribute('data-md-tab') === 'clients' ? 'clients' : 'items';
         mdSel = null;                 // a different list is a different record set
         renderMasterData();
       });
@@ -21442,12 +20227,6 @@ body.light-theme .tool-launch {
     if (mdDetailBox) mdDetailBox.addEventListener('click', function (e) {
       const btn = e.target.closest ? e.target.closest('.md-manage') : null;
       if (!btn) return;
-      // A saved record's one exit is the ERP FORM, and it runs the ERP's own
-      // Load Record path — the read-only pane never edits anything itself.
-      if (btn.getAttribute('data-md-kind') === 'record') {
-        erpLoadRecordById(btn.getAttribute('data-md-key'));
-        return;
-      }
       const found = mdFindSelection();
       showView('db');
       if (!found) return;
@@ -21459,17 +20238,15 @@ body.light-theme .tool-launch {
     // ── Home: saved project/client records preview ─────────────
     const recViewAll = $('home-records-viewall');
     if (recViewAll) recViewAll.addEventListener('click', function () {
-      // The full record list is the same read-only browse view the items and
-      // clients use, NOT the Item & Client Database management page.
-      openMasterData('record');
+      showView('db');
+      const card = $('db-records-title');
+      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     const recList = $('home-records-list');
     if (recList) recList.addEventListener('click', function (e) {
       const row = e.target.closest ? e.target.closest('.home-db-row') : null;
       if (!row) return;
-      // A row click READS the record; loading it into the editable ERP form is
-      // the labelled button inside the details pane.
-      openMasterData('record', row.getAttribute('data-rec'));
+      erpLoadRecordById(row.getAttribute('data-rec'));
     });
     const recBody = $('db-record-rows');
     if (recBody) recBody.addEventListener('click', function (e) {
@@ -21617,11 +20394,6 @@ body.light-theme .tool-launch {
     initAuthUi();
     hydrateIcons();
     wireEvents();
-    watchResultValues();
-    /* Documents flagged for auto-expiry are swept ONCE per boot, before the
-       Library paints, so an expired row never briefly appears. Only entries
-       the user explicitly flagged are ever candidates. */
-    libraryExpiredOnBoot = sweepExpiredLibrary();
     renderStorageStatus();
     initCloudSync();
   } catch (e) { try { console.error('Nexora Engine boot:', e); } catch (e2) { /* ignore */ } }
@@ -21654,12 +20426,6 @@ body.light-theme .tool-launch {
   renderDb();
   renderErp();
   renderHistory();
-  /* Say what the sweep did — a silent deletion would be worse than no feature. */
-  if (libraryExpiredOnBoot) {
-    showToast(libraryExpiredOnBoot === 1
-      ? '1 document passed its 30-day auto-delete window and was removed from the Library.'
-      : libraryExpiredOnBoot + ' documents passed their 30-day auto-delete window and were removed from the Library.');
-  }
   initCurrencySelects();
   syncInvCurrencySelect();
   formatAllNumericInputs();

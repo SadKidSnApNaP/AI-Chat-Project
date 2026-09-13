@@ -78,6 +78,15 @@ body {
 
 /* Fixed radial glow backdrop — a real element (not a body background) so the page
    wrappers can stay transparent and every glass card floats over the glow. */
+/* The tint gradients paint OVER the base canvas, so the base layer has to be
+   replaceable rather than hardcoded. `--glow-base` carries the built-in opaque
+   gradient by default; Appearance → Background colour swaps it to `none` and
+   puts the chosen colour in `--glow-bg`.
+
+   This matters because the last layer here is FULLY OPAQUE and sits above the
+   :root canvas: while it was hardcoded it covered the chosen colour completely,
+   so the swatches stored a value that could never be seen — the colour "never
+   changed" no matter which one was clicked. */
 #glow-backdrop {
   position: fixed !important;
   top: 0 !important;
@@ -86,11 +95,12 @@ body {
   height: 100vh !important;
   z-index: -9999 !important;
   pointer-events: none !important;
-  background:
+  background-color: var(--glow-bg, transparent) !important;
+  background-image:
     radial-gradient(circle at 78% 12%, rgba(99, 102, 241, 0.30) 0%, transparent 46%),
     radial-gradient(circle at 72% 52%, rgba(139, 92, 246, 0.20) 0%, transparent 52%),
     radial-gradient(circle at 22% 68%, rgba(56, 189, 248, 0.16) 0%, transparent 42%),
-    radial-gradient(120% 120% at 75% 20%, #20274c 0%, #111428 50%, #090a14 100%) !important;
+    var(--glow-base, radial-gradient(120% 120% at 75% 20%, #20274c 0%, #111428 50%, #090a14 100%)) !important;
 }
 
 /* Monochrome abstract background image under a dark vignette, slowly pulsing.
@@ -586,11 +596,66 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 /* ── History view ────────────────────────────────────────── */
 .history-list { display: grid; gap: 10px; }
 .history-empty { color: var(--muted); font-size: 13.5px; padding: 8px 2px; }
+/* Library header: the duplicate cleanup is offered only while duplicates exist,
+   so the group collapses to nothing the rest of the time. */
+.history-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .history-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; }
 .history-title { display: flex; align-items: center; gap: 8px; color: var(--text-strong); font-size: 14px; }
 .history-meta { color: var(--faint); font-size: 12.5px; margin-top: 3px; }
 .history-total { color: var(--muted); font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .history-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* ── Excel export preview ────────────────────────────────────────
+   The sheet is drawn on a light surface so it reads like a spreadsheet
+   rather than like another dark glass panel, and it scrolls inside the
+   dialog because a document sheet is wider than the card. */
+.xl-preview-card { max-width: 920px; }
+.xl-preview-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 4px 0 14px;
+  padding: 12px;
+  max-height: 58vh;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.xl-preview-sheet {
+  color: #0b0d17;
+  font-family: Calibri, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+}
+.xl-preview-sheet table.xl-sheet {
+  border-collapse: collapse;   /* adjacent 1px rules read as one, like Excel */
+  table-layout: fixed;
+  min-width: 100%;
+}
+.xl-sheet td {
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  vertical-align: middle;
+}
+/* A calculated figure, flagged so it is never mistaken for typed text. */
+.xl-sheet td.xl-formula {
+  box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.35);
+  cursor: help;
+}
+/* Per-document retention switch. The default (off) is deliberately the quiet
+   state — "Keep forever" — so a document only looks out of the ordinary once
+   the user has switched auto-delete ON for that one row. */
+.history-retention.is-on {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fca5a5;
+}
+.history-retention-mark {
+  font-size: 9px;
+  line-height: 1;
+  vertical-align: 1px;
+  margin-right: 2px;
+}
 @media (max-width: 760px) {
   .history-item { flex-direction: column; align-items: flex-start; }
   .history-actions { justify-content: flex-start; }
@@ -1040,6 +1105,29 @@ textarea { resize: vertical; min-height: 44px; line-height: 1.55; }
 .result-label { font-size: 11px; color: var(--faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .result-value { font-size: 16.5px; font-weight: 800; color: var(--text-strong); font-variant-numeric: tabular-nums; }
 
+/* ── Result figures never clip ───────────────────────────────────────────
+   A calculated figure is ONE unbreakable token ("Rs190,323,232,323"), so at
+   a fixed size it either fits its box or overflows the card — and a clipping
+   ancestor cuts it mid-digit (the KPI cards carry overflow:hidden), which is
+   how the same tool could show a full number in one box and a truncated one
+   in the box beside it. Every result box therefore shares these properties,
+   and `fitResultValues()` in js/app.js shrinks the font to the measured
+   width: nowrap makes that measurement honest, max-width keeps the element
+   inside its card, and min-width lets the flex summary rows give the number
+   the room it needs. `.fit-wrap` is the last resort — at the 10px floor a
+   very long figure wraps onto a second line rather than being cut off. */
+.stat-value,
+.result-value,
+.kpi-value,
+.qr-total-value,
+.boq-sum-line strong {
+  display: block;
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+}
+.fit-wrap { white-space: normal !important; overflow-wrap: anywhere; }
+
 /* ── Request history table ──────────────────────────────────────── */
 .table-wrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 540px; }
@@ -1067,6 +1155,13 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
   color: var(--faint);
 }
 .db-list-head + .db-list { border-top: 1px solid var(--border); }
+/* The header must not influence how the tracks are sized. A grid `fr` track
+   grows to fit its item's min-content, so the head's own label text ("Address",
+   "Rate") used to size the columns differently from the row below it — the
+   labels then sat up to 230px off the cells they name. With min-content
+   neutralised on both sides, one template resolves identically for header and
+   rows. */
+.db-list-head > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .db-row {
   display: grid;
   align-items: center;
@@ -1078,12 +1173,33 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
 }
 .db-row:last-child { border-bottom: none; }
 .db-row:hover { background: rgba(255, 255, 255, 0.04); }
-.db-grid-items { grid-template-columns: minmax(110px, 0.9fr) 2.2fr minmax(52px, 0.5fr) minmax(90px, 0.8fr) 72px; }
+/* The item and client rows on the Item & Client Database page are click targets
+   for the read-only details drawer (the record rows below are not — they only
+   carry Load and ✕), so the pointer and the focus ring are scoped to them. */
+.db-row.db-grid-items,
+.db-row.db-grid-clients { cursor: pointer; }
+.db-row.db-grid-items:focus-visible,
+.db-row.db-grid-clients:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* Items carry one column more than clients (Model no), and on a desktop this
+   card is only ~403px wide inside the page's two-column layout: the row's
+   content box is ~379px, so the six columns have to total 339px after gaps.
+   Floors below add up to 324px + 5 gaps of 8px = 364px — inside the budget
+   with room to spare, and every spare pixel goes to the name first. A wider
+   screen grows the name and the model; a narrow one ellipsises them (full
+   text stays in each cell's title). The old 5-column template summed its
+   floors to 42px MORE than this box, which is why the name collapsed. */
+.db-grid-items { grid-template-columns: minmax(44px, 0.55fr) minmax(78px, 1.9fr) minmax(56px, 1fr) minmax(26px, 0.3fr) minmax(62px, 0.85fr) 62px; }
 .db-grid-clients { grid-template-columns: minmax(150px, 1.2fr) 2.4fr minmax(52px, 0.5fr) 72px; }
 /* Saved Project / Client Header records (Master ERP Engine — Save Record).
    Same row grammar as the two databases above: id · label · lines · saved · actions. */
 .db-grid-records { grid-template-columns: minmax(110px, 0.85fr) 2.4fr minmax(56px, 0.5fr) minmax(100px, 0.8fr) 118px; }
 .db-list-head.db-grid-items, .db-list-head.db-grid-clients, .db-list-head.db-grid-records { display: grid; align-items: center; gap: 12px; }
+/* The header must share the row's gap or every column drifts 4px further than
+   the last. Declared AFTER the rule above so it wins on the header too. */
+.db-list-head.db-grid-items, .db-row.db-grid-items { gap: 8px; }
 .db-sku strong { color: var(--text-strong); font-size: 13.5px; letter-spacing: 0.01em; }
 .db-name { color: var(--text); font-size: 13.5px; overflow-wrap: anywhere; }
 .db-addr { color: #94a3b8; font-size: 13px; }
@@ -1097,12 +1213,14 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
 .db-name,
 .db-addr,
 .db-sku,
+.db-model,
 .db-address-line {
   min-width: 0;
 }
 .db-row .db-name,
 .db-row .db-addr,
-.db-row .db-sku strong {
+.db-row .db-sku strong,
+.db-row .db-model {
   display: block;
   overflow: hidden;
   white-space: nowrap;
@@ -1124,24 +1242,63 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
   text-overflow: ellipsis;
 }
 .db-unit { color: var(--muted); font-size: 12.5px; }
-.db-rate { color: var(--text-strong); font-variant-numeric: tabular-nums; font-size: 13.5px; }
+/* Make / Model — set once on the item, then carried into every ERP line. */
+.db-model { color: var(--text); font-size: 13px; }
+/* The item row used to borrow `.qr-amount` for its bold money look — and that
+   class carries `min-width: 96px`, which made the rate cell 96px wide inside a
+   ~52px track: it overflowed its own column and pushed into the actions. A DB
+   rate now owns its styling, shrinks to its track and ellipsises, with the
+   value in the title (see renderDb). */
+.db-rate {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
 .db-rate-h { text-align: right; }
-.db-rate { text-align: right; }
 .db-del { display: flex; justify-content: flex-end; }
 /* Row action group: edit + delete, sitting at the right edge of the row. */
 .db-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .db-row .empty-cell { display: block; padding: 18px 10px; }
+/* ── When a DB row becomes a stacked card ────────────────────────────
+   A row stacks when it cannot hold its columns. For the item row that is
+   either a phone-sized viewport, OR a desktop between 981px and 1240px: above
+   980px the dashboard goes back to two columns, which squeezes this card to
+   ~400px — less than the ~370px of columns+gutters the six-column item row
+   needs, so the columns would have nowhere to go. Either side of that band
+   the card is wide enough for the grid, and the header row stays visible. */
+@media (max-width: 760px), (min-width: 981px) and (max-width: 1240px) {
+  .db-list-head.db-grid-items { display: none; }
+  .db-grid-items { grid-template-columns: 1fr 62px; }
+  /* EVERY value cell takes the wide column; only the actions sit beside them.
+     Without this they auto-place into the narrow second column and get
+     squeezed to a sliver — exactly where the item's name matters most. */
+  .db-row.db-grid-items .db-sku,
+  .db-row.db-grid-items .db-name,
+  .db-row.db-grid-items .db-model,
+  .db-row.db-grid-items .db-unit,
+  .db-row.db-grid-items .db-rate { grid-column: 1; }
+  /* `1 / -1` spans however many lines the row actually stacks — so adding a
+     column later can never leave the actions floating beside a middle line. */
+  .db-row.db-grid-items .db-del { grid-column: 2; grid-row: 1 / -1; align-self: start; }
+}
+
 @media (max-width: 760px) {
-  .db-list-head.db-grid-items,
   .db-list-head.db-grid-clients,
   .db-list-head.db-grid-records { display: none; }
-  .db-grid-items, .db-grid-clients { grid-template-columns: 1fr 72px; }
+  .db-grid-clients { grid-template-columns: 1fr 72px; }
   .db-grid-records { grid-template-columns: 1fr 118px; }
-  .db-row .db-unit, .db-row .db-rate { grid-column: 1; }
-  .db-row .db-del { grid-row: span 3; }
+  .db-row .db-unit, .db-row .db-addr { grid-column: 1; }
   /* The saved-date and line-count columns are the first to go when the row
      runs out of width — the id, the label and the actions always survive. */
   .db-row .db-rec-lines, .db-row .db-rec-when { display: none; }
+  .db-row.db-grid-clients .db-del,
+  .db-row.db-grid-records .db-del { grid-column: 2; grid-row: 1 / -1; align-self: start; }
 }
 th {
   text-align: left;
@@ -3047,7 +3204,9 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   .quo-table th { background: #f3f4f6 !important; color: #111827 !important; }
   .quo-table th, .quo-table td { border-color: #000000 !important; color: #111827 !important; }
   .fm-table th, .fm-table td { border: 1px solid #000000 !important; }
-  .fm-doc, .fm-head, .fm-co h1, .fm-co div, .fm-banner, .fm-right > div,
+  /* .fm-banner is deliberately absent: it is a dark badge and forcing the
+     text dark too made it a blank block. It keeps its own white text. */
+  .fm-doc, .fm-head, .fm-co h1, .fm-co div, .fm-right > div:not(.fm-banner),
   .fm-metabox, .fm-meta-col h3, .fm-meta-col div, .fm-words, .fm-terms li,
   .fm-footbox, .fm-bank div, .fm-onbehalfof { color: #111827 !important; }
   .fm-banner { background: #111827 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -3249,7 +3408,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   border-radius: 4px;
   margin-bottom: 6px;
 }
-.fm-right > div { font-size: 11px; color: #111827; margin-top: 2px; }
+/* :not(.fm-banner) — the badge is a direct child <div> of .fm-right, so a
+   plain `> div` rule beat `.fm-banner` and made its text #111827 on its own
+   #111827 background. Mirrored in PRINT_DOC_CSS (js/app.js). */
+.fm-right > div:not(.fm-banner) { font-size: 11px; color: #111827; margin-top: 2px; }
 .fm-metabox {
   display: flex;
   gap: 0;
@@ -3590,12 +3752,16 @@ body {
    Both theme toggles drive the SAME state — [data-theme="light"] on <html>,
    mirrored to <body class="light-theme"> — so these two selectors agree.
    ════════════════════════════════════════════════════════════════ */
+/* Light mode keeps its own default base layer, but only as the FALLBACK for
+   `--glow-base` — a background the user chose outranks it. Written as
+   background-image (not the `background` shorthand) so it cannot reset the
+   background-color that carries the chosen colour. */
 [data-theme="light"] #glow-backdrop,
 body.light-theme #glow-backdrop {
-  background:
+  background-image:
     radial-gradient(circle at 75% 15%, rgba(99, 102, 241, 0.18) 0%, transparent 45%),
     radial-gradient(circle at 25% 65%, rgba(56, 189, 248, 0.16) 0%, transparent 40%),
-    radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
+    var(--glow-base, radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%)) !important;
 }
 
 /* Every main layout wrapper stays transparent so the backdrop shows through. */
@@ -3852,6 +4018,10 @@ body.light-theme .tool-launch {
   border-color: rgba(99, 102, 241, 0.5);
 }
 .md-detail { display: block; }
+/* The details drawer reuses the browse view's .md-detail markup verbatim; the
+   body just needs to scroll inside the dialog. */
+#db-detail-body { flex: 1 1 auto; overflow-y: auto; max-height: 58vh; padding-right: 4px; }
+.db-detail-actions { display: inline-flex; align-items: center; gap: 8px; }
 .md-empty { margin: 0; font-size: 13px; line-height: 1.55; color: #8b949e; }
 .md-detail-title {
   margin: 0 0 2px;
@@ -3890,6 +4060,18 @@ body.light-theme .tool-launch {
 .md-field dd.md-blank { color: #6b7280; }
 .md-field dd.md-note { font-size: 12px; color: #94a3b8; }
 .md-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+/* Saved-record details: the read-only line-item table in the detail pane.
+   `.data-table` carries `min-width: 640px` for the input grids, which would
+   force a horizontal scroll inside this narrow pane, so it is neutralised for
+   this one use — the table then fits the pane like every other md-field. */
+.md-lines-title { margin: 14px 0 6px; }
+.md-lines { margin: 0 0 10px; overflow-x: auto; }
+.md-lines .data-table { min-width: 0; width: 100%; }
+.md-lines .data-table th,
+.md-lines .data-table td { white-space: nowrap; }
+.md-lines .data-table td.md-line-desc { white-space: normal; overflow-wrap: anywhere; }
+.md-lines .row-muted { color: #8b949e; font-size: 12px; }
 @media (max-width: 1000px) {
   .md-layout { grid-template-columns: minmax(0, 1fr); }
   .md-rows { max-height: 320px; }

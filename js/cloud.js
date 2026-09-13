@@ -320,8 +320,15 @@
       it.sku = text(r.sku);
       it.name = text(r.name);
       it.unit = text(r.unit) || 'Nr';
-      // null must stay null: "never entered" is not the same as a 0 rate.
-      it.rate = (r.rate === null || r.rate === undefined) ? null : Number(r.rate);
+      /* null must stay null: "never entered" is not the same as a 0 rate —
+         so a null COLUMN is not by itself proof that no rate was ever set.
+         The record's own copy is the tie-breaker: a row written before the
+         column existed, or one whose column never got filled, must not blank
+         a rate the record still carries. A record with no rate of its own
+         comes back null either way, so "missing" survives the round trip. */
+      const own = it.rate;
+      const ownMissing = own === null || own === undefined || String(own).trim() === '';
+      it.rate = (r.rate === null || r.rate === undefined) ? (ownMissing ? null : own) : Number(r.rate);
       if (r.added_at !== null && r.added_at !== undefined) it.addedAt = Number(r.added_at);
       return it;
     });
@@ -885,35 +892,123 @@
     /** Next session change wins — the app reloads so keys re-namespace. */
     onChange(cb) {
       if (!client) return;
-      client.auth.onAuthStateChange(function (event) {
+      client.auth.onAuthStateChange(function (event, session) {
         if (event === 'SIGNED_OUT') {
           const email = state.email;
           if (email) clearCloudMeta(email);
           emit({ status: 'signed-out', email: '', pendingKeys: 0 });
+        }
+        /* A sign-in that arrives AFTER this page finished booting is the case
+           a confirmation link produces, but it also covers a session restored
+           in another tab. Report it so the app can act on the new identity. */
+        if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
+          emit({ status: 'synced', email: sessionEmail(), message: '' });
         }
         if (cb) cb(event);
       });
     }
   };
 
-  /* An email-confirmation link lands back on the app with tokens in the URL.
-     supabase-js consumes them, then we tidy the address bar and re-render. */
+  /* ── Email-confirmation redirect ──────────────────────────────────────
+     A confirmation link comes back to the app carrying the session in the
+     URL (#access_token=… for the implicit flow, ?code=… for PKCE). Only
+     supabase-js may consume those tokens, and it does so ASYNCHRONOUSLY: for
+     the implicit flow it first calls getUser() over the network and only then
+     persists the session.
+
+     What used to be here stripped the tokens out of the address bar and
+     reloaded the page after a flat 300 ms. Whenever that round-trip took
+     longer than 300 ms the reload cancelled the exchange — and the tokens
+     were by then already gone from the URL, so the session could never be
+     recovered: the user landed on Home still signed out, which is exactly the
+     reported symptom. A one-shot sessionStorage guard then ignored every
+     later click of the link.
+
+     So this function now only DETECTS the callback and waits for the verdict
+     from onAuthStateChange. Nothing touches the URL until then. Deciding what
+     to do about a session that arrived after boot belongs to app.js, because
+     only it knows that its storage keys have to be re-namespaced. */
+  const CONFIRM_GUARD_KEY = 'nexora_confirmation_handled';
+  const CONFIRM_TIMEOUT_MS = 15000;
+  let pendingConfirmation = false;
+  let confirmTimer = null;
+
+  /* Drop the tokens from the address bar. Only ever called once supabase-js
+     has finished with them (or given up), never while they are still needed. */
+  function cleanAuthUrl() {
+    try {
+      const hash = window.location.hash && window.location.hash.indexOf('access_token') === -1 ? window.location.hash : '';
+      window.history.replaceState(null, document.title, window.location.origin + window.location.pathname + hash);
+    } catch (e) { /* ignore */ }
+  }
+
+  function confirmSessionStorage() {
+    try { return window.sessionStorage; } catch (e) { return null; }
+  }
+
+  function finishConfirmation(message) {
+    if (!pendingConfirmation) return;
+    pendingConfirmation = false;
+    if (confirmTimer) { window.clearTimeout(confirmTimer); confirmTimer = null; }
+    const signedIn = isSignedIn();
+    cleanAuthUrl();
+    if (signedIn) {
+      /* The exchange worked. Mark it so a reload loop is impossible, then
+         report the signed-in state — app.js reloads once from here so every
+         module re-reads its data under this account's keys. */
+      const ss = confirmSessionStorage();
+      if (ss) { try { ss.setItem(CONFIRM_GUARD_KEY, '1'); } catch (e) { /* ignore */ } }
+      emit({ status: 'synced', email: sessionEmail(), message: '' });
+      return;
+    }
+    emit({ status: 'signed-out', email: '', message: message || '' });
+  }
+
   function handleConfirmationRedirect() {
     const url = String(window.location.href);
-    const hasToken = url.indexOf('access_token=') !== -1 || url.indexOf('code=') !== -1 || url.indexOf('error_description=') !== -1;
-    if (!hasToken) return false;
-    let done = '';
-    try { done = window.sessionStorage.getItem('nexora_confirmation_redirect') || ''; } catch (e) { done = ''; }
-    if (done === '1') return false;
-    try { window.sessionStorage.setItem('nexora_confirmation_redirect', '1'); } catch (e) { /* ignore */ }
-    try {
-      const clean = window.location.origin + window.location.pathname +
-        (window.location.hash && window.location.hash.indexOf('access_token') === -1 ? window.location.hash : '');
-      window.history.replaceState(null, document.title, clean);
-    } catch (e) { /* ignore */ }
-    window.setTimeout(function () { window.location.reload(); }, 300);
+    const hasError = url.indexOf('error_description=') !== -1 || url.indexOf('error_code=') !== -1;
+    const hasToken = url.indexOf('access_token=') !== -1 || url.indexOf('code=') !== -1 || hasError;
+    if (!hasToken) {
+      /* An ordinary load. Clearing the guard here is what keeps a later
+         confirmation link working in the same tab. */
+      const ss = confirmSessionStorage();
+      if (ss) { try { ss.removeItem(CONFIRM_GUARD_KEY); } catch (e) { /* ignore */ } }
+      return false;
+    }
+    if (!client) { cleanAuthUrl(); return false; }
+    const ss = confirmSessionStorage();
+    if (ss) {
+      let done = '';
+      try { done = ss.getItem(CONFIRM_GUARD_KEY) || ''; } catch (e) { done = ''; }
+      /* Already exchanged in this tab (e.g. the reload raced us): the URL is
+         stale, so tidy it and carry on as a normal load. */
+      if (done === '1') { cleanAuthUrl(); return false; }
+    }
+    pendingConfirmation = true;
+    if (hasError) {
+      /* Supabase itself refused the link (expired, already used, wrong
+         project). There is nothing to exchange, so report it at once rather
+         than making the user wait out the timeout. */
+      window.setTimeout(function () {
+        finishConfirmation('That confirmation link is no longer valid. Please sign in, or request a new link.');
+      }, 0);
+      return true;
+    }
+    client.auth.onAuthStateChange(function (event, session) {
+      if (!pendingConfirmation) return;
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) finishConfirmation('');
+    });
+    /* A link that is expired, already used, or opened with no network never
+       produces a session. Give up gracefully: tidy the address bar and say so,
+       instead of leaving the tokens sitting in the URL forever. */
+    confirmTimer = window.setTimeout(function () {
+      finishConfirmation('That confirmation link could not be verified. Please sign in, or request a new one.');
+    }, CONFIRM_TIMEOUT_MS);
     return true;
   }
+
+  /** True while a confirmation link is being exchanged. */
+  function isConfirming() { return pendingConfirmation; }
 
   /* ── Connectivity: flush whenever we come back ──────────────────────── */
   window.addEventListener('online', function () {
@@ -952,6 +1047,8 @@
     sessionName: sessionName,
     sessionCreatedAt: sessionCreatedAt,
     isSignedIn: isSignedIn,
+    // true while an email-confirmation link is still being exchanged
+    isConfirming: isConfirming,
     // auth surface
     auth: auth,
     friendlyAuthError: friendlyAuthError,
