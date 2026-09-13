@@ -3469,3 +3469,338 @@ compositing (`produced no frames`) after the layout probing above, which is an
 environment state, not a page fault; the geometry numbers are the evidence.
 Note also that this is a 645px pane, so a wide-window look in a real browser is
 still worth one glance. `preview.html` rebuilt (1,020,934 bytes).
+
+## Other Utilities PDFs were greyscale — now they use the ERP's accent (2026-09-13)
+
+**Which tools even produce a PDF.** Only FOUR of the twelve Other Utilities tools
+have a PDF export — the rest ship Export-as-copy only. The complete list of PDF
+entry points in the app is five: `qr-pdf` (Qty & Rate), `boq-pdf` (Quotation),
+`vr-pdf` (Variation), `inv-pdf` (Smart Invoice) and `erp-pdf` (Master ERP
+Engine). So Scope Guard, Pricing, Import Tax, Breakeven, FX & Fees, GPA Planner,
+Retainer and Delay Impact were never in the black-and-white set — they have no
+PDF at all.
+
+**All four were greyscale.** `exportViaPrintWindow()` compiles the offscreen
+`*-doc` element into a standalone document through the single `PRINT_DOC_CSS`
+array (js/app.js) — that array is the *only* thing that styles a PDF, and the
+app's own `css/style.css` is not involved. Counting hex literals per template
+family in it showed the whole story:
+
+| family | used by | `#0d1b6e` accent | verdict |
+|---|---|---|---|
+| `.mx-*` | Master ERP Engine | **4** | coloured (the reference) |
+| `.fm-*` | all four tool PDFs (letterhead) | 1 — only `.fm-spec` | greyscale |
+| `.quo-*` | Quotation + shared table/totals | **0** | greyscale |
+| `.var-*` | Variation | **0** | greyscale |
+
+`.fm-head`, `.fm-co h1`, `.fm-banner`, `.fm-metabox` and the table headers all
+used `#111827` (a near-black), so every one of the four printed black-and-white
+while the ERP printed navy.
+
+**The fix reuses the ERP's own approach rather than inventing one:** the exact
+accent the ERP already uses, `#0d1b6e`, plus a light tint of it, `#e8ebf8`, for
+table-header fills. Structural elements became navy — the letterhead rule,
+company name, doc-type badge background, metabox/box borders and their dividers,
+column headings, totals emphasis rules, dashed words box, signature lines,
+`.var-h3` — and the table header row went navy-on-`#e8ebf8`. Body copy stays
+`#111827` and the table grid stays `#000000`, matching the ERP's own grid.
+Applied to `PRINT_DOC_CSS` (the PDF path) **and** mirrored into the
+`css/style.css` copies, including that file's `@media print` block, which had
+been forcing `.fm-co h1`, `.fm-meta-col h3` and the badge back to `#111827`/
+`#111827` and would otherwise have flattened the accent in the direct-Ctrl+P
+path.
+
+**`.mx-*` was deliberately NOT touched** — the ERP already prints correctly and
+its geometry/colour is the locked reference: `git diff` shows **0** changed
+lines mentioning `mx-` in either file. The narrow grey `Item #` column keeps its
+pre-existing `#6b7280` from `.quo-table .q-num` (higher specificity than
+`.quo-table th`), left as designed.
+
+**Verified from the real print payload, not from the stylesheet.** Each export
+was driven through the actual UI with `?nodl=1` (the existing seam: the compiled
+document is still written into `#print-frame` — exactly what the PDF receives —
+but no dialog opens and no file is written), then `getComputedStyle` was read
+from `frame.contentDocument`:
+
+| tool | `fm-head` rule | `fm-co h1` | badge bg | table `th` bg / text | other |
+|---|---|---|---|---|---|
+| Qty & Rate | navy | navy | navy | tint / navy | — |
+| Quotation | navy | navy | navy | tint / navy | `.fm-final` border navy + tint |
+| Smart Invoice | navy | navy | navy | tint / navy | `.fm-metabox` border + divider navy, `.fm-meta-col h3` navy, `.fm-footbox` border navy |
+| Variation | navy | navy | navy | — | `.var-h3` navy, `.var-table .q-final-row` border navy, `.q-sigline` navy |
+
+("navy" = `rgb(13, 27, 110)`; "tint" = `rgb(232, 235, 248)`.)
+
+### The double-print audit fired — first real data point
+
+During this work the `[print-audit]` detector from the earlier session caught a
+recurrence for the first time: **one** click on `qr-pdf` produced two identical
+payloads 1ms apart (`16:36:33.920Z` and `.921Z`, both 14846 bytes), and the
+warning logged both timestamps as designed.
+
+It then behaved: two further single clicks produced exactly one payload each
+(`16:37:17.922Z`, `16:37:21.921Z`). Note also that `doPrint` is guarded by a
+per-call `printed` flag set before the payload is recorded, so a single
+`openPrintWindow` **cannot** record twice — two records mean `qrExportPdf` ran
+twice in one tick, i.e. the button fired twice, not that one payload was double
+counted. Two identical bytes means the state was identical, so the state was not
+half-updated between them.
+
+Working hypothesis for the next investigation (NOT yet proven): the double
+appeared on the *first* export click after a page load, which fits the button
+being bound once in `wireEvents()` plus once more by view entry — `wireEvents()`
+is called exactly once (line ~12601), so a per-view re-wiring path is the only
+remaining candidate. Worth testing by entering the Qty & Rate view twice and
+clicking once: if the payload count rises, that confirms duplicate listeners.
+Note the other two "pairs" seen in this session were *my own* repeated clicks
+(a timed-out evaluation had already fired the export), which is exactly the
+false positive the warning text warns about.
+
+## Home KPI row was flush to the top, and the "stray line" explained (2026-09-13)
+
+**Symptom (as reported):** the KPI cards (Active Estimates, Database Records,
+Saved Documents, Processed Value) had no room above them, and a thin horizontal
+line sat right at the top edge of the viewport.
+
+**Cause 1 — the top padding really was missing.** The padding lives on the
+shared `.main-area` wrapper, not on the KPI row, and it was tiny:
+
+```css
+.main-area { padding: 4px 24px 40px 24px; }          /* base  */
+.main-area { padding: 0 0 40px 0; }                  /* <=1024px */
+```
+
+So the first element of *every* view started 4px (or 0px) below the top of the
+window. Measured: `#kpi-row` and `#home-view` both at `top: 0`, `kpi-row`
+`margin-top: 0`.
+
+**Cause 2 — the line was the KPI cards' own top edge, not a stray divider.**
+Nothing was drawing a separate rule: `main.container`, `.main-area` and
+`#home-view` all report `border-top: 0px`, and `main-area`/`#home-view` have no
+pseudo-elements. What was at `top: 0` across the content width was each
+`.kpi-card`'s own `border-top: 1px solid rgba(255,255,255,0.09)` plus its
+decorative `::after`:
+
+```css
+.kpi-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 1px; background: linear-gradient(90deg, transparent,
+  rgba(255,255,255,0.35), transparent); opacity: 0.6; }
+```
+
+That is an intentional "subtle glowing accent line along the top edge" of each
+card. With zero page padding the four cards' highlights sat in a row directly on
+the viewport's top edge, which reads as one stray floating line rather than as a
+card accent. **It was kept, not deleted** — the fix is the padding, after which
+it renders as designed.
+
+**Fix:** both `.main-area` rules now carry a 20px top inset — the same value as
+the app's own vertical rhythm between sections (`.card` and `.kpi-row` both use
+`margin-bottom: 20px`; `.hub-layout` uses `gap: 20px`), so the padding is
+literally the measured inter-section gap. Two rules changed, nothing else.
+
+**Verified:** `#kpi-row` now starts at **20px** and the gap to the next section
+is **20px** — identical. Spot-checked the same on other views, which were equally
+flush before and are now equally inset: Library first element 20 / gap 20,
+Company Database first element 20 / gap 20. A full sweep of the top 19px band
+finds only `#menu-btn` (the narrow-screen Menu pill, `top: 16px`, hidden above
+1024px) — no border, background or pseudo-element is drawn at the viewport edge
+any more.
+
+One measurement trap worth remembering: `#home-view > *` runs a 0.5s `fadeInUp`
+whose first frame is `translateY(16px)`, so a `getBoundingClientRect()` taken
+right after switching views reports every first element at `top: 36` instead of
+20. Wait for the animation to settle (~900ms) before believing the number.
+`preview.html` rebuilt (1,021,985 bytes).
+
+## Other Utilities is its own sidebar category, between ERP & DATA and RECORDS & BACKUP (2026-09-13)
+
+Reordering only. `#sidebar-utilities`, its `#/utilities` route and the utilities
+page itself are untouched — the tool-card grid still holds all 12 cards.
+
+**Markup** (`index.html`) — a sixth `<section class="nav-section">` was inserted
+between the `erp` and `records` sections, and the `Other Utilities` button was
+removed from the `more` section (which now holds only `Premium Plans`). DOM order
+is what decides sidebar order, so no CSS or reorder logic was needed:
+
+    workspace → erp → utilities → records → more → configuration
+
+**JS** (`js/app.js`) — one line: `utilities: true` added to
+`NAV_SECTION_DEFAULTS`. This is required, not cosmetic: `toggleNavSection()`
+bails out for any key absent from that object, so without it the new header
+would have rendered but silently refused to collapse. Expanding by default
+keeps the section's state consistent with the other five for a new user.
+
+Verified in the preview: the six headers sit at strictly increasing y
+(141 / 231 / 420 / 510 / 649 / 740); the utilities header toggles only itself
+(`{"utilities":false}`, `aria-expanded="false"`, items `hidden`) while
+`erp` stays open, and collapsing `more` writes `{"more":false}` without
+touching `utilities`; clicking the relocated link still routes to `#/utilities`
+where `#utilities-view` holds 12 `.tool-card`s in the original order
+(Scope Guard … Delay Impact). The test's `nexora_nav_sections_v1` key was
+removed afterwards so the profile is back to new-user defaults.
+`preview.html` rebuilt (1,022,952 bytes).
+
+## The ERP working draft is memory-only, with a leave warning (2026-09-13)
+
+The engine used to persist its working document on every keystroke
+(`saveErp()` → `ERP_KEY = 'calcmall_erp_v1'`, called from ~20 mutation
+sites), so a half-finished invoice outlived the tab, came back after a
+reload and reappeared whenever the engine was reopened — with no save ever
+having been asked for.
+
+**What changed** (`js/app.js`, `index.html`):
+
+* `loadErp()` became `normalizeErp(parsed)` — the shape/healing rules, now
+  used only by the two SAVED paths (`erpLoadRecord`, and the Library's
+  "load draft"), which previously duplicated that healing inline.
+* `let erpState = emptyErp();` — the engine always opens empty. The stale
+  `ERP_KEY` from an older build is no longer READ (only removed, on discard
+  or reset), so a draft left in a browser cannot come back.
+* `saveErp()` is now `erpDirty = true` — the same 20 call sites, no storage
+  write. `erpMarkCommitted()` lowers it, and is called from every commit:
+  Save Record, Load Record (after `erpResolveFromDb`), Save to Library
+  (both branches), the Library-refresh on export, `resetErp`, `resetAll`,
+  and the Library's load-draft path.
+* `erpResolveFromDb()` now only sets the flag when `changed ||
+  clientRes.changed`. It runs on EVERY entry to the engine (#erp-view via
+  `showView`) and its old unconditional `saveErp()` would have marked a
+  freshly opened engine dirty — verified: opening the engine leaves the
+  pill hidden.
+* Leave guard inside `showView()` (the single route choke point, so sidebar
+  links, Home cards, the hash, the back button and deep links all pass
+  through it): `erpHasUnsaved() && name !== 'erp' && !opts.force` asks
+  `confirmAction({ title:'You have unsaved changes', … focusCancel:true })`,
+  returns immediately, and only re-enters `showView(wanted, {force:true})`
+  on confirm; on cancel it calls `syncViewHash(currentView)` so a move that
+  came from the hash (back button) leaves the address bar in step.
+  `{ force: true }` is used by the two internal gate redirects.
+* `confirmAction` gained `focusCancel` — the unsaved-changes prompt focuses
+  "Go back and save", so a stray Enter keeps the work instead of discarding
+  it (every other prompt still focuses Confirm).
+* `beforeunload` guard for a reload / tab close, disarmed by
+  `unloadGuardOff` which `reloadApp()` sets; the three raw
+  `window.location.reload()` calls were routed through `reloadApp()`.
+* Live summary card: an `#erp-dirty-pill` ("Unsaved changes", painted only
+  from `paintErpDirty()` which both flag setters and `renderErp()` call) and
+  rewritten hint copy that says the draft is discarded.
+
+**Verified live** (premium harness, then restored to a clean guest):
+
+| check | result |
+|---|---|
+| open the engine | empty, pill hidden, 0 lines |
+| type one header field | pill appears; **no** `ERP_KEY` written; Library unchanged (0 rows) |
+| click a sidebar page | dialog shown, move DEFERRED (still on #/erp, field intact) |
+| "Go back and save" (focus lands here) | stays on the engine, typing kept |
+| "Leave and discard" | lands on the target view, draft cleared, reopening = fresh (0 lines) |
+| every destination | db / Library / Backup / Account all asked, landed, cleared |
+| leave via the hash (back-button path) | asked; cancel restored the URL to `#/erp` |
+| `beforeunload` arming | armed ONLY when in the engine AND dirty; not armed on another view, on a clean engine, or after a save |
+| navigation blocked while dirty | `preview_navigate` to another URL was cancelled by the unload guard; the same navigation succeeded once clean |
+| Save Record | record stored, pill cleared, Library still 0 rows, leaving afterwards is silent |
+| Save to Library | 1 row created on the click; pill cleared |
+| a stale `calcmall_erp_v1` seeded in storage | ignored — the engine opened empty, the saved record survived |
+
+NOT changed: the 11 mini-tools under Other Utilities still persist their own
+drafts (`QR_KEY`, `BOQ_KEY`, `INV_KEY`, `PR_KEY`, `DUTY_KEY`, `VAR_KEY`,
+`BK_KEY`, `FX_KEY`, `GP_KEY`, `RT_KEY`, `DL_KEY`) exactly as before. They are
+the same "offline draft layer", so the same surprise exists there; the guard
+was deliberately NOT extended to them without asking.
+`preview.html` rebuilt (1,030,747 bytes).
+
+## Every tool: memory-only drafts + the leave warning, through one mechanism (2026-09-13)
+
+The 11 mini-tools persisted their working state on every keystroke exactly as
+the engine used to (`saveQr` → `QR_KEY`, `saveState` → `STORAGE_KEY`, …), so a
+half-typed tool survived navigations, reloads and tab closes. Rather than
+repeat the engine's fix 12 times, the engine's own flag was generalised.
+
+**`js/app.js`**
+
+* `draftDirty` — one map, keyed by the same tool ids `TOOL_VIEWS` and
+  `data-tool-save` use, with `'erp'` for the engine. `markDraftDirty` /
+  `markDraftCommitted` replace `erpDirty`; `saveErp()` is now a wrapper, so its
+  20 existing call sites are untouched.
+* `paintDraftDirty(tool)` — the engine's pill still ships in the markup; a
+  mini-tool's is created on demand (once) next to its own Save button from
+  `[data-tool-save="<tool>"]`, so no markup changed for the 12 tools.
+* The pill follows `toolHasContent(tool)`, not the raw flag: a tool just RESET
+  to its empty shape still carries the flag its own reset raised, and an empty
+  tool must not advertise unsaved changes. That witness is also why **no reset
+  handler needed patching** — `markDraftDirty` never early-returns, so the
+  first keystroke after a reset brings the pill back (verified).
+* `draftUnsavedIn(view)` guards `showView()` for ANY tool (the ERP, and all
+  twelve), wording `Your changes to the <full tool name> have not been saved
+  yet.` `toolFullName()` uses `TOOLS[id].name` because "the Qty & Rate" needed
+  an article it cannot carry while "the Quantity & Rate Calculator" reads fine.
+* `discardToolDraft(tool)` — clears the legacy storage key, then empties the
+  tool through `restoreToolSnapshot()`, then lowers the flag. Order matters:
+  `restoreToolSnapshot` ends in the tool's own `saveX()`, which raises it again,
+  so emptying before the commit left an emptied tool still showing the pill.
+* `anyDraftUnsaved()` arms `beforeunload` for work in ANY tool, not just the
+  open one — a reload destroys every in-memory draft at once.
+* The 11 `loadX()` became `normalizeX(parsed)` (shape/healing rules, storage
+  read removed) and are now called by `restoreToolSnapshot()`, which had been
+  merging onto the empty shape by hand. Boot states are `emptyX()`;
+  `loadState()` → `normalizeScopeState()`, `loadQr()` deleted.
+* `saveToolToLibrary()` and the Library's "View / Load draft" both end in
+  `markDraftCommitted(tool)`; `resetAll()` clears the whole map.
+* Two real bugs surfaced by the cross-tool work, both fixed:
+  * `setToolCurrency()` writes `erpState.currency` / `invState.currency` for
+    whichever tool's banner fired. Marking those dirty marked the ENGINE
+    unsaved when the currency was changed in another tool, which (via the
+    app-wide unload guard) refused reloads until the engine had been visited
+    and its "draft" discarded. It now only marks them when `currentView` IS
+    that tool — a currency choice elsewhere is a preference, not an edit.
+  * `renderSetup()` never wrote the project fields when `state.project` was
+    null, so emptying the Scope Guard left the old project's name/price/hours
+    sitting in the create form. It now blanks them — which also fixes "Reset
+    all data" leaving that stale text.
+  * `toolLabel` was declared TWICE in the IIFE, so the second silently
+    shadowed the first and the credit-limit dialog read "of tool" for the
+    engine. Renamed the second to `toolShortLabel`.
+
+**Verified live** (premium harness, then restored to a clean guest)
+
+| check | result |
+|---|---|
+| each of the 12 tools: type → leave | pill appears, dialog named the tool, move deferred |
+| each of the 12 tools: "Leave and discard" | target view reached, reopening = EMPTY (qr, boq, pricing, duty, variation, breakeven, fx, gpa, retainer, delay, invoice, scope-guard all checked) |
+| no draft key written | `cm-qr-v1` … `fsg-state-v1` all absent while typing |
+| Library untouched by typing | 0 rows; 1 row per explicit Save to Library |
+| Save to Library | pill cleared, exactly one row, leaving afterwards silent |
+| tool's own Reset | value cleared, pill gone, leaving silent; next keystroke restores the pill |
+| Scope Guard (submit-style form) | submit project → dirty → warned → discarded → blank create form |
+| currency changed in the QR tool | engine stays clean, pill hidden, unload guard NOT armed |
+| engine regression | unchanged: same wording, discard clears it, fresh on reopen |
+
+Cleanup: harness deleted and the tracked `.freebuff/account-test.html` restored;
+test keys, the plan flag, the Library rows and the swept currency choice cleared
+from the preview profile; preview back on `index.html` as a clean guest.
+`preview.html` rebuilt (1,039,341 bytes).
+
+### Re-verification round (2026-09-13, `preview.html` 1,040,227 bytes)
+
+Re-checked from the code and then live, in case anything had regressed:
+
+- Code state — `saveErp()`/`saveState()`/`saveQr()`/… /`saveDelay()` (13 of them)
+  are now **one line each** (`markDraftDirty('<tool>')`); there is **no read**
+  of `STORAGE_KEY`, `QR_KEY` … `ERP_KEY` anywhere any more, only the
+  `TOOL_DRAFT_KEYS` map that `discardToolDraft()` and "Reset all data" use to
+  remove drafts older builds left behind. `markDraftCommitted()` has four call
+  sites: the Library load-draft path, the Save-to-Library commit (shared by the
+  engine and all 12 tools), and `erpDiscardDraft()`/`discardToolDraft()`.
+- Live — FX: typed 3.5 → pill appeared; leaving → dialog named the tool;
+  "Go back and save" kept the value and wrote no key; "Leave and discard"
+  reached `#/history`, cleared the field, hid the pill and removed `cm-fx-v1`;
+  reopening showed a fresh tool with no dialog. Scope Guard (submit-style
+  create form, no project yet) warned the same way, and cancelling from a
+  hand-edited hash restored it to `#/tool`. Engine: typed `#erp-client` →
+  warned with the engine's own wording → discarded → reopening was blank with
+  no legacy `calcmall_erp_v1`. Save to Library → exactly one row, pill cleared,
+  second click updated the same id (still one row), leaving afterwards silent.
+- No source file was edited in this round; `preview.html` was regenerated from
+  the unchanged sources to confirm the artefact matched (identical byte count),
+  and the signed-in harness used for the checks (already current, generated from
+  the same sources in the round above) was restored to its committed state
+afterwards.

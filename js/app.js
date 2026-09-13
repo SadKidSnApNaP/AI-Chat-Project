@@ -67,8 +67,13 @@
     const name = (c && c.sessionName()) || SESSION_EMAIL.split('@')[0];
     return { name: name, email: SESSION_EMAIL };
   }
-  /* Reload so every module re-reads its (re-namespaced) data keys. */
-  function reloadApp() { window.location.reload(); }
+  /* Reload so every module re-reads its (re-namespaced) data keys.
+     `unloadGuardOff` exists because a reload of the app's OWN making (sign-in,
+     sign-out, a restore, the first cloud pull) must not raise the engine's
+     "unsaved changes" prompt: the user answered a different question and the
+     restart is deliberate. `unloadGuardOff` is declared beside the ERP state
+     further down; this only ever runs from a handler, long after that. */
+  function reloadApp() { unloadGuardOff = true; window.location.reload(); }
   /* Pre-Supabase fake-auth artefacts. They no longer grant anything —
      `nexora_user_logged_in` is not consulted at all — but they are purged
      so a stale flag can never be mistaken for a real session. Per-account
@@ -313,7 +318,7 @@
     if (freeLeft(id) <= 0) {
       showCreditLimitModal(id);
       // Block the tool AND take the user where they can lift the limit.
-      if (currentView !== 'plans') showView('plans', { gate: false });
+      if (currentView !== 'plans') showView('plans', { gate: false, force: true });
       return false;
     }
     recordToolUse(id);
@@ -767,7 +772,7 @@
       // there, this is the same destination for anyone who closed the modal.
       if ($('gate-upgrade')) $('gate-upgrade').addEventListener('click', function () {
         closeGateModal();
-        showView('plans', { gate: false });
+        showView('plans', { gate: false, force: true });
       });
       gate.addEventListener('click', function (e) { if (e.target === gate) closeGateModal(); });
     }
@@ -824,7 +829,11 @@
     cancelBtn.textContent = o.cancelLabel || 'Cancel';
     okBtn.classList.toggle('btn-danger', !!o.danger);
     modal.hidden = false;
-    try { okBtn.focus(); } catch (e) { /* ignore */ }
+    /* Which button holds focus decides what a stray Enter does. Most prompts
+       confirm (the destructive one is what the user just asked for), but a
+       prompt whose SAFE answer is to do nothing — the unsaved-changes one —
+       focuses Cancel instead, so Enter cannot throw work away. */
+    try { (o.focusCancel ? cancelBtn : okBtn).focus(); } catch (e) { /* ignore */ }
 
     return new Promise(function (resolve) {
       const finish = function (val) {
@@ -1178,13 +1187,17 @@
     });
   }
 
-  /* ── Collapsible nav sections (WORKSPACE / ERP & DATA / RECORDS & BACKUP / MORE) ──
+  /* ── Collapsible nav sections (WORKSPACE / ERP & DATA / OTHER UTILITIES /
+     RECORDS & BACKUP / MORE / CONFIGURATION) ──
      Each section toggles independently and its choice is remembered per key,
      so collapsing MORE never touches ERP & DATA. Only explicit toggles are
      written to storage, which keeps "what a new user sees" fixed at the
-     defaults below rather than pinned to whatever the last click did. */
+     defaults below rather than pinned to whatever the last click did.
+     A key must be listed here for its header to be clickable — the DOM order
+     of the sections is what decides the sidebar order, and `utilities` sits
+     between `erp` and `records` in the markup. */
   const NAV_SECTIONS_KEY = 'nexora_nav_sections_v1';
-  const NAV_SECTION_DEFAULTS = { workspace: true, erp: true, records: true, more: true, configuration: true };
+  const NAV_SECTION_DEFAULTS = { workspace: true, erp: true, utilities: true, records: true, more: true, configuration: true };
 
   function readNavSectionStore() {
     let saved = null;
@@ -1683,8 +1696,69 @@
     }
   }
 
+  /* ── Unsaved-changes guard: every tool, one choke point ────────────
+     No tool's working state is memory-only by accident — walking away from an
+     open tool really does throw the typing away. That is deliberate, but it
+     must never be a surprise, so leaving a tool with unsaved work asks first.
+     "Go back and save" is the default (Escape and a backdrop click cancel
+     too), so the answer that KEEPS the work is the one you get by accident.
+
+     It sits inside showView(), which is the single choke point every route
+     passes through — sidebar links, Home cards, footer links, the hash, the
+     back button, a deep link — so no route can slip past it. `{ force: true }`
+     is for moves the app makes on the user's behalf (the upgrade redirect, the
+     boot fallback), which must never be blocked by a dialog. */
+  let erpLeavePrompt = false;   // only one of these dialogs at a time
+  /* The tool's full name, so the sentence reads as English whatever the tool
+     is called — "the Qty & Rate" needed an article it cannot carry, while
+     "the Quantity & Rate Calculator" and "the Quotation" both read fine. */
+  function toolFullName(tool) {
+    if (tool === 'erp') return 'Master ERP Engine';
+    const t = TOOLS[tool];
+    return (t && (t.name || t.short)) || toolLabel(tool);
+  }
+  function draftConfirmLeave(tool) {
+    return confirmAction({
+      title: 'You have unsaved changes',
+      message: tool === 'erp'
+        ? 'The Master ERP Engine has changes that have not been saved to a record. ' +
+          'Save before you leave, or you will lose your progress.'
+        : 'Your changes to the ' + toolFullName(tool) + ' have not been saved yet. ' +
+          'Save before you leave, or you will lose your progress.',
+      confirmLabel: 'Leave and discard',
+      cancelLabel: 'Go back and save',
+      danger: true,
+      focusCancel: true
+    });
+  }
+
   function showView(name, opts) {
     if (VIEW_NAMES.indexOf(name) === -1) name = DEFAULT_VIEW;
+    /* Leaving a tool with unsaved work asks first — the engine and every
+       mini-tool alike, since `toolIdForView` maps the open view onto the same
+       draft flags. The dialog is asynchronous, so the navigation is deferred
+       until the answer arrives and this call returns immediately — the
+       caller's next line must not run as though the move had happened. */
+    const leaving = (name !== currentView) ? draftUnsavedIn(currentView) : '';
+    if (leaving && !(opts && opts.force)) {
+      if (erpLeavePrompt) return;   // the question is already on screen
+      erpLeavePrompt = true;
+      const wanted = name;
+      const wantedOpts = opts;
+      draftConfirmLeave(leaving).then(function (leave) {
+        erpLeavePrompt = false;
+        if (!leave) {
+          /* Staying put. A move that came from the hash (back button, hand-
+             edited fragment) has already changed the URL, so put it back in
+             step with the view that is still on screen. */
+          syncViewHash(currentView);
+          return;
+        }
+        discardToolDraft(leaving);
+        showView(wanted, Object.assign({}, wantedOpts, { force: true }));
+      });
+      return;
+    }
     /* Entering a tool view IS a tool execution, so the gate runs here — the
        single choke point every route passes through (sidebar link, tool card,
        footer link, hash, deep link). `{ gate: false }` is reserved for
@@ -1786,11 +1860,11 @@
     });
   }
 
-  function loadState() {
+  /* Shape rules for a CACHED scope-guard state (a Library snapshot). The
+     working draft no longer travels through here — see the memory-only draft
+     note by erpState — so its only caller is restoreToolSnapshot(). */
+  function normalizeScopeState(parsed) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return emptyState();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyState();
       return {
         project: normalizeProject(parsed.project),
@@ -1801,13 +1875,12 @@
     }
   }
 
+  /* "The scope-guard state changed" — it used to write STORAGE_KEY. */
   function saveState() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) { /* storage may be unavailable (private mode) — app still works in-memory */ }
+    markDraftDirty('scope-guard');
   }
 
-  let state = loadState();
+  let state = emptyState();
   let editingId = null; // id of a request being edited in the form
 
   const C = (() => { // shorthand: computations for the current project
@@ -1843,6 +1916,17 @@
       formWrap.hidden = false;
       summary.hidden = true;
       $('setup-cancel').hidden = true;
+      /* No project means the create-project form, and it has to be BLANK. It
+         used to keep whatever the last project's details were, because only
+         the `if (p)` branch below ever wrote these fields — so emptying the
+         state (Reset all data, or leaving with unsaved changes) left the old
+         project's numbers sitting in the form as if they had survived. */
+      $('p-name').value = '';
+      $('p-price').value = '';
+      $('p-hours').value = '';
+      $('p-rate').value = '';
+      $('p-revisions').value = '2';
+      $('setup-error').hidden = true;
       return;
     }
 
@@ -2371,10 +2455,22 @@
     saveCurrencies();
     // Document tools persist their own currency (PDF output, client
     // defaults) — keep them in step with the global choice.
-    erpState.currency = code;
-    saveErp();
-    invState.currency = code;
-    saveInv();
+    /* A document's currency is part of its document — but only the tool you
+       are actually IN counts as editing it. This function runs for whichever
+       banner select fired and deliberately keeps every calculator in step, so
+       without these two conditions, picking a currency in the Quantity & Rate
+       tool would mark the Master ERP Engine unsaved: the engine's pill would
+       appear, leaving the engine would ask about a change nobody made there,
+       and (because the unload guard is app-wide) a reload would be refused
+       until the engine had been visited and its "draft" discarded. */
+    if (erpState.currency !== code) {
+      erpState.currency = code;
+      if (currentView === 'erp') saveErp();
+    }
+    if (invState.currency !== code) {
+      invState.currency = code;
+      if (currentView === 'invoice') saveInv();
+    }
     // Keep every banner select in step (including the one that fired).
     const selects = ['erp-currency', 'qr-currency', 'boq-currency', 'pr-currency', 'inv-currency', 'duty-currency', 'var-currency', 'bk-currency', 'fx-currency', 'rt-currency', 'dl-currency'];
     for (let i = 0; i < selects.length; i++) {
@@ -2426,21 +2522,11 @@
   // nothing (amount cell shows "—") so invalid input can't corrupt totals.
   const QR_KEY = 'cm-qr-v1';
 
-  function loadQr() {
-    try {
-      const raw = localStorage.getItem(QR_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      return [];
-    }
-  }
+  let qrRows = [];
 
-  let qrRows = loadQr();
-
+  /* "The rows changed" — this used to write QR_KEY. */
   function saveQr() {
-    try { localStorage.setItem(QR_KEY, JSON.stringify(qrRows)); } catch (e) { /* ignore */ }
+    markDraftDirty('qr');
   }
 
   function qrRowTemplate() {
@@ -2553,15 +2639,15 @@
     '.quo-doc table { border-collapse: collapse; width: 100%; max-width: 100%; table-layout: fixed; }',
     '.quo-doc img { max-width: 100%; }',
     '.quo-doc td, .quo-doc th { overflow-wrap: anywhere; word-break: break-word; }',
-    '.quo-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 3px solid #111827; padding-bottom: 12px; }',
-    '.quo-logo { width: 56px; height: 56px; border: 2px solid #111827; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; color: #111827; flex: none; }',
+    '.quo-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 3px solid #0d1b6e; padding-bottom: 12px; }',
+    '.quo-logo { width: 56px; height: 56px; border: 2px solid #0d1b6e; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; color: #0d1b6e; flex: none; }',
     '.quo-logo-img { width: 64px; height: 64px; object-fit: contain; border: 1px solid #e5e7eb; border-radius: 8px; flex: none; }',
-    '.quo-company h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; color: #111827; }',
+    '.quo-company h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; color: #0d1b6e; }',
     '.quo-company p { margin: 2px 0 0; font-size: 11px; color: #374151; }',
     '.quo-refbox { text-align: right; font-size: 12px; }',
     '.quo-refbox > div { margin-top: 2px; }',
     '.quo-refbox span { color: #6b7280; }',
-    '.quo-doctype { display: inline-block; background: #111827; color: #ffffff; font-weight: 700; font-size: 12px; letter-spacing: 0.06em; padding: 3px 10px; border-radius: 4px; margin-bottom: 6px; }',
+    '.quo-doctype { display: inline-block; background: #0d1b6e; color: #ffffff; font-weight: 700; font-size: 12px; letter-spacing: 0.06em; padding: 3px 10px; border-radius: 4px; margin-bottom: 6px; }',
     '.quo-recipient { margin: 16px 0 6px; font-size: 12px; }',
     '.quo-lab { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin-bottom: 4px; }',
     '.quo-intro { margin: 8px 0 12px; }',
@@ -2571,33 +2657,33 @@
     '.quo-metabox span { color: #6b7280; }',
     '.quo-table { width: 100%; border-collapse: collapse; margin-top: 4px; }',
     '.quo-table th, .quo-table td { border: 1px solid #d1d5db; padding: 6px 8px; font-size: 11px; vertical-align: top; color: #111827; text-align: left; }',
-    '.quo-table th { background: #f3f4f6; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; color: #111827; }',
+    '.quo-table th { background: #e8ebf8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; color: #0d1b6e; }',
     '.quo-table .q-num { width: 28px; text-align: center; color: #6b7280; }',
     '.quo-table .q-c { text-align: center; }',
     '.quo-table .q-r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }',
     '.quo-tfoot td, .quo-totals-row td { font-weight: 600; }',
     '.quo-totals { margin-top: 12px; margin-left: auto; width: 320px; font-size: 12px; }',
     '.quo-totals > div { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed #e5e7eb; color: #111827; }',
-    '.quo-totals .q-final { font-weight: 800; border-bottom: none; border-top: 2px solid #111827; padding-top: 6px; font-size: 13px; }',
+    '.quo-totals .q-final { font-weight: 800; border-bottom: none; border-top: 2px solid #0d1b6e; padding-top: 6px; font-size: 13px; }',
     '.quo-table tfoot td { font-weight: 600; color: #111827; background: #f9fafb; }',
-    '.quo-table tfoot .quo-final td { font-weight: 800; border-top: 2px solid #111827; background: #f3f4f6; }',
+    '.quo-table tfoot .quo-final td { font-weight: 800; border-top: 2px solid #0d1b6e; background: #e8ebf8; }',
     '.quo-terms { margin-top: 18px; font-size: 11px; }',
-    '.quo-terms h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px; color: #111827; }',
+    '.quo-terms h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px; color: #0d1b6e; }',
     '.quo-terms ul { margin: 0; padding-left: 16px; }',
     '.quo-terms li { margin-bottom: 3px; color: #374151; }',
     '.quo-sign { margin-top: 26px; display: flex; justify-content: flex-end; }',
     '.quo-sign-left { text-align: center; font-size: 11px; color: #374151; }',
-    '.q-sigline { display: block; width: 200px; border-bottom: 1px solid #111827; height: 34px; margin: 6px auto 2px; }',
+    '.q-sigline { display: block; width: 200px; border-bottom: 1px solid #0d1b6e; height: 34px; margin: 6px auto 2px; }',
     '.quo-signoff { margin-top: 30px; text-align: right; font-size: 11px; color: #374151; }',
     '.quo-signoff p { margin: 0; }',
-    '.quo-signline { width: 200px; border-bottom: 1px solid #111827; height: 30px; margin: 8px 0 4px auto; }',
+    '.quo-signline { width: 200px; border-bottom: 1px solid #0d1b6e; height: 30px; margin: 8px 0 4px auto; }',
     '.var-doc { color: #111827; line-height: 1.5; font-size: 12px; }',
-    '.var-h3 { margin: 14px 0 6px; font-size: 13px; color: #111827; }',
+    '.var-h3 { margin: 14px 0 6px; font-size: 13px; color: #0d1b6e; }',
     '.var-desc-p { margin: 0 0 6px; }',
     '.var-muted { color: #6b7280; font-style: italic; }',
     '.var-table { margin-top: 14px; }',
     '.var-table td { padding: 7px 10px; }',
-    '.var-table .q-final-row td { border-top: 2px solid #111827; font-size: 12.5px; }',
+    '.var-table .q-final-row td { border-top: 2px solid #0d1b6e; font-size: 12.5px; }',
     '.var-table .q-final-row td.q-r { white-space: nowrap; }',
     '.var-doc .quo-sign { display: flex; gap: 40px; margin-top: 28px; }',
     '.var-doc .quo-sign-left { display: flex; flex-direction: column; gap: 4px; text-align: center; }',
@@ -2613,50 +2699,51 @@
        where a printer or PDF exporter clips it. Scoped to .fm-doc so the
        master template's geometry is untouched. */
     '.doc-page > .fm-doc { padding: 15mm 12mm; box-sizing: border-box; }',
-    '.fm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 3px solid #111827; padding-bottom: 10px; }',
+    '.fm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 3px solid #0d1b6e; padding-bottom: 10px; }',
     '.fm-left { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }',
     '.fm-co { min-width: 0; }',
-    '.fm-co h1 { margin: 0 0 2px; font-size: 17px; line-height: 1.2; letter-spacing: 0.01em; color: #111827; text-transform: uppercase; }',
+    '.fm-co h1 { margin: 0 0 2px; font-size: 17px; line-height: 1.2; letter-spacing: 0.01em; color: #0d1b6e; text-transform: uppercase; }',
     '.fm-co div { font-size: 10.5px; color: #374151; line-height: 1.45; }',
     '.fm-lab { color: #6b7280; }',
     '.fm-spec { display: block; width: 100%; font-style: italic; font-weight: bold; font-size: 11px; color: #0d1b6e !important; margin: 4px 0 8px 0; }',
     '.fm-right { text-align: right; flex: none; max-width: 42%; }',
-    '.fm-banner { display: inline-block; background: #111827; color: #ffffff; font-weight: 700; font-size: 12.5px; letter-spacing: 0.06em; padding: 4px 12px; border-radius: 4px; margin-bottom: 6px; }',
+    '.fm-banner { display: inline-block; background: #0d1b6e; color: #ffffff; font-weight: 700; font-size: 12.5px; letter-spacing: 0.06em; padding: 4px 12px; border-radius: 4px; margin-bottom: 6px; }',
     /* :not(.fm-banner) — the doc-type badge is a <div> and a direct child of
        .fm-right, so a plain `> div` rule outranked `.fm-banner` and painted
        its text #111827 on its own #111827 background: a solid, unreadable
        block. The badge keeps its own white text and 12.5px size. */
     '.fm-right > div:not(.fm-banner) { font-size: 11px; color: #111827; margin-top: 2px; }',
-    '.fm-metabox { display: flex; gap: 0; border: 1px solid #111827; border-radius: 4px; margin: 12px 0 10px; }',
+    '.fm-metabox { display: flex; gap: 0; border: 1px solid #0d1b6e; border-radius: 4px; margin: 12px 0 10px; }',
     '.fm-meta-col { flex: 1 1 50%; padding: 8px 10px; min-width: 0; }',
-    '.fm-meta-col + .fm-meta-col { border-left: 1px solid #111827; }',
-    '.fm-meta-col h3 { margin: 0 0 5px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #111827; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }',
+    '.fm-meta-col + .fm-meta-col { border-left: 1px solid #0d1b6e; }',
+    '.fm-meta-col h3 { margin: 0 0 5px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #0d1b6e; border-bottom: 1px solid #c7cdea; padding-bottom: 3px; }',
     '.fm-meta-col div { font-size: 11px; color: #111827; line-height: 1.5; }',
     '.fm-dim { color: #9ca3af; }',
     '.fm-table { border-collapse: collapse; }',
     '.fm-table th, .fm-table td { border: 1px solid #000000; }',
+    '.fm-table th { background: #e8ebf8; color: #0d1b6e; -webkit-print-color-adjust: exact; print-color-adjust: exact; }',
     '.fm-table .q-num { width: 34px; }',
     '.fm-totals td { font-weight: 600; background: #f9fafb; }',
-    '.fm-totals .fm-final td { font-weight: 800; font-size: 12.5px; border-top: 2px solid #111827; background: #f3f4f6; }',
-    '.fm-words { margin-top: 10px; padding: 7px 10px; border: 1px dashed #6b7280; border-radius: 4px; font-size: 11.5px; color: #111827; }',
+    '.fm-totals .fm-final td { font-weight: 800; font-size: 12.5px; border-top: 2px solid #0d1b6e; background: #e8ebf8; }',
+    '.fm-words { margin-top: 10px; padding: 7px 10px; border: 1px dashed #0d1b6e; border-radius: 4px; font-size: 11.5px; color: #111827; }',
     '.fm-words strong { font-weight: 700; }',
     '.fm-terms { margin-top: 14px; font-size: 11px; }',
-    '.fm-terms h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 5px; color: #111827; }',
+    '.fm-terms h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 5px; color: #0d1b6e; }',
     '.fm-terms ul { margin: 0; padding-left: 16px; }',
     '.fm-terms li { margin-bottom: 3px; color: #374151; }',
     '.fm-footer { display: flex; gap: 18px; margin-top: 22px; align-items: stretch; }',
     '.fm-footer-single { justify-content: flex-end; }',
-    '.fm-footbox { flex: 1 1 50%; border: 1px solid #111827; border-radius: 4px; padding: 10px 12px; min-width: 0; }',
-    '.fm-bank h3, .fm-signbox h3 { margin: 0 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #111827; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }',
+    '.fm-footbox { flex: 1 1 50%; border: 1px solid #0d1b6e; border-radius: 4px; padding: 10px 12px; min-width: 0; }',
+    '.fm-bank h3, .fm-signbox h3 { margin: 0 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #0d1b6e; border-bottom: 1px solid #c7cdea; padding-bottom: 3px; }',
     '.fm-bank div { font-size: 11px; color: #111827; line-height: 1.55; }',
     '.fm-signbox { text-align: center; }',
-    '.fm-seal { width: 74px; height: 74px; border: 2px dashed #9ca3af; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 6px auto 8px; font-size: 9px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.06em; }',
+    '.fm-seal { width: 74px; height: 74px; border: 2px dashed #0d1b6e; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 6px auto 8px; font-size: 9px; color: #0d1b6e; text-transform: uppercase; letter-spacing: 0.06em; }',
     '.fm-onbehalfof { font-size: 11px; color: #111827; }',
     '.fm-sigspace { height: 34px; }',
-    '.fm-sigline { width: 180px; border-bottom: 1px solid #111827; height: 0; margin: 0 auto 4px; }',
+    '.fm-sigline { width: 180px; border-bottom: 1px solid #0d1b6e; height: 0; margin: 0 auto 4px; }',
     '.fm-signpair { display: flex; gap: 40px; justify-content: space-around; margin-top: 8px; }',
     '.fm-signpair .quo-sign-left { display: flex; flex-direction: column; gap: 4px; align-items: center; font-size: 11px; color: #374151; }',
-    '.fm-signpair .q-sigline { width: 170px; border-bottom: 1px solid #111827; height: 22px; }',
+    '.fm-signpair .q-sigline { width: 170px; border-bottom: 1px solid #0d1b6e; height: 22px; }',
     /* A4 print hygiene: never slice a row, the totals, the footer boxes
        or the signature block across pages; repeat the header row. */
     'tr { page-break-inside: avoid; break-inside: avoid; }',
@@ -2908,11 +2995,10 @@
     };
   }
 
-  function loadBoq() {
+  /* Shape rules for a CACHED quotation (a Library snapshot) — the only caller
+     is restoreToolSnapshot(). */
+  function normalizeBoq(parsed) {
     try {
-      const raw = localStorage.getItem(BOQ_KEY);
-      if (!raw) return emptyBoq();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyBoq();
       return {
         meta: Object.assign({}, emptyBoq().meta, parsed.meta || {}),
@@ -2925,10 +3011,10 @@
     }
   }
 
-  let boqState = loadBoq();
+  let boqState = emptyBoq();
 
   function saveBoq() {
-    try { localStorage.setItem(BOQ_KEY, JSON.stringify(boqState)); } catch (e) { /* ignore */ }
+    markDraftDirty('boq');
   }
 
   function boqLineTemplate() {
@@ -3181,11 +3267,11 @@
     return { docType: 'quotation', company: { name: '', address: '', contact: '', logo: '' }, meta: {}, lines: [], currency: 'LKR' };
   }
 
-  function loadInv() {
+  /* Shape rules for a CACHED invoice (a Library snapshot) — the only caller is
+     restoreToolSnapshot(). An unknown doc type or currency falls back to the
+     defaults, so a snapshot written by an older build still opens. */
+  function normalizeInv(parsed) {
     try {
-      const raw = localStorage.getItem(INV_KEY);
-      if (!raw) return emptyInv();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyInv();
       return {
         docType: INV_DOC_TYPES[parsed.docType] ? parsed.docType : 'quotation',
@@ -3199,10 +3285,10 @@
     }
   }
 
-  let invState = loadInv();
+  let invState = emptyInv();
 
   function saveInv() {
-    try { localStorage.setItem(INV_KEY, JSON.stringify(invState)); } catch (e) { /* ignore */ }
+    markDraftDirty('invoice');
   }
 
   function invLineTemplate() {
@@ -3441,11 +3527,10 @@
     return { cost: '', overhead: '', target: '', mode: 'margin' };
   }
 
-  function loadPricing() {
+  /* Shape rules for a CACHED pricing state (a Library snapshot) — the only
+     caller is restoreToolSnapshot(). */
+  function normalizePricing(parsed) {
     try {
-      const raw = localStorage.getItem(PR_KEY);
-      if (!raw) return emptyPricing();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyPricing();
       return {
         cost: parsed.cost === undefined ? '' : String(parsed.cost),
@@ -3458,10 +3543,10 @@
     }
   }
 
-  let prState = loadPricing();
+  let prState = emptyPricing();
 
   function savePricing() {
-    try { localStorage.setItem(PR_KEY, JSON.stringify(prState)); } catch (e) { /* ignore */ }
+    markDraftDirty('pricing');
   }
 
   function prCur() { return toolCurrency.pricing; }
@@ -3591,11 +3676,13 @@
     return { cif: '', units: '', duty: '', pal: '', cess: '', sscl: '', vat: '18' };
   }
 
-  function loadDuty() {
+  /* Shape rules for a CACHED tool state (a Library snapshot). The pattern is
+     the same for the seven simple calculators: build the current empty shape,
+     copy across every field the snapshot actually carries, and coerce to
+     string so a number saved by an older build still reads as input text.
+     The only caller of these is restoreToolSnapshot(). */
+  function normalizeDuty(parsed) {
     try {
-      const raw = localStorage.getItem(DUTY_KEY);
-      if (!raw) return emptyDuty();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyDuty();
       const out = emptyDuty();
       for (const k in out) {
@@ -3607,10 +3694,10 @@
     }
   }
 
-  let dutyState = loadDuty();
+  let dutyState = emptyDuty();
 
   function saveDuty() {
-    try { localStorage.setItem(DUTY_KEY, JSON.stringify(dutyState)); } catch (e) { /* ignore */ }
+    markDraftDirty('duty');
   }
 
   function dutyCur() { return toolCurrency.duty; }
@@ -3693,11 +3780,8 @@
     return { project: '', original: '', added: '', days: '', desc: '' };
   }
 
-  function loadVariation() {
+  function normalizeVariation(parsed) {
     try {
-      const raw = localStorage.getItem(VAR_KEY);
-      if (!raw) return emptyVariation();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyVariation();
       const out = emptyVariation();
       for (const k in out) {
@@ -3709,10 +3793,10 @@
     }
   }
 
-  let varState = loadVariation();
+  let varState = emptyVariation();
 
   function saveVariation() {
-    try { localStorage.setItem(VAR_KEY, JSON.stringify(varState)); } catch (e) { /* ignore */ }
+    markDraftDirty('variation');
   }
 
   function varCur() { return toolCurrency.variation; }
@@ -3815,11 +3899,8 @@
     return { net: '', overhead: '', days: '', admin: '', dayhours: '8', tax: '' };
   }
 
-  function loadBreakeven() {
+  function normalizeBreakeven(parsed) {
     try {
-      const raw = localStorage.getItem(BK_KEY);
-      if (!raw) return emptyBreakeven();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyBreakeven();
       const out = emptyBreakeven();
       for (const k in out) {
@@ -3831,10 +3912,10 @@
     }
   }
 
-  let bkState = loadBreakeven();
+  let bkState = emptyBreakeven();
 
   function saveBreakeven() {
-    try { localStorage.setItem(BK_KEY, JSON.stringify(bkState)); } catch (e) { /* ignore */ }
+    markDraftDirty('breakeven');
   }
 
   function bkCur() { return toolCurrency.breakeven; }
@@ -3920,11 +4001,8 @@
     return { target: '', platform: 'stripe', pct: '2.9', fixed: '0.30', markup: '', from: 'USD', to: 'LKR' };
   }
 
-  function loadFx() {
+  function normalizeFx(parsed) {
     try {
-      const raw = localStorage.getItem(FX_KEY);
-      if (!raw) return emptyFx();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyFx();
       const out = emptyFx();
       for (const k in out) {
@@ -3937,10 +4015,10 @@
     }
   }
 
-  let fxState = loadFx();
+  let fxState = emptyFx();
 
   function saveFx() {
-    try { localStorage.setItem(FX_KEY, JSON.stringify(fxState)); } catch (e) { /* ignore */ }
+    markDraftDirty('fx');
   }
 
   function fxCur() { return toolCurrency.fx; }
@@ -4017,11 +4095,8 @@
     return { current: '', done: '', target: '', remaining: '', courseCur: '', courseTarget: '', courseWeight: '' };
   }
 
-  function loadGpa() {
+  function normalizeGpa(parsed) {
     try {
-      const raw = localStorage.getItem(GP_KEY);
-      if (!raw) return emptyGpa();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyGpa();
       const out = emptyGpa();
       for (const k in out) {
@@ -4033,10 +4108,10 @@
     }
   }
 
-  let gpState = loadGpa();
+  let gpState = emptyGpa();
 
   function saveGpa() {
-    try { localStorage.setItem(GP_KEY, JSON.stringify(gpState)); } catch (e) { /* ignore */ }
+    markDraftDirty('gpa');
   }
 
   function fmtGpa2(v) {
@@ -4393,16 +4468,13 @@
         const snap = draft && draft.state;
         erpState.libraryId = h.id;
         if (snap && typeof snap === 'object') {
-          erpState = Object.assign(emptyErp(), snap);
-          if (!ERP_MODES[erpState.mode]) erpState.mode = 'quotation';
-          if (!Calc.TOOL_CURRENCIES[erpState.currency]) erpState.currency = 'LKR';
-          erpState.meta = (erpState.meta && typeof erpState.meta === 'object') ? erpState.meta : {};
-          erpState.lines = Array.isArray(erpState.lines) ? erpState.lines : [];
-          erpState.libraryId = h.id;   // Object.assign above cannot be trusted to keep it
+          erpState = normalizeErp(snap);
+          erpState.libraryId = h.id;   // normalizeErp cannot be trusted to keep it
           saveErp();
           setToolCurrency('erp', erpState.currency);
           renderErp();
           schedulePdfPreview(true);
+          erpMarkCommitted();   // opening a saved document is not an edit
         }
         showView('erp');
       }
@@ -4416,6 +4488,11 @@
         if (draft && draft.state) restoreToolSnapshot(tool, draft);
         toolLibraryIds[tool] = h.id;
         saveToolLibraryIds();
+        /* Opening a SAVED document is not an edit — same rule the engine's
+           own Library load follows. Not marked when the snapshot was missing
+           (the tool keeps whatever it held), because then nothing was
+           restored and the tool's own state is what it is. */
+        if (draft && draft.state) markDraftCommitted(tool);
         showView(TOOL_VIEWS[tool]);
       } else {
         showView('home');
@@ -4619,11 +4696,8 @@
     return { client: '', hours: '', hourly: '', overhead: '', margin: '', sla: '' };
   }
 
-  function loadRetainer() {
+  function normalizeRetainer(parsed) {
     try {
-      const raw = localStorage.getItem(RT_KEY);
-      if (!raw) return emptyRetainer();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyRetainer();
       const out = emptyRetainer();
       for (const k in out) {
@@ -4635,10 +4709,10 @@
     }
   }
 
-  let rtState = loadRetainer();
+  let rtState = emptyRetainer();
 
   function saveRetainer() {
-    try { localStorage.setItem(RT_KEY, JSON.stringify(rtState)); } catch (e) { /* ignore */ }
+    markDraftDirty('retainer');
   }
 
   function rtCur() { return toolCurrency.retainer; }
@@ -4705,11 +4779,8 @@
     return { project: '', contract: '', penaltyPct: '', capPct: '', days: '', overhead: '' };
   }
 
-  function loadDelay() {
+  function normalizeDelay(parsed) {
     try {
-      const raw = localStorage.getItem(DL_KEY);
-      if (!raw) return emptyDelay();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyDelay();
       const out = emptyDelay();
       for (const k in out) {
@@ -4721,10 +4792,10 @@
     }
   }
 
-  let dlState = loadDelay();
+  let dlState = emptyDelay();
 
   function saveDelay() {
-    try { localStorage.setItem(DL_KEY, JSON.stringify(dlState)); } catch (e) { /* ignore */ }
+    markDraftDirty('delay');
   }
 
   function dlCur() { return toolCurrency.delay; }
@@ -6615,11 +6686,13 @@
     };
   }
 
-  function loadErp() {
+  /* Healing rules for a CACHED document — a saved record, or a Library entry's
+     snapshot. The engine's own working draft no longer travels through here
+     (it is never read back from storage any more, see below), but both saved
+     paths still hand their state to this, so an older record carrying a
+     "100 00" qty or an unknown mode is repaired on the way in. */
+  function normalizeErp(parsed) {
     try {
-      const raw = localStorage.getItem(ERP_KEY);
-      if (!raw) return emptyErp();
-      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') return emptyErp();
       const base = emptyErp();
       const out = Object.assign(base, parsed);
@@ -6650,10 +6723,192 @@
     } catch (e) { return emptyErp(); }
   }
 
-  let erpState = loadErp();
+  /* ── The working draft is MEMORY-ONLY ───────────────────────────────
+     Typing used to write this document into localStorage on every keystroke
+     (saveErp → ERP_KEY), so a half-finished engine outlived the tab, came
+     back after a reload and reappeared every time the engine was reopened —
+     all without anyone ever asking for it. The draft now lives in `erpState`
+     for the life of the page only:
 
-  function saveErp() {
-    try { localStorage.setItem(ERP_KEY, JSON.stringify(erpState)); } catch (e) { /* ignore */ }
+       · the engine always OPENS EMPTY;
+       · the only things that survive are what was explicitly saved —
+         Save Record (the reusable record store) and Save to Library
+         (History & Saved Documents);
+       · leaving the engine with an unsaved document asks first, and the
+         typing is discarded if the user chooses to leave (showView's guard,
+         plus a beforeunload prompt for a reload or a tab close).
+
+     `saveErp()` is kept as the single "the document changed" signal at every
+     existing call site, and now raises the unsaved-changes flag instead of
+     writing to storage. Anything that COMMITS a document calls
+     erpMarkCommitted() to lower it again. */
+  let erpState = emptyErp();
+  let unloadGuardOff = false;   // set by reloadApp() — see its comment
+
+  /* ── Unsaved-draft tracking: ONE flag per tool ──────────────────────
+     Every tool in the app — the Master ERP Engine and all twelve mini-tools
+     under Other Utilities — holds its working state in memory only. Typing
+     raises that tool's flag, an explicit save (Save Record / Save to Library)
+     lowers it, and leaving with it up asks first.
+
+     `draftDirty` is keyed by tool id, the same ids TOOL_VIEWS and
+     `data-tool-save` use, with 'erp' for the engine. `toolIdForView()` maps
+     the open view onto them, which is what lets one guard in showView() and
+     one beforeunload cover the whole app. */
+  const draftDirty = {};
+
+  /* A visible "Unsaved changes" pill, so the discard prompt is never the first
+     hint that there is something to lose. The engine's pill ships in the
+     markup (inside the Live summary card head); a mini-tool's is created on
+     demand next to its own Save to Library button, so adding a tool needs no
+     new markup here. Both setters only touch the DOM on a real change. */
+  function draftPill(tool) {
+    let pill = document.querySelector('[data-draft-pill="' + tool + '"]');
+    if (pill) return pill;
+    const btn = document.querySelector('[data-tool-save="' + tool + '"]');
+    if (!btn || !btn.parentNode) return null;
+    pill = document.createElement('span');
+    pill.className = 'pill pill-out';
+    pill.setAttribute('data-draft-pill', tool);
+    pill.setAttribute('role', 'status');
+    pill.textContent = 'Unsaved changes';
+    pill.hidden = true;
+    btn.parentNode.insertBefore(pill, btn);
+    return pill;
+  }
+  /* The pill follows the SAME witness the leave prompt asks, not the raw flag:
+     a tool that has just been reset to empty still carries the flag its own
+     reset raised, and an empty tool must not advertise unsaved changes. The
+     DOM is only touched when the answer actually changes, so repainting on
+     every keystroke costs nothing. */
+  function paintDraftDirty(tool) {
+    if (!tool) return;
+    const show = !!draftDirty[tool] && toolHasContent(tool);
+    const pill = tool === 'erp' ? $('erp-dirty-pill') : draftPill(tool);
+    if (pill && pill.hidden !== !show) pill.hidden = !show;
+  }
+  function markDraftDirty(tool) {
+    if (!tool) return;
+    /* No early return: the flag may already be up from a reset (which raised
+       it and then emptied the tool), and the first keystroke after that has to
+       bring the pill back. */
+    draftDirty[tool] = true;
+    paintDraftDirty(tool);
+  }
+  function markDraftCommitted(tool) {
+    if (!tool || !draftDirty[tool]) return;
+    delete draftDirty[tool];
+    paintDraftDirty(tool);
+  }
+  /* The flag alone is not enough to warn: a tool that has just been RESET to
+     its empty shape still carries the flag its own reset raised (the resets
+     all end in saveX()), and an empty tool has nothing to lose. So the guard
+     asks this too, which is why no reset handler needed patching. */
+  const TOOL_EMPTY = {
+    'scope-guard': function () { return emptyState(); },
+    qr: function () { return { rows: [] }; },
+    boq: function () { return emptyBoq(); },
+    invoice: function () { return emptyInv(); },
+    pricing: function () { return emptyPricing(); },
+    duty: function () { return emptyDuty(); },
+    variation: function () { return emptyVariation(); },
+    breakeven: function () { return emptyBreakeven(); },
+    fx: function () { return emptyFx(); },
+    gpa: function () { return emptyGpa(); },
+    retainer: function () { return emptyRetainer(); },
+    delay: function () { return emptyDelay(); }
+  };
+  /* The localStorage key each tool USED to write its draft to. Nothing reads
+     them any more; they are removed when a draft is discarded, and they are
+     still cleared by "Reset all data", which is what retires the drafts an
+     older build left in a browser. */
+  const TOOL_DRAFT_KEYS = {
+    'scope-guard': STORAGE_KEY,
+    qr: QR_KEY, boq: BOQ_KEY, invoice: INV_KEY, pricing: PR_KEY,
+    duty: DUTY_KEY, variation: VAR_KEY, breakeven: BK_KEY,
+    fx: FX_KEY, gpa: GP_KEY, retainer: RT_KEY, delay: DL_KEY,
+    erp: ERP_KEY
+  };
+  function toolDraftSig(tool) {
+    const snap = toolSnapOf(tool);
+    return snap ? JSON.stringify(snap.state) : null;
+  }
+  /* Scope Guard's project form is submit-style: its text is not part of
+     `state` until the user clicks Create. That text is still typed work, so
+     while there is no project yet a filled-in create form counts as content —
+     otherwise this one tool would silently break the promise the other eleven
+     keep. (Once a project exists the state itself is non-empty, so the usual
+     comparison already covers the request form and everything else.) */
+  const SG_CREATE_FIELDS = ['p-name', 'p-price', 'p-hours', 'p-rate'];
+  function scopeCreateFormTyped() {
+    if (state.project) return false;
+    for (let i = 0; i < SG_CREATE_FIELDS.length; i++) {
+      const el = $(SG_CREATE_FIELDS[i]);
+      if (el && String(el.value == null ? '' : el.value).trim() !== '') return true;
+    }
+    return false;
+  }
+  function toolHasContent(tool) {
+    if (tool === 'scope-guard' && scopeCreateFormTyped()) return true;
+    const empty = TOOL_EMPTY[tool];
+    /* No shape known → assume the work matters. 'erp' is deliberately absent:
+       the engine's emptiness is already handled by its own commit points, and
+       a wrong answer here would either disable its guard or make it fire on an
+       untouched document. */
+    if (!empty) return true;
+    const sig = toolDraftSig(tool);
+    if (sig === null) return false;
+    let emptySig = '';
+    try { emptySig = JSON.stringify(empty()); } catch (e) { return true; }
+    return sig !== emptySig;
+  }
+  /* Is there unsaved, non-empty work in the tool that is open right now? */
+  function draftUnsavedIn(view) {
+    const tool = toolIdForView(view || currentView);
+    if (!tool || !draftDirty[tool]) return '';
+    return toolHasContent(tool) ? tool : '';
+  }
+  /* The same question for ANY tool. A reload destroys every in-memory draft at
+     once, so the unload prompt cannot be limited to whichever tool happens to
+     be on screen — work left in a tool you navigated away from (with "go back
+     and save") is still work. */
+  function anyDraftUnsaved() {
+    for (const t in draftDirty) { if (toolHasContent(t)) return t; }
+    return '';
+  }
+
+  function saveErp() { markDraftDirty('erp'); }
+  function erpMarkCommitted() { markDraftCommitted('erp'); }
+
+  /* Leaving without saving: the draft goes for real. The state is emptied and
+     the form repainted from it, and any draft an earlier build persisted under
+     ERP_KEY is removed too, so nothing can bring it back. */
+  function erpDiscardDraft() {
+    erpState = emptyErp();
+    erpMarkCommitted();
+    try { localStorage.removeItem(ERP_KEY); } catch (e) { /* ignore */ }
+    renderErp();
+    schedulePdfPreview(true);
+  }
+
+  /* ── Discarding a draft for real ────────────────────────────────────
+     The next time the tool is opened it must be EMPTY, not still holding the
+     input that was just abandoned. The engine empties its own state; a
+     mini-tool is emptied through restoreToolSnapshot(), which already knows
+     how to merge each tool's empty shape in and repaint every surface that
+     shows it — the same path the Library's "View / Load draft" uses. */
+  function discardToolDraft(tool) {
+    if (!tool) return;
+    const key = TOOL_DRAFT_KEYS[tool];
+    if (key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } }
+    if (tool === 'erp') { erpDiscardDraft(); return; }
+    const empty = TOOL_EMPTY[tool];
+    if (!empty) return;
+    restoreToolSnapshot(tool, { tool: tool, state: empty() });
+    /* AFTER the restore, never before: restoreToolSnapshot ends in the tool's
+       own saveX(), which raises the flag again. Lowering it first would leave
+       an emptied tool still advertising "Unsaved changes". */
+    markDraftCommitted(tool);
   }
 
   function erpMoney(v) { return Calc.fmtToolMoney(v, erpState.currency); }
@@ -6956,6 +7211,9 @@
   function renderErp() {
     renderErpHeader();
     renderErpRows();
+    // The summary card's "Unsaved changes" pill is painted from the same flag
+    // the leave prompt reads, so a repaint can never show a stale one.
+    paintDraftDirty('erp');
     // Keep the editable sheet in step with programmatic state changes
     // (mode switch, record load, reset, import). No-op while it is pinned.
     schedulePdfPreview();
@@ -7230,8 +7488,15 @@
        with the state before anything reads it. */
     if (changed) renderErpRows();
     const clientRes = erpResolveClientFromDb();
-    saveErp();   // records any provenance learned above, even with no change
+    /* Only a REAL change counts as an edit. This runs every time the engine is
+       entered (showView) and after every database save, and it used to call
+       saveErp() unconditionally "to record provenance" — which, now that the
+       flag means "unsaved", would have marked a freshly opened, untouched
+       engine dirty and warned the user on the way out. The provenance it
+       wanted to record is bookkeeping inside this state; nothing about it
+       needs writing anywhere any more. */
     if (changed || clientRes.changed) {
+      saveErp();
       renderErpHeader();
       renderErpRows();
       schedulePdfPreview();
@@ -7505,6 +7770,7 @@
     }))) return;
     erpRecords[id] = snapshot;
     saveErpRecords();
+    erpMarkCommitted();   // explicitly saved → nothing unsaved left to warn about
     erpRecordMeta(id);
     /* A saved RECORD is not a Library entry. Save Record maintains the
        reusable record store only; Save to Library maintains History only.
@@ -7523,11 +7789,7 @@
       if (!silent) window.alert('No record saved as "' + id + '". Check the ID or save the current form first.');
       return false;
     }
-    erpState = Object.assign(emptyErp(), rec.state);
-    if (!ERP_MODES[erpState.mode]) erpState.mode = 'quotation';
-    if (!Calc.TOOL_CURRENCIES[erpState.currency]) erpState.currency = 'LKR';
-    erpState.meta = (erpState.meta && typeof erpState.meta === 'object') ? erpState.meta : {};
-    erpState.lines = Array.isArray(erpState.lines) ? erpState.lines : [];
+    erpState = normalizeErp(rec.state);
     saveErp();
     setToolCurrency('erp', erpState.currency);
     /* Reading the record is also the moment to notice that the stored master
@@ -7550,6 +7812,10 @@
        are refreshed — anything typed into the record is left alone, and a
        Library entry (a finished document) is never touched. */
     erpResolveFromDb();
+    /* A freshly loaded record IS the committed state — erpResolveFromDb() may
+       have written back what the master database supplies, so the flag is
+       lowered after it runs, not before. */
+    erpMarkCommitted();
     erpRecordMeta(id);
     if (!silent) window.alert('Record "' + id + '" loaded — header, items and totals restored.');
     return true;
@@ -10277,6 +10543,7 @@
       if (existing.autoExpire !== true) existing.autoExpire = false;
       if (snapshot) draftStore[existing.id] = { tool: 'erp', state: snapshot };
       saveErp();
+      erpMarkCommitted();   // the document is in the Library now, nothing unsaved
       saveHistory();
       erpWriteDrafts();
       showToast('Library entry updated — \u201c' + payload.title + '\u201d');
@@ -10289,6 +10556,7 @@
       if (snapshot) draftStore[entry.id] = { tool: 'erp', state: snapshot };
       pruneDrafts();
       saveErp();          // remembers which entry this document belongs to
+      erpMarkCommitted();
       saveHistory();
       erpWriteDrafts();
       showToast('Saved to Library — \u201c' + payload.title + '\u201d');
@@ -10319,6 +10587,7 @@
     const snapshot = erpLibrarySnapshot();
     if (snapshot) draftStore[h.id] = { tool: 'erp', state: snapshot };
     saveErp();
+    erpMarkCommitted();   // the stored figures were just refreshed from this document
     saveHistory();
     erpWriteDrafts();
     renderHistory();
@@ -10361,7 +10630,11 @@
     delete toolLibraryIds[tool];
     saveToolLibraryIds();
   }
-  function toolLabel(tool) { return (TOOLS[tool] && TOOLS[tool].short) || 'tool'; }
+  /* This used to be a SECOND `toolLabel` in the same scope, which silently
+     shadowed the one above for the whole IIFE — so the credit-limit dialog and
+     the "1 AI Credit Used" toast read "of tool" instead of naming the Master
+     ERP Engine. Renamed, so the version that knows about the engine wins. */
+  function toolShortLabel(tool) { return (TOOLS[tool] && TOOLS[tool].short) || toolLabel(tool); }
 
   const TOOL_DOC = {
     'scope-guard': function () {
@@ -10478,51 +10751,55 @@
     return null;
   }
 
-  /* Rebuild a tool from a saved snapshot. Every branch merges onto the tool's
-     own empty shape first, so a snapshot written by an older build — one that
-     predates a field — can never leave that field undefined. */
+  /* Rebuild a tool from a snapshot. Every branch runs the state through that
+     tool's `normalize*` rules (the ones its boot used to use), so a snapshot
+     written by an older build — one that predates a field, or stored a number
+     where input text is expected — can never leave the tool in a state it
+     cannot render.
+
+     This is also the DISCARD path: `discardToolDraft()` hands it the tool's
+     own empty shape, which is how "leave and lose it" actually empties the
+     tool. One function, so the two can never disagree about what the tool's
+     state looks like. */
   function restoreToolSnapshot(tool, snap) {
     if (!snap || typeof snap !== 'object') return false;
     try {
-      const merge = function (empty, saved) { return Object.assign(empty, (saved && typeof saved === 'object') ? saved : {}); };
+      const src = (snap.state && typeof snap.state === 'object') ? snap.state : {};
       if (tool === 'scope-guard') {
-        state = merge(emptyState(), snap.state);
-        state.requests = Array.isArray(state.requests) ? state.requests : [];
+        state = normalizeScopeState(src);
         saveState(); renderAll();
       } else if (tool === 'qr') {
-        qrRows = (snap.state && Array.isArray(snap.state.rows)) ? snap.state.rows : [];
+        qrRows = Array.isArray(src.rows) ? src.rows : [];
         saveQr(); renderQr();
       } else if (tool === 'boq') {
-        boqState = merge(emptyBoq(), snap.state);
-        if (!Array.isArray(boqState.lines)) boqState.lines = [];
+        boqState = normalizeBoq(src);
         saveBoq(); renderBoq();
       } else if (tool === 'invoice') {
-        invState = merge(emptyInv(), snap.state);
-        if (!Array.isArray(invState.lines)) invState.lines = [];
+        invState = normalizeInv(src);
         saveInv(); renderInv();
       } else if (tool === 'pricing') {
-        prState = merge(emptyPricing(), snap.state);
+        prState = normalizePricing(src);
         savePricing(); fillPricingForm();
       } else if (tool === 'duty') {
-        dutyState = merge(emptyDuty(), snap.state);
+        dutyState = normalizeDuty(src);
         saveDuty(); fillDutyForm();
       } else if (tool === 'variation') {
-        varState = merge(emptyVariation(), snap.state);
+        varState = normalizeVariation(src);
         saveVariation(); fillVariationForm();
       } else if (tool === 'breakeven') {
-        bkState = merge(emptyBreakeven(), snap.state);
+        bkState = normalizeBreakeven(src);
         saveBreakeven(); fillBreakevenForm();
       } else if (tool === 'fx') {
-        fxState = merge(emptyFx(), snap.state);
+        fxState = normalizeFx(src);
         saveFx(); fillFxForm();
       } else if (tool === 'gpa') {
-        gpState = merge(emptyGpa(), snap.state);
+        gpState = normalizeGpa(src);
         saveGpa(); fillGpaForm();
       } else if (tool === 'retainer') {
-        rtState = merge(emptyRetainer(), snap.state);
+        rtState = normalizeRetainer(src);
         saveRetainer(); fillRetainerForm();
       } else if (tool === 'delay') {
-        dlState = merge(emptyDelay(), snap.state);
+        dlState = normalizeDelay(src);
         saveDelay(); fillDelayForm();
       } else {
         return false;
@@ -10538,7 +10815,7 @@
     if (!docFn) return;
     const payload = docFn();
     if (!payload) {
-      showToast('Fill in the ' + toolLabel(tool) + ' first \u2014 there is nothing to save yet.', 'error');
+      showToast('Fill in the ' + toolShortLabel(tool) + ' first \u2014 there is nothing to save yet.', 'error');
       return;
     }
     const existing = toolLibraryIds[tool]
@@ -10551,7 +10828,7 @@
       const key = libraryJobKey(tool, payload);
       const versions = libraryVersionCount(tool, key);
       if (versions >= LIBRARY_VERSION_WARN_AT) {
-        const label = payload.title || toolLabel(tool);
+        const label = payload.title || toolShortLabel(tool);
         const go = await confirmAction({
           title: 'Save another version?',
           message: '\u201c' + label + '\u201d already has ' + versions + ' saved versions in your Library. Save another one anyway? Nothing is deleted \u2014 you can remove older versions from the Library whenever you like.',
@@ -10594,6 +10871,9 @@
       erpWriteDrafts();
       showToast('Saved to Library \u2014 \u201c' + payload.title + '\u201d');
     }
+    /* The document is in the Library now — exactly like the ERP's own save,
+       there is nothing unsaved left to warn about. */
+    markDraftCommitted(tool);
     renderHistory();
     renderActivity();
     renderKpis();
@@ -10602,9 +10882,9 @@
   }
 
   async function resetErp() {
-    if (!(await confirmAction({ title: 'Reset the document?', message: 'This clears the header, items, discount, VAT and terms.', confirmLabel: 'Reset document', danger: true }))) return;
+    if (!(await confirmAction({ title: 'Reset the document?', message: 'This clears the header, items, discount, VAT and terms — anything here not saved to a record is gone.', confirmLabel: 'Reset document', danger: true }))) return;
     erpState = emptyErp();
-    saveErp();
+    erpMarkCommitted();         // an empty document has nothing to lose
     renderErp();
     schedulePdfPreview(true);   // a blank document must not keep the old sheet
   }
@@ -10631,6 +10911,9 @@
     varState = emptyVariation();
     bkState = emptyBreakeven();
     fxState = emptyFx();
+    /* Every draft flag goes with them: after a full reset no tool has anything
+       unsaved, so nothing should ask about leaving. */
+    for (const t in draftDirty) delete draftDirty[t];
     gpState = emptyGpa();
     rtState = emptyRetainer();
     dlState = emptyDelay();
@@ -10775,7 +11058,7 @@
         try { window.localStorage.setItem(names[i], data[names[i]]); ok++; } catch (e) { /* skip oversized */ }
       }
       showToast('Restored ' + ok + (ok === 1 ? ' entry' : ' entries') + ' \u2014 reloading\u2026');
-      setTimeout(function () { window.location.reload(); }, 700);
+      setTimeout(function () { reloadApp(); }, 700);
     };
     reader.readAsText(file);
   }
@@ -11704,7 +11987,11 @@
        rewrites the preview, never the form, so typing focus is kept. */
     (function wirePdfPreview() {
       const view = $('erp-view');
-      const onFormChange = function () { schedulePdfPreview(); };
+      /* A second net under saveErp(). Every field handler in the engine already
+         calls it, but this one is attached to the whole view, so ANY edit —
+         including a control added later — raises the unsaved flag and cannot
+         slip out of the leave prompt unnoticed. */
+      const onFormChange = function () { saveErp(); schedulePdfPreview(); };
       if (view) {
         view.addEventListener('input', onFormChange);
         view.addEventListener('change', onFormChange);
@@ -11997,6 +12284,18 @@
         const tool = btn.getAttribute('data-tool-save');
         btn.addEventListener('click', function () { saveToolToLibrary(tool); });
       })(toolSaveBtns[i]);
+    }
+
+    /* ── Every tool's edits raise its own unsaved flag ──────────────
+       One listener per TOOL VIEW rather than one per field: the field
+       handlers already call saveX(), so this is the net under them, and it
+       means a control added to a tool later cannot slip out of the leave
+       prompt. The engine wires its own copy of this (see wirePdfPreview). */
+    for (const tid in TOOL_VIEWS) {
+      const toolView = $(TOOL_VIEWS[tid] + '-view');
+      if (!toolView) continue;
+      toolView.addEventListener('input', function () { markDraftDirty(tid); });
+      toolView.addEventListener('change', function () { markDraftDirty(tid); });
     }
     $('erp-reset').addEventListener('click', resetErp);
 
@@ -12577,7 +12876,7 @@
       }
     });
     c.bootstrap().then(function (res) {
-      if (res && res.reload) { window.location.reload(); return; }
+      if (res && res.reload) { reloadApp(); return; }
       renderCloudStatus();
       renderAuthUi();
       if (res && res.error && res.error.kind === 'setup') {
@@ -12657,6 +12956,17 @@
     if (!next) { syncViewHash(currentView || DEFAULT_VIEW); return; }
     if (next === currentView) return;
     showView(next);
+  });
+  /* A reload, a tab close or a typed-in URL is leaving the engine too — and
+     because the working draft lives only in memory it is exactly as
+     destructive as navigating away, so it gets the same warning. There is no
+     custom wording to write here: browsers only ever show their own generic
+     text, and only after the user has interacted with the page. */
+  window.addEventListener('beforeunload', function (e) {
+    if (unloadGuardOff || !anyDraftUnsaved()) return;
+    e.preventDefault();
+    e.returnValue = '';        // the legacy spelling some browsers still need
+    return '';
   });
   if (state.project) {
     $('r-rate').value = Calc.round2(defaultRate());

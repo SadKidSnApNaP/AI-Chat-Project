@@ -152,7 +152,7 @@
         <button type="button" class="sidebar-toggle" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the navigation" title="Collapse the navigation"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span></button>
       </div>
       <nav class="sidebar-nav" id="sidebar-nav">
-        <!-- Four independent sections. Each header toggles its own list and
+        <!-- Six independent sections. Each header toggles its own list and
              remembers that choice in localStorage; collapsing only hides
              links, it never navigates, so the view you are on stays put.
              Labels only — every id, route and handler is unchanged. -->
@@ -181,6 +181,20 @@
           </div>
         </section>
 
+        <!-- Other Utilities gets its own category (2026-09-13). It used to sit
+             inside MORE; it now reads as a peer of ERP & DATA because the 12
+             inline tools are a working surface, not a leftover. Reordering
+             only — #sidebar-utilities, its route and its page are untouched. -->
+        <section class="nav-section" data-nav-section="utilities">
+          <button type="button" class="nav-group-label" data-nav-toggle="utilities" aria-expanded="true" aria-controls="nav-items-utilities">
+            <span>OTHER UTILITIES</span>
+            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+          </button>
+          <div class="nav-group-items" id="nav-items-utilities">
+            <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>Other Utilities</span></button>
+          </div>
+        </section>
+
         <section class="nav-section" data-nav-section="records">
           <button type="button" class="nav-group-label" data-nav-toggle="records" aria-expanded="true" aria-controls="nav-items-records">
             <span>RECORDS &amp; BACKUP</span>
@@ -198,16 +212,14 @@
             <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
           </button>
           <div class="nav-group-items" id="nav-items-more">
-            <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>Other Utilities</span></button>
             <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
           </div>
         </section>
 
         <!-- Appearance Settings keeps the group it already lived in (its former
              siblings, Backup and Premium Plans, moved into RECORDS & BACKUP
-             and MORE). Left here rather than folded into MORE so that MORE
-             holds exactly the three items it was specified to hold, and so
-             nothing was moved that was not asked to move. -->
+             and MORE). Left here rather than folded into MORE, so that nothing
+             was moved that was not asked to move. -->
         <section class="nav-section" data-nav-section="configuration">
           <button type="button" class="nav-group-label" data-nav-toggle="configuration" aria-expanded="true" aria-controls="nav-items-configuration">
             <span>CONFIGURATION</span>
@@ -455,6 +467,10 @@
           <section class="card result-card" aria-labelledby="erp-sum-title">
             <div class="card-head">
               <h2 id="erp-sum-title">Live summary</h2>
+              <!-- Painted from the one place that owns the unsaved flag
+                   (paintErpDirty in app.js), so the leave prompt is never the
+                   first hint that there is unsaved work. -->
+              <span class="pill pill-out" id="erp-dirty-pill" role="status" hidden>Unsaved changes</span>
             </div>
             <div class="boq-summary" id="erp-summary"></div>
             <div class="actions actions-col">
@@ -463,7 +479,7 @@
               <button type="button" class="btn btn-ghost" id="erp-export-xlsx"><span class="nav-icon" data-icon="sheet" aria-hidden="true"></span>Export as Excel (.xlsx)</button>
               <button type="button" class="btn btn-ghost" id="erp-reset">Reset document</button>
             </div>
-            <p class="hint" id="erp-save-hint">Typing only updates the working draft on this device — nothing is saved until you click <strong>Save to Library</strong>, which is the only way a document enters your Library. Generating a PDF or Excel file does not save it; exports and summary copies are recorded in the Home activity feed instead.</p>
+            <p class="hint" id="erp-save-hint">Typing only updates the working draft in this tab — nothing is saved until you click <strong>Save to Library</strong>, which is the only way a document enters your Library. The draft is <strong>not</strong> kept: leave the Master ERP Engine or reload the page with unsaved changes and you will be asked to confirm, then the typing is discarded. Generating a PDF or Excel file does not save it; exports and summary copies are recorded in the Home activity feed instead.</p>
             <p class="error" id="erp-error" role="alert" hidden></p>
           </section>
         </div>

@@ -506,7 +506,13 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
   margin: 16px 0 16px 20px;
 }
 .menu-btn:hover { color: var(--text-strong); border-color: var(--border-strong); }
-.main-area { flex: 1 1 auto; min-width: 0; padding: 4px 24px 40px 24px; }
+/* 20px top padding = the same vertical rhythm the sections use among
+   themselves (.card + .kpi-row both carry margin-bottom: 20px, .hub-layout
+   gap: 20px). It used to be 4px here and 0 below 1025px, which left the first
+   element of EVERY view flush against the top of the window — most visible on
+   Home, where the KPI row's own 1px top-edge highlight then sat exactly on the
+   viewport edge and read as a stray floating line rather than a card accent. */
+.main-area { flex: 1 1 auto; min-width: 0; padding: 20px 24px 40px 24px; }
 
 /* Desktop: the fixed rail reserves its own column, and the main column
    slides across to fill the freed space when the rail is collapsed. Both
@@ -609,7 +615,7 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
     font-size: 15px;
     cursor: pointer;
   }
-  .main-area { padding: 0 0 40px 0; }
+  .main-area { padding: 20px 0 40px 0; }
 }
 
 /* ── History view ────────────────────────────────────────── */
@@ -2269,29 +2275,29 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 3px solid #111827;
+  border-bottom: 3px solid #0d1b6e;
   padding-bottom: 12px;
 }
 .quo-logo {
   width: 56px;
   height: 56px;
-  border: 2px solid #111827;
+  border: 2px solid #0d1b6e;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
   font-size: 20px;
-  color: #111827;
+  color: #0d1b6e;
   flex: none;
 }
-.quo-company h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; color: #111827; }
+.quo-company h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; color: #0d1b6e; }
 .quo-company p { margin: 2px 0 0; font-size: 11px; color: #374151; }
 .quo-refbox { text-align: right; font-size: 12px; }
 .quo-refbox > div { margin-top: 2px; }
 .quo-doctype {
   display: inline-block;
-  background: #111827;
+  background: #0d1b6e;
   color: #ffffff;
   font-weight: 700;
   font-size: 12px;
@@ -2313,12 +2319,12 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .quo-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
 .quo-table th, .quo-table td { border: 1px solid #d1d5db; padding: 6px 8px; font-size: 11px; vertical-align: top; }
 .quo-table th {
-  background: #f3f4f6;
+  background: #e8ebf8;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-size: 10px;
-  color: #111827;
+  color: #0d1b6e;
 }
 .quo-table .q-num { width: 28px; text-align: center; }
 .quo-table .q-c { text-align: center; }
@@ -2334,7 +2340,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .quo-totals .q-final {
   font-weight: 800;
   border-bottom: none;
-  border-top: 2px solid #111827;
+  border-top: 2px solid #0d1b6e;
   padding-top: 6px;
   font-size: 13px;
 }
@@ -2344,7 +2350,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin: 0 0 6px;
-  color: #111827;
+  color: #0d1b6e;
 }
 .quo-terms ul { margin: 0; padding-left: 16px; }
 .quo-terms li { margin-bottom: 3px; color: #374151; }
@@ -2353,7 +2359,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .q-sigline {
   display: block;
   width: 200px;
-  border-bottom: 1px solid #111827;
+  border-bottom: 1px solid #0d1b6e;
   height: 34px;
   margin: 6px auto 2px;
 }
@@ -2997,17 +3003,17 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 /* ── Variation & Change Order PDF document (tool #07) ───── */
 /* Reuses the quotation letter classes (.quo-*) inside .pdf-offscreen. */
 .var-doc { color: #111827; line-height: 1.5; font-size: 12px; }
-.var-h3 { margin: 14px 0 6px; font-size: 13px; color: #111827; }
+.var-h3 { margin: 14px 0 6px; font-size: 13px; color: #0d1b6e; }
 .var-desc-p { margin: 0 0 6px; }
 .var-muted { color: #6b7280; font-style: italic; }
 .var-table { margin-top: 14px; }
 .var-table td { padding: 7px 10px; }
-.var-table .q-final-row td { border-top: 2px solid #111827; font-size: 12.5px; }
+.var-table .q-final-row td { border-top: 2px solid #0d1b6e; font-size: 12.5px; }
 .var-table .q-final-row td.q-r { white-space: nowrap; }
 .var-doc .quo-sign { display: flex; gap: 40px; margin-top: 28px; }
 .var-doc .quo-sign-left { display: flex; flex-direction: column; gap: 4px; }
 .var-doc .quo-sign-left span { font-size: 11px; color: #374151; }
-.var-doc .q-sigline { width: 200px; border-bottom: 1px solid #111827; height: 26px; }
+.var-doc .q-sigline { width: 200px; border-bottom: 1px solid #0d1b6e; height: 26px; }
 
 /* ── Custom accent color (settings) ─────────────────────────── */
 .accent-row {
@@ -3225,15 +3231,21 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
     box-sizing: border-box !important;
   }
   .quo-doc, .var-doc { color: #111827 !important; }
-  .quo-table th { background: #f3f4f6 !important; color: #111827 !important; }
+  .quo-table th { background: #e8ebf8 !important; color: #0d1b6e !important; }
   .quo-table th, .quo-table td { border-color: #000000 !important; color: #111827 !important; }
   .fm-table th, .fm-table td { border: 1px solid #000000 !important; }
+  .fm-table th { background: #e8ebf8 !important; color: #0d1b6e !important; }
   /* .fm-banner is deliberately absent: it is a dark badge and forcing the
      text dark too made it a blank block. It keeps its own white text. */
-  .fm-doc, .fm-head, .fm-co h1, .fm-co div, .fm-right > div:not(.fm-banner),
-  .fm-metabox, .fm-meta-col h3, .fm-meta-col div, .fm-words, .fm-terms li,
+  .fm-doc, .fm-head, .fm-co div, .fm-right > div:not(.fm-banner),
+  .fm-metabox, .fm-meta-col div, .fm-words, .fm-terms li,
   .fm-footbox, .fm-bank div, .fm-onbehalfof { color: #111827 !important; }
-  .fm-banner { background: #111827 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* The accent headings keep the navy here too, so a direct Ctrl+P of the app
+     page matches the exported PDF (which never sees this block — the print
+     frame is built from PRINT_DOC_CSS alone). */
+  .fm-co h1, .fm-meta-col h3, .fm-bank h3, .fm-signbox h3, .fm-terms h3,
+  .var-h3, .quo-company h1, .quo-terms h3 { color: #0d1b6e !important; }
+  .fm-banner { background: #0d1b6e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .fm-totals td, .fm-totals .fm-final td, .quo-table th,
   .mx-table th, .mx-totals td, .mx-totals .mx-grand td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   tr { page-break-inside: avoid; break-inside: avoid; }
@@ -3243,7 +3255,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 /* ERP document signature block (used by the print-window engine too) */
 .quo-signoff { margin-top: 30px; text-align: right; font-size: 11px; color: #374151; }
 .quo-signoff p { margin: 0; }
-.quo-signline { width: 200px; border-bottom: 1px solid #111827; height: 30px; margin: 8px 0 4px auto; }
+.quo-signline { width: 200px; border-bottom: 1px solid #0d1b6e; height: 30px; margin: 8px 0 4px auto; }
 
 /* ── Formal document layout (Metrix Engineering format) ─────────── */
 /* Rendered inside .pdf-offscreen containers (white, Arial) and in the
@@ -3411,19 +3423,19 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  border-bottom: 3px solid #111827;
+  border-bottom: 3px solid #0d1b6e;
   padding-bottom: 10px;
 }
 .fm-left { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
 .fm-co { min-width: 0; }
-.fm-co h1 { margin: 0 0 2px; font-size: 17px; line-height: 1.2; letter-spacing: 0.01em; color: #111827; text-transform: uppercase; }
+.fm-co h1 { margin: 0 0 2px; font-size: 17px; line-height: 1.2; letter-spacing: 0.01em; color: #0d1b6e; text-transform: uppercase; }
 .fm-co div { font-size: 10.5px; color: #374151; line-height: 1.45; }
 .fm-lab { color: #6b7280; }
 .fm-spec { display: block; width: 100%; font-style: italic; font-weight: bold; font-size: 11px; color: #0d1b6e !important; margin: 4px 0 8px 0; }
 .fm-right { text-align: right; flex: none; max-width: 42%; }
 .fm-banner {
   display: inline-block;
-  background: #111827;
+  background: #0d1b6e;
   color: #ffffff;
   font-weight: 700;
   font-size: 12.5px;
@@ -3439,66 +3451,67 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .fm-metabox {
   display: flex;
   gap: 0;
-  border: 1px solid #111827;
+  border: 1px solid #0d1b6e;
   border-radius: 4px;
   margin: 12px 0 10px;
 }
 .fm-meta-col { flex: 1 1 50%; padding: 8px 10px; min-width: 0; }
-.fm-meta-col + .fm-meta-col { border-left: 1px solid #111827; }
+.fm-meta-col + .fm-meta-col { border-left: 1px solid #0d1b6e; }
 .fm-meta-col h3 {
   margin: 0 0 5px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #111827;
-  border-bottom: 1px solid #d1d5db;
+  color: #0d1b6e;
+  border-bottom: 1px solid #c7cdea;
   padding-bottom: 3px;
 }
 .fm-meta-col div { font-size: 11px; color: #111827; line-height: 1.5; }
 .fm-dim { color: #9ca3af; }
 .fm-table .q-num { width: 34px; }
 .fm-table th, .fm-table td { border: 1px solid #000000; }
+.fm-table th { background: #e8ebf8; color: #0d1b6e; }
 .fm-totals td { font-weight: 600; background: #f9fafb; }
-.fm-totals .fm-final td { font-weight: 800; font-size: 12.5px; border-top: 2px solid #111827; background: #f3f4f6; }
+.fm-totals .fm-final td { font-weight: 800; font-size: 12.5px; border-top: 2px solid #0d1b6e; background: #e8ebf8; }
 .fm-words {
   margin-top: 10px;
   padding: 7px 10px;
-  border: 1px dashed #6b7280;
+  border: 1px dashed #0d1b6e;
   border-radius: 4px;
   font-size: 11.5px;
   color: #111827;
 }
 .fm-words strong { font-weight: 700; }
 .fm-terms { margin-top: 14px; font-size: 11px; }
-.fm-terms h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 5px; color: #111827; }
+.fm-terms h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 5px; color: #0d1b6e; }
 .fm-terms ul { margin: 0; padding-left: 16px; }
 .fm-terms li { margin-bottom: 3px; color: #374151; }
 .fm-footer { display: flex; gap: 18px; margin-top: 22px; align-items: stretch; }
 .fm-footer-single { justify-content: flex-end; }
-.fm-footbox { flex: 1 1 50%; border: 1px solid #111827; border-radius: 4px; padding: 10px 12px; min-width: 0; }
-.fm-bank h3, .fm-signbox h3 { margin: 0 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #111827; border-bottom: 1px solid #d1d5db; padding-bottom: 3px; }
+.fm-footbox { flex: 1 1 50%; border: 1px solid #0d1b6e; border-radius: 4px; padding: 10px 12px; min-width: 0; }
+.fm-bank h3, .fm-signbox h3 { margin: 0 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #0d1b6e; border-bottom: 1px solid #c7cdea; padding-bottom: 3px; }
 .fm-bank div { font-size: 11px; color: #111827; line-height: 1.55; }
 .fm-signbox { text-align: center; }
 .fm-seal {
   width: 74px;
   height: 74px;
-  border: 2px dashed #9ca3af;
+  border: 2px dashed #0d1b6e;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 6px auto 8px;
   font-size: 9px;
-  color: #9ca3af;
+  color: #0d1b6e;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 .fm-onbehalfof { font-size: 11px; color: #111827; }
 .fm-sigspace { height: 34px; }
-.fm-sigline { width: 180px; border-bottom: 1px solid #111827; height: 0; margin: 0 auto 4px; }
+.fm-sigline { width: 180px; border-bottom: 1px solid #0d1b6e; height: 0; margin: 0 auto 4px; }
 .fm-signpair { display: flex; gap: 40px; justify-content: space-around; margin-top: 8px; }
 .fm-signpair .quo-sign-left { display: flex; flex-direction: column; gap: 4px; align-items: center; font-size: 11px; color: #374151; }
-.fm-signpair .q-sigline { width: 170px; border-bottom: 1px solid #111827; height: 22px; }
+.fm-signpair .q-sigline { width: 170px; border-bottom: 1px solid #0d1b6e; height: 22px; }
 
 /* ── Professional SVG icon system (replaces emoji glyphs) ────────── */
 /* Declarative placeholders: <span class="nav-icon" data-icon="home"> */
