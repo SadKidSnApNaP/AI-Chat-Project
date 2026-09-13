@@ -127,7 +127,9 @@
      Three tiers, and the gate is the REAL Supabase session (see isLoggedIn):
 
        guest   → no tool access at all; every attempt opens Login / Sign Up
-       free    → ONE execution of each tool, ever (persisted per account)
+       free    → ONE metered ACTION per tool, ever (persisted per account):
+                 an export, a copy, or a Save to Library. Opening a tool and
+                 typing in it is not metered at all, and is unlimited.
        premium → unlimited; the account panel reads "Unlimited Credits"
 
      Every key here goes through the per-user shim, so one account can never
@@ -136,8 +138,9 @@
   const PLAN_KEY = 'nexora_plan';                 // 'free' (default) | 'premium'
   const FREE_USAGE_KEY = 'nexora_free_usage';     // { toolId: timesUsed }
   const LEGACY_CREDITS_KEY = 'nexora_ai_credits'; // retired single-pool counter
-  /* The free tier allows exactly ONE execution per tool — not one shared
-     pool across every tool, and not one per browser session. */
+  /* The free tier allows exactly ONE metered action per tool — not one shared
+     pool across every tool, not one per browser session, and not one per tool
+     visit. Which actions count is defined at checkAccessAndCredits. */
   const FREE_LIMIT = 1;
   /* Developer / admin accounts — each one bypasses the gate entirely.
      THIS LIST IS THE SINGLE SOURCE OF TRUTH for the "Developer — Unlimited
@@ -247,24 +250,13 @@
     if (user && isAdminEmail(user.email)) { grantAdminEntitlements(); return; }
     grantLoginEntitlements(user ? user.email : '');
   }
-  /* Executions granted in THIS session. Opening a tool spends its single free
-     use once; every PDF / Excel trigger fired from inside that open tool is
-     part of the same execution, so a document never costs a second use. The
-     grant is dropped the moment the view changes, which is what makes
-     re-entry after the free use a blocked, upgrade-prompting action. */
-  const sessionGrants = {};
-  function releaseGrantsFrom(view) {
-    const tid = toolIdForView(view);
-    if (tid) delete sessionGrants[tid];
-  }
-
   function openGateModal(kind, toolId) {
     const t = $('gate-title'), m = $('gate-msg');
     const lb = $('gate-login'), sb = $('gate-signup'), up = $('gate-upgrade');
     if (kind === 'limit') {
       if (t) t.textContent = 'AI Credit Limit Reached';
-      if (m) m.textContent = 'You have used the free execution of ' + toolLabel(toolId) +
-        '. Premium gives you unlimited use of every tool, export and document.';
+      if (m) m.textContent = 'You have used the free export, copy or save in ' + toolLabel(toolId) +
+        '. You can still open this tool and edit it \u2014 Premium removes the limit on producing anything from it.';
       if (lb) lb.hidden = true;
       if (sb) sb.hidden = true;
       if (up) up.hidden = false;
@@ -287,17 +279,26 @@
   // Refresh every metered piece of UI at once (sidebar panel + health row).
   function updateCreditUI() { renderAuthUi(); renderStorageStatus(); renderPlanHealth(); }
 
-  /* Strict access validation — the one gate.
+  /* Strict access validation — the one gate, and it guards an ACTION.
 
        guest   → blocked, with the Login / Sign Up modal
-       free    → spends this tool's single use the first time; blocked and
-                 redirected to Premium Plans once that use is gone
+       free    → spends this tool's single use on the first such action;
+                 blocked and redirected to Premium Plans once it is gone
        premium → allowed, nothing metered
 
-     `toolId` names the tool being opened or exported from. When it is
-     omitted the tool is derived from the view that is open, so an export
-     inside a tool is metered against that tool and not a shared bucket.
-     Returns false without charging anything when it blocks. */
+     WHAT IS AN ACTION. Export to PDF, Export as Excel, Copy Summary / Copy
+     Message, and Save to Library. Those are what the free tier buys one of
+     per tool. OPENING a tool is not one: a free account can open any tool,
+     type into it and read every live result as often as it likes, and spend
+     nothing — the meter only starts when it asks the tool to produce
+     something. Wiring therefore lives on the action handlers (via
+     `gateClick`), never on `showView`, which is what the per-tool "visit it
+     once and you're done" bug used to be.
+
+     `toolId` names the tool the action belongs to. When it is omitted the
+     tool is derived from the view that is open, so a Copy inside the Pricing
+     calculator is metered against Pricing and not a shared bucket. Returns
+     false without charging anything when it blocks. */
   function checkAccessAndCredits(toolId) {
     const id = toolId || toolIdForView(currentView) || 'general';
     // Guest: no tool usage of any kind — ask them to sign in.
@@ -312,29 +313,33 @@
       if (isAdminEmail(SESSION_EMAIL) && role !== 'admin') grantAdminEntitlements();
       return true;
     }
-    // Continuing an execution that already paid for itself — an export from
-    // the tool that is open right now — is not a second use.
-    if (sessionGrants[id]) return true;
+    /* Each action is charged on its own — there is deliberately no per-session
+       grant here any more. When the gate sat on opening a tool, a grant had to
+       survive for the whole visit so one document did not cost two uses of the
+       same tool; now that the charge IS the action, remembering a grant would
+       hand a free account unlimited exports for the rest of the session. */
     if (freeLeft(id) <= 0) {
       showCreditLimitModal(id);
-      // Block the tool AND take the user where they can lift the limit.
+      // Block the action AND take the user where they can lift the limit.
       if (currentView !== 'plans') showView('plans', { gate: false, force: true });
       return false;
     }
     recordToolUse(id);
-    sessionGrants[id] = true;
     showToast('1 AI Credit Used \u2014 free use of ' + toolLabel(id));
     updateCreditUI();
     return true;
   }
 
-  // Single choke point every tool launch passes through.
+  // Single choke point every metered action passes through.
   function consumeToolCredit(toolId) { return checkAccessAndCredits(toolId); }
 
   /* Wrap a click handler so a failed gate blocks the underlying logic
-     outright — no export, no print dialog, no tool view. Pass the tool id
-     for actions that run outside the tool's own view; inside a tool view
-     the active view already supplies it. */
+     outright — no export, no download, no clipboard write, no print dialog.
+     This is the ONLY place the free tier is spent, so every action button in
+     the app is expected to come through here. Pass the tool id explicitly
+     wherever two tools could be confusable or the handler could run from
+     somewhere other than the tool's own view; with it omitted the active view
+     supplies the tool, which is right for a button inside its own page. */
   function gateClick(handler, toolId) {
     return function (e) {
       if (!checkAccessAndCredits(toolId)) {
@@ -1187,17 +1192,20 @@
     });
   }
 
-  /* ── Collapsible nav sections (WORKSPACE / ERP & DATA / OTHER UTILITIES /
-     RECORDS & BACKUP / MORE / CONFIGURATION) ──
+  /* ── Collapsible nav sections (WORKSPACE / ERP & DATA / TOOLS & RECORDS /
+     ACCOUNT) ──
      Each section toggles independently and its choice is remembered per key,
-     so collapsing MORE never touches ERP & DATA. Only explicit toggles are
+     so collapsing ACCOUNT never touches ERP & DATA. Only explicit toggles are
      written to storage, which keeps "what a new user sees" fixed at the
      defaults below rather than pinned to whatever the last click did.
      A key must be listed here for its header to be clickable — the DOM order
-     of the sections is what decides the sidebar order, and `utilities` sits
-     between `erp` and `records` in the markup. */
+     of the sections is what decides the sidebar order, and `tools` sits
+     between `erp` and `account` in the markup.
+     Stale keys left in storage by the pre-2026-09-13 split (`utilities`,
+     `records`, `more`, `configuration`) are simply ignored: `navSectionState()`
+     only ever iterates the keys listed here. */
   const NAV_SECTIONS_KEY = 'nexora_nav_sections_v1';
-  const NAV_SECTION_DEFAULTS = { workspace: true, erp: true, utilities: true, records: true, more: true, configuration: true };
+  const NAV_SECTION_DEFAULTS = { workspace: true, erp: true, tools: true, account: true };
 
   function readNavSectionStore() {
     let saved = null;
@@ -1759,24 +1767,29 @@
       });
       return;
     }
-    /* Entering a tool view IS a tool execution, so the gate runs here — the
-       single choke point every route passes through (sidebar link, tool card,
-       footer link, hash, deep link). `{ gate: false }` is reserved for
-       internal moves that must not be charged or blocked, such as the
-       upgrade redirect itself and the boot fallback. */
+    /* Opening a tool is VIEWING it, not using it. Nothing is metered here —
+       a free account whose single use is already spent still opens every tool
+       freely, types into it and reads the live results; the meter runs on the
+       tool's ACTIONS (export / copy / save) through `gateClick`. Charging on
+       entry was the reported bug: it spent the one free use of a tool for
+       merely looking at it.
+
+       Guests are still stopped at the door, because their rule is zero tool
+       access rather than one free use. `{ gate: false }` remains reserved for
+       internal moves the user did not ask for — the upgrade redirect and the
+       boot fallback. */
     if (!opts || opts.gate !== false) {
       const targetTool = toolIdForView(name);
-      if (targetTool && !checkAccessAndCredits(targetTool)) return;
+      if (targetTool && !isLoggedIn()) {
+        showAuthRequiredModal();
+        return;
+      }
     }
     /* Settings holds unsaved edits in drafts. Walking away from the page —
        another view, a hash change, the back button — discards them and puts
        the SAVED values back on screen, so an abandoned edit is visibly gone
        rather than quietly pending or silently kept. */
     if (currentView === 'settings' && name !== 'settings') discardBrandDrafts();
-    /* Leaving a tool ends that tool's grant — but re-entering the SAME view
-       (a re-render, a repeated click) must not, or the export that follows
-       would be charged as a fresh execution. */
-    if (name !== currentView) releaseGrantsFrom(currentView);
     currentView = name;
     syncViewHash(name);
     $('erp-view').hidden = name !== 'erp';
@@ -11007,7 +11020,7 @@
       const total = meteredToolIds().length;
       const left = freeToolsLeft();
       text = left + ' of ' + total + ' free';
-      title = 'Free tier: one free execution per tool \u2014 ' + (total - left) + ' of ' + total + ' used.';
+      title = 'Free tier: one free export, copy or save per tool \u2014 ' + (total - left) + ' of ' + total + ' tools used.';
       pct = Math.round(((total - left) / Math.max(1, total)) * 100);
     }
     el.textContent = text;
@@ -11089,8 +11102,8 @@
         if (!card) return;
         const id = card.getAttribute('data-tool');
         selectTool(id);
-        // Opening the tool IS the execution: showView runs the gate with the
-        // tool's own id, so each card spends (and is limited by) its own use.
+        // Opening is free (see showView) — the card is a way in, not a
+        // purchase. The tool's own export/copy/save is what the meter sees.
         showView(toolViewFor(id));
       });
     }
@@ -11168,11 +11181,11 @@
       if (getPlan() !== 'premium') { showToast('This account is already on the free plan.'); return; }
       if (!(await confirmAction({
         title: 'Return to the free plan?',
-        message: 'Unlimited use ends and every tool goes back to its single free execution.',
+        message: 'Unlimited use ends and every tool goes back to its single free export, copy or save.',
         confirmLabel: 'Return to Free'
       }))) return;
       setPlan('free');
-      showToast('Free plan restored \u2014 one free execution per tool.');
+      showToast('Free plan restored \u2014 one free export, copy or save per tool.');
     });
     // Data Backup & Restore actions
     const backupDownload = $('backup-download');
@@ -11439,7 +11452,9 @@
     });
 
     // Change Order Generator panel (inline card, right column)
-    $('msg-copy').addEventListener('click', copyMessage);
+    // Copy is this tool's one action (Scope Guard exports no file), so it is
+    // what the free tier buys here — metered like every other tool's export.
+    $('msg-copy').addEventListener('click', gateClick(copyMessage, 'scope-guard'));
     $('msg-close').addEventListener('click', function () {
       $('change-order-section').hidden = true;
     });
@@ -11497,7 +11512,7 @@
     $('boq-add-row').addEventListener('click', addBoqRow);
     $('boq-clear').addEventListener('click', clearBoq);
     $('boq-reset').addEventListener('click', resetBoq);
-    $('boq-pdf').addEventListener('click', gateClick(exportBoqPdf));
+    $('boq-pdf').addEventListener('click', gateClick(exportBoqPdf, 'boq'));
 
     // Meta inputs → save + rebuild the quotation doc
     const metaInputs = ['bq-client', 'bq-designation', 'bq-company', 'bq-address', 'bq-date', 'bq-ref'];
@@ -11560,7 +11575,7 @@
     });
 
     // Quantity & Rate → Export to PDF
-    $('qr-pdf').addEventListener('click', gateClick(qrExportPdf));
+    $('qr-pdf').addEventListener('click', gateClick(qrExportPdf, 'qr'));
 
     // Margin & Markup Pricing Calculator (tool #04)
     const fp = $('footer-open-pr'); if (fp) fp.addEventListener('click', function () {
@@ -11584,7 +11599,7 @@
       savePricing();
       fillPricingForm();
     });
-    $('pr-copy').addEventListener('click', copyPricingSummary);
+    $('pr-copy').addEventListener('click', gateClick(copyPricingSummary, 'pricing'));
     $('pr-reset').addEventListener('click', resetPricing);
 
     // Import Duty & Landed Cost Calculator (tool #06)
@@ -11600,7 +11615,7 @@
         updateDuty();
       });
     }
-    $('dt-copy').addEventListener('click', copyDutyBreakdown);
+    $('dt-copy').addEventListener('click', gateClick(copyDutyBreakdown, 'duty'));
     $('dt-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset import duty calculator?', message: 'This clears the CIF value, units and all tax rates.', confirmLabel: 'Reset', danger: true }))) return;
       clearToolLibraryId('duty');
@@ -11622,7 +11637,7 @@
         updateVariation();
       });
     }
-    $('vr-pdf').addEventListener('click', gateClick(exportVariationPdf));
+    $('vr-pdf').addEventListener('click', gateClick(exportVariationPdf, 'variation'));
     $('vr-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset variation builder?', message: 'This clears the project details, costs and work description.', confirmLabel: 'Reset', danger: true }))) return;
       clearToolLibraryId('variation');
@@ -11644,7 +11659,7 @@
         updateBreakeven();
       });
     }
-    $('bk-copy').addEventListener('click', copyBreakevenSummary);
+    $('bk-copy').addEventListener('click', gateClick(copyBreakevenSummary, 'breakeven'));
     $('bk-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset breakeven calculator?', message: 'This clears your income target, overhead and time settings.', confirmLabel: 'Reset', danger: true }))) return;
       clearToolLibraryId('breakeven');
@@ -11676,7 +11691,7 @@
       fxState.to = this.value;
       saveFx();
     });
-    $('fx-copy').addEventListener('click', copyFxInvoice);
+    $('fx-copy').addEventListener('click', gateClick(copyFxInvoice, 'fx'));
     $('fx-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset FX & fee adjuster?', message: 'This clears the payout target and fee rates.', confirmLabel: 'Reset', danger: true }))) return;
       clearToolLibraryId('fx');
@@ -11700,7 +11715,7 @@
         });
       })(gpInputs[i]);
     }
-    $('gp-copy').addEventListener('click', copyGpaSummary);
+    $('gp-copy').addEventListener('click', gateClick(copyGpaSummary, 'gpa'));
     $('gp-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset GPA planner?', message: 'This clears your progress, targets and course weights.', confirmLabel: 'Reset', danger: true }))) return;
       clearToolLibraryId('gpa');
@@ -11724,7 +11739,7 @@
         });
       })(rtInputs[i]);
     }
-    $('rt-copy').addEventListener('click', copyRetainerSummary);
+    $('rt-copy').addEventListener('click', gateClick(copyRetainerSummary, 'retainer'));
     $('rt-reset').addEventListener('click', resetRetainer);
 
     // Project Delay & Damages Impact (tool #12)
@@ -11742,7 +11757,7 @@
         });
       })(dlInputs[i]);
     }
-    $('dl-copy').addEventListener('click', copyDelaySummary);
+    $('dl-copy').addEventListener('click', gateClick(copyDelaySummary, 'delay'));
     $('dl-reset').addEventListener('click', resetDelay);
 
     // History (sidebar + footer)
@@ -11814,7 +11829,7 @@
     $('inv-add-row').addEventListener('click', addInvRow);
     $('inv-clear').addEventListener('click', clearInv);
     $('inv-reset').addEventListener('click', resetInv);
-    $('inv-pdf').addEventListener('click', gateClick(exportInvPdf));
+    $('inv-pdf').addEventListener('click', gateClick(exportInvPdf, 'invoice'));
     const invBody = $('inv-rows');
     invBody.addEventListener('input', function (e) {
       const input = e.target;
@@ -12272,17 +12287,22 @@
       erpState.terms = this.value;
       saveErp();
     });
-    $('erp-pdf').addEventListener('click', gateClick(exportErpPdf));
-    $('erp-export-xlsx').addEventListener('click', gateClick(exportErpExcel));
-    $('erp-save').addEventListener('click', erpSaveToLibrary);
+    $('erp-pdf').addEventListener('click', gateClick(exportErpPdf, 'erp'));
+    $('erp-export-xlsx').addEventListener('click', gateClick(exportErpExcel, 'erp'));
+    /* Save to Library IS one of the tool's real actions and is metered like an
+       export — the free tier buys one, whichever kind it is. `Save Record`
+       (the reusable project/client record) is deliberately NOT: it stores the
+       header you typed rather than producing a document, and it was never a
+       metered action in this app. */
+    $('erp-save').addEventListener('click', gateClick(erpSaveToLibrary, 'erp'));
     /* Every mini-tool's Save to Library button, found by its data attribute so
-       adding a tool needs no new binding here. Not credit-gated: saving your
-       own work is not a tool execution (the ERP's save is ungated too). */
+       adding a tool needs no new binding here. Gated per tool, like the
+       exports — see the free-tier model at checkAccessAndCredits. */
     const toolSaveBtns = document.querySelectorAll('[data-tool-save]');
     for (let i = 0; i < toolSaveBtns.length; i++) {
       (function (btn) {
         const tool = btn.getAttribute('data-tool-save');
-        btn.addEventListener('click', function () { saveToolToLibrary(tool); });
+        btn.addEventListener('click', gateClick(function () { saveToolToLibrary(tool); }, tool));
       })(toolSaveBtns[i]);
     }
 
@@ -12911,10 +12931,10 @@
     renderActivity();
     updateKPICards();
     wireKPILive();
-    /* The fragment wins on a reload. A tool view the account may not open
-       (guest, or a free tool whose one execution is spent) falls back to
-       Home rather than painting a page the gate refuses — the modal and the
-       Premium Plans redirect have already said why. */
+    /* The fragment wins on a reload. A tool view a GUEST may not open falls
+       back to Home rather than painting a page the gate refuses — the modal
+       has already said why. (A free account never lands here for tool use:
+       opening is unlimited, so only an action can be refused.) */
     showView(viewFromHash() || DEFAULT_VIEW);
     if (!currentView) showView(DEFAULT_VIEW, { gate: false });
     renderAll();

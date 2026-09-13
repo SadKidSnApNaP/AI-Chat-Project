@@ -1792,6 +1792,15 @@ when expanded ↔ 0° when collapsed). State is per key in
 Collapsing sets `hidden` on the list — it never navigates, and it removes the
 links from the tab order.
 
+> **SUPERSEDED (2026-09-13)** — there are now FOUR sections: `WORKSPACE` /
+> `ERP & DATA` / `TOOLS & RECORDS` / `ACCOUNT`, with
+> `NAV_SECTION_DEFAULTS = { workspace: true, erp: true, tools: true, account: true }`.
+> The `utilities` / `records` / `more` / `configuration` keys are gone (stale
+> values for them are inert). See "Sidebar merged into Tools & Records + Account"
+> at the end of this file. Everything below about MECHANICS still holds: the
+> per-key store, `hidden` on the list, the DOM order deciding sidebar order,
+> and the `toggleNavSection()` key-must-be-in-defaults rule.
+
 IMPORTANT: `NAV_SECTION_DEFAULTS` in `app.js` is also the source of truth for
 which keys may be toggled — `toggleNavSection()` refuses a key that is not a
 property of it. Adding a section to the HTML without adding its key there gives
@@ -2168,13 +2177,19 @@ replaced by `nexora_free_usage` = `{ toolId: timesUsed }` with
 `FREE_LIMIT = 1` per tool (12 calculators + `erp` = 13 metered sections).
 `nexora_ai_credits` is deleted on boot and is no longer read by anything.
 
-A tool's single use is spent when the tool is *opened*; every PDF/Excel
-trigger fired from inside that open tool is part of the same execution, via a
-session grant (`sessionGrants[id]`) that is dropped the moment the view
-changes. That is what keeps a document export from costing a second use — and
-what makes re-entering the tool after the free use a blocked action, even in
-the same browser session. `Reset all data` is the meter's only reset path; a
-paid plan is deliberately not cleared by it.
+> **SUPERSEDED (2026-09-13) — the use is spent on an ACTION, never on opening.**
+> Opening a tool costs nothing and is unlimited; the meter runs on the tool's
+> export / copy / Save-to-Library buttons through `gateClick`. `sessionGrants`
+> and `releaseGrantsFrom()` are **deleted** — with the charge on the action, a
+> session grant would have handed a free account unlimited exports for the rest
+> of the visit. `showView` now asks only the guest question. See "Free-tier
+> meter: charged on the action, not on opening a tool" at the end of this file.
+
+A tool's single use WAS spent when the tool was *opened*, with every PDF/Excel
+trigger fired from inside that open tool treated as part of the same execution
+via a session grant (`sessionGrants[id]`) dropped the moment the view changed.
+`Reset all data` is the meter's only reset path; a paid plan is deliberately
+not cleared by it.
 
 Usage and plan live in localStorage under the per-user shim (so each account
 has its own), but they are **not** in the cloud `SYNC` map — entitlements are
@@ -3804,3 +3819,123 @@ Re-checked from the code and then live, in case anything had regressed:
   and the signed-in harness used for the checks (already current, generated from
   the same sources in the round above) was restored to its committed state
 afterwards.
+
+## Sidebar merged into Tools & Records + Account (2026-09-13)
+
+Four categories became two. The old split had four items spread across three
+headers — `OTHER UTILITIES` (1), `RECORDS & BACKUP` (2), `MORE` (1) — plus
+`CONFIGURATION` (2), which is more chrome than content.
+
+```
+WORKSPACE       Home
+ERP & DATA      Master ERP Engine · Item & Client Database · Company Database
+TOOLS & RECORDS Other Utilities · Library · Backup
+ACCOUNT         Premium Plans · Account Settings · Appearance Settings
+```
+
+- **Markup** (`index.html`): the four `<section class="nav-section">` blocks
+  were replaced by two, `data-nav-section="tools"` and `="account"`, with item
+  ids `#nav-items-tools` / `#nav-items-account`. The ten sidebar buttons kept
+  their ids — `#sidebar-utilities`, `#sidebar-history`, `#sidebar-backup`,
+  `#sidebar-plans`, `#sidebar-account`, `#sidebar-appearance` — so `navIds`,
+  the click handlers and every route are untouched (the item order changed,
+  which is exactly what the DOM order is for).
+- **JS** (`js/app.js`): `NAV_SECTION_DEFAULTS` is now
+  `{ workspace: true, erp: true, tools: true, account: true }`. Both new keys
+  are **required** — `toggleNavSection()` refuses any key it does not own, so
+  omitting one gives a header that paints but silently will not collapse.
+  The removed keys are left behind in `nexora_nav_sections_v1` for existing
+  profiles and are simply **inert**: `navSectionState()` only iterates the keys
+  listed in `NAV_SECTION_DEFAULTS`.
+- No CSS was needed — `.nav-section` / `.nav-group-label` / `.nav-group-items`
+  are key-agnostic. The leading "Six independent sections" comment became
+  "Four".
+
+**Verified live** — four sections, DOM order matching the visual order
+(tops 139 / 225 / 414 / 602) with exactly the items above; each header toggles
+**independently** (`{tools:false}` left `account` and `erp` expanded) and
+remembers across a reload; a profile carrying the OLD store
+(`erp:false, utilities:false, records:false, more:false, configuration:false`)
+boots with the new sections at their defaults and honours only the surviving
+`erp:false`; and every item still routes where it did — `#/home`, `#/db`,
+`#/settings`, `#/utilities`, `#/history`, `#/backup`, `#/plans`, `#/account`,
+`#/appearance` (with Master ERP Engine still raising the guest auth gate, as
+before). Console clean.
+
+`preview.html` rebuilt (1,039,495 bytes). The change is in `index.html` and
+`js/app.js`, so it needs a redeploy to reach Vercel.
+
+## Free-tier meter: charged on the action, not on opening a tool (2026-09-13)
+
+**The bug.** `showView()` ran `checkAccessAndCredits(targetTool)` on every
+entry to a tool view, so merely LOOKING at a tool spent its single free use.
+A free account got one visit per tool and then hit the limit modal on the
+second, having produced nothing — and `sessionGrants` then made the export
+that followed free, so the meter was charging the wrong event twice over.
+
+**The model now** (one sentence): *opening a tool is free and unlimited; the
+free tier buys one export, copy or Save to Library per tool.*
+
+| event | guest | free | premium |
+|---|---|---|---|
+| open a tool view, type, read live results | blocked (auth modal) | **free, unlimited** | free |
+| Export to PDF / Excel | auth modal | 1st charges, then blocked → Plans | free |
+| Copy Summary / Copy Message | auth modal | 1st charges, then blocked → Plans | free |
+| Save to Library (ERP + any tool) | auth modal | 1st charges, then blocked → Plans | free |
+| Save Record, Excel Template download | blocked | free | free |
+
+- `checkAccessAndCredits(toolId)` is unchanged in shape but is now reached ONLY
+  from `gateClick`, i.e. from an action. Its `sessionGrants` early-return and
+  the `sessionGrants`/`releaseGrantsFrom()` pair were deleted: they existed to
+  stop one visit costing two uses, and with the charge moved onto the action
+  they would instead let a free account export forever after one charge.
+- `showView()` gates guests only (`isLoggedIn()`), and no longer touches the
+  meter. That is the one line that fixes the reported behaviour; `{ gate:false }`
+  still covers the upgrade redirect and the boot fallback.
+- Wired through `gateClick(handler, toolId)` with an explicit tool id:
+  `msg-copy`→scope-guard, `qr-pdf`, `boq-pdf`, `pr-copy`, `inv-pdf`,
+  `dt-copy`, `vr-pdf`, `bk-copy`, `fx-copy`, `gp-copy`, `rt-copy`, `dl-copy`,
+  `erp-pdf`, `erp-export-xlsx`, `erp-save`, and every `[data-tool-save]` button
+  (found by attribute, so a tool added later is metered automatically).
+- Copy updated with it: the limit modal now reads "You have used the free
+  export, copy or save in <tool>. You can still open this tool and edit it —
+  Premium removes the limit on producing anything from it."; the Home health
+  row and the downgrade dialog say the same thing.
+
+**Verified live** (free tier, harness session, `__NEXORA_NO_DOWNLOAD = true` so
+no dialog opened and no file was written):
+
+| check | result |
+|---|---|
+| open all 12 tools one after another | 12 correct hashes, `nexora_free_usage` = `{}`, no modal |
+| type in each tool (12 of them), then leave and reopen | no charge at any point |
+| each tool's action clicked once | exactly `{toolId: 1}` — one use, that tool, no other |
+| the same action clicked again | usage unchanged, "AI Credit Limit Reached" + redirect to `#/plans` |
+| Save to Library (in a tool and in the ERP) | charged on the first click, blocked on the second |
+| a tool whose use is ALREADY spent | still opens, still types, `{qr:1}` unchanged; only its Export is refused |
+| guest clicking a tool card | stays on `#/home`, "Authentication Required", nothing charged (unchanged) |
+
+Tools covered individually: scope-guard, qr, boq, pricing, invoice, duty,
+variation, breakeven, fx, gpa, retainer, delay, plus the ERP.
+
+TESTING GOTCHA, worth remembering: the preview webview reports
+`document.visibilityState === 'hidden'`, so `setTimeout` is clamped to ~1s and
+`requestAnimationFrame` never fires. Any probe that awaits a timer takes
+seconds per step and blows the 10s evaluation limit, while the same work done
+SYNCHRONOUSLY is instant — the gate charges inside the click handler, so "click
+the action twice and read `nexora_free_usage`" needs no waiting at all. Only
+the modal's DOM insertion is async, so read that in the *next* call.
+
+**Known sharp edge, deliberately left as-is:** the gate runs BEFORE the
+handler, so an action the tool itself rejects — e.g. Copy on an empty Pricing
+calculator, which only alerts "Enter your base cost first" — still spends the
+use. Charging an action *attempt* is what the spec asked for, but if the intent
+is "only a produced document counts", the gate would have to move inside each
+handler after its own validation.
+
+**Also deliberately ungated:** `Save Record` (the reusable project/client
+record) and the Excel Template download. Neither produces a document and
+neither was metered before; flagging rather than silently changing them.
+
+`preview.html` rebuilt (1,041,203 bytes). Change is in `js/app.js`, so it needs
+a redeploy to reach Vercel.

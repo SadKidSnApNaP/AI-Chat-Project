@@ -152,7 +152,7 @@
         <button type="button" class="sidebar-toggle" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the navigation" title="Collapse the navigation"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span></button>
       </div>
       <nav class="sidebar-nav" id="sidebar-nav">
-        <!-- Six independent sections. Each header toggles its own list and
+        <!-- Four independent sections. Each header toggles its own list and
              remembers that choice in localStorage; collapsing only hides
              links, it never navigates, so the view you are on stays put.
              Labels only — every id, route and handler is unchanged. -->
@@ -181,51 +181,34 @@
           </div>
         </section>
 
-        <!-- Other Utilities gets its own category (2026-09-13). It used to sit
-             inside MORE; it now reads as a peer of ERP & DATA because the 12
-             inline tools are a working surface, not a leftover. Reordering
-             only — #sidebar-utilities, its route and its page are untouched. -->
-        <section class="nav-section" data-nav-section="utilities">
-          <button type="button" class="nav-group-label" data-nav-toggle="utilities" aria-expanded="true" aria-controls="nav-items-utilities">
-            <span>OTHER UTILITIES</span>
+        <!-- Tools & Records (2026-09-13): the 12 inline calculators plus the two
+             stores of what they produce. Merged from three separate categories
+             — OTHER UTILITIES, RECORDS & BACKUP and MORE — which between them
+             held four items across three headers, more chrome than content.
+             Reordering and labels only: #sidebar-utilities, #sidebar-history and
+             #sidebar-backup keep their ids, routes and handlers. -->
+        <section class="nav-section" data-nav-section="tools">
+          <button type="button" class="nav-group-label" data-nav-toggle="tools" aria-expanded="true" aria-controls="nav-items-tools">
+            <span>TOOLS &amp; RECORDS</span>
             <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
           </button>
-          <div class="nav-group-items" id="nav-items-utilities">
+          <div class="nav-group-items" id="nav-items-tools">
             <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>Other Utilities</span></button>
-          </div>
-        </section>
-
-        <section class="nav-section" data-nav-section="records">
-          <button type="button" class="nav-group-label" data-nav-toggle="records" aria-expanded="true" aria-controls="nav-items-records">
-            <span>RECORDS &amp; BACKUP</span>
-            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
-          </button>
-          <div class="nav-group-items" id="nav-items-records">
             <button type="button" class="sidebar-link" id="sidebar-history"><span class="nav-icon" data-icon="history" aria-hidden="true"></span><span>Library</span></button>
             <button type="button" class="sidebar-link" id="sidebar-backup"><span class="nav-icon" data-icon="archive" aria-hidden="true"></span><span>Backup</span></button>
           </div>
         </section>
 
-        <section class="nav-section" data-nav-section="more">
-          <button type="button" class="nav-group-label" data-nav-toggle="more" aria-expanded="true" aria-controls="nav-items-more">
-            <span>MORE</span>
+        <!-- Account: what the account is on (the plan), who it is (profile),
+             and how the app looks for it (appearance). Absorbed Premium Plans
+             from MORE and both items from CONFIGURATION. -->
+        <section class="nav-section" data-nav-section="account">
+          <button type="button" class="nav-group-label" data-nav-toggle="account" aria-expanded="true" aria-controls="nav-items-account">
+            <span>ACCOUNT</span>
             <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
           </button>
-          <div class="nav-group-items" id="nav-items-more">
+          <div class="nav-group-items" id="nav-items-account">
             <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
-          </div>
-        </section>
-
-        <!-- Appearance Settings keeps the group it already lived in (its former
-             siblings, Backup and Premium Plans, moved into RECORDS & BACKUP
-             and MORE). Left here rather than folded into MORE, so that nothing
-             was moved that was not asked to move. -->
-        <section class="nav-section" data-nav-section="configuration">
-          <button type="button" class="nav-group-label" data-nav-toggle="configuration" aria-expanded="true" aria-controls="nav-items-configuration">
-            <span>CONFIGURATION</span>
-            <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
-          </button>
-          <div class="nav-group-items" id="nav-items-configuration">
             <button type="button" class="sidebar-link" id="sidebar-account"><span class="nav-icon" data-icon="user" aria-hidden="true"></span><span>Account Settings</span></button>
             <button type="button" class="sidebar-link" id="sidebar-appearance"><span class="nav-icon" data-icon="palette" aria-hidden="true"></span><span>Appearance Settings</span></button>
           </div>
