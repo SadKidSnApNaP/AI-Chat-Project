@@ -158,6 +158,25 @@ main.container { z-index: 2; }
   padding: 0 20px;
 }
 
+/* ── Sticky footer ───────────────────────────────────────────────────
+   The footer is a SIBLING of <main>, so on a short page (an empty Library,
+   empty Backup, the guest Account Settings page) it used to sit directly
+   under the content with a dead band below it. <body> is the page container:
+   a viewport-tall column whose main area absorbs the slack, which parks the
+   footer flush with the bottom of the window. As soon as the content is
+   taller than the viewport the column simply grows and the footer scrolls
+   normally after it.
+   Out-of-flow children are never flex items, so this cannot disturb them:
+   #glow-backdrop and the modals are position: fixed, and the five
+   .pdf-offscreen documents are position: absolute. */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;   /* mobile: excludes the retracting URL bar's height */
+}
+main.container { flex: 1 0 auto; }
+
 /* ── Sidebar + main layout ───────────────────────────────── */
 main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0; }
 .sidebar {
@@ -3182,6 +3201,11 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   [data-theme="light"] body {
     background: #ffffff !important;
     color: #111111 !important;
+    /* Print paginates normal flow, not a flex column. Reset the sticky-footer
+       layout, otherwise the offscreen documents — position: static in print —
+       become shrinkable flex items and can be squashed across page breaks. */
+    display: block !important;
+    min-height: 0 !important;
   }
   .card,
   .dash-layout,

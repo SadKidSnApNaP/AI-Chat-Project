@@ -1,8 +1,0 @@
-Exception calling "Start" with "0" argument(s): "Only one usage of each socket address (protocol/network address/port) 
-is normally permitted"
-At F:\AI-Chat Project\server-preview.ps1:22 char:1
-+ $listener.Start()
-+ ~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (:) [], ParentContainsErrorRecordException
-    + FullyQualifiedErrorId : SocketException
- 

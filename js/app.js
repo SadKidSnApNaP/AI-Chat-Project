@@ -134,8 +134,18 @@
   /* The free tier allows exactly ONE execution per tool — not one shared
      pool across every tool, and not one per browser session. */
   const FREE_LIMIT = 1;
-  // Developer / admin test account — bypasses the gate entirely.
-  const ADMIN_EMAIL = 'himalabey.503@gmail.com';
+  /* Developer / admin accounts — each one bypasses the gate entirely.
+     THIS LIST IS THE SINGLE SOURCE OF TRUTH for the "Developer — Unlimited
+     Credits" status. There is no role/plan column to set anywhere: the five
+     Supabase tables (brand_settings, items, clients, documents,
+     appearance_settings) are keyed only by user_id, and the local role flag
+     is just a cache derived from this list. Adding an address here therefore
+     promotes that account with no other change and no data migration.
+     Matched case-insensitively against the live Supabase session email. */
+  const ADMIN_EMAILS = [
+    'himalabey.503@gmail.com',      // original developer account
+    'jayawardhanaworks@gmail.com'   // second admin account
+  ];
   function rawGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function rawSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
   function rawDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
@@ -199,7 +209,7 @@
     return (t && (t.short || t.name)) || 'this tool';
   }
   function isAdminEmail(email) {
-    return String(email || '').trim().toLowerCase() === ADMIN_EMAIL;
+    return ADMIN_EMAILS.indexOf(String(email || '').trim().toLowerCase()) !== -1;
   }
   // Admin = the developer account, by live session email or stored role.
   function isAdmin() {

@@ -124,6 +124,43 @@ limit modal. `renderAuthUi()` shows the admin badge text
 retire the dev account, change `ADMIN_EMAIL` and clear
 `nexora_user_role`/`nexora_ai_credits` for signed-in testers.
 
+**Superseded (2026-09-13) — the bypass is an allowlist, and the credit keys
+are gone.** `ADMIN_EMAIL` (a single string) became `ADMIN_EMAILS` in
+`js/app.js` (≈line 145), matched case-insensitively by `isAdminEmail()` via
+`indexOf`:
+
+```js
+const ADMIN_EMAILS = [
+  'himalabey.503@gmail.com',      // original developer account
+  'jayawardhanaworks@gmail.com'   // second admin account
+];
+```
+
+**This list is the single source of truth.** There is nothing to set in
+Supabase: the five tables (`brand_settings`, `items`, `clients`, `documents`,
+`appearance_settings`) are keyed only by `user_id` and have no role/plan
+column at all, and `nexora_user_role` is merely a *per-account* localStorage
+cache — it is namespaced as `u:<email>:nexora_user_role` (`GLOBAL_KEYS` is
+empty) and `initAccessState()` re-derives it from the live session email on
+every boot via `grantAdminEntitlements()`. Promotion therefore needs no manual
+key edit and no migration; adding the address to `ADMIN_EMAILS` is the whole
+job. The `nexora_ai_credits` / `ADMIN_CREDITS` details above are historical.
+
+Everything downstream is unchanged because it all funnels through one chain:
+`isAdminEmail()` → `isAdmin()` → `isPremium()` → the `if (isPremium()) return
+true` early exit in `checkAccessAndCredits()`. Both admin accounts therefore
+show `Developer — Unlimited Credits` in `planState()` (the `acct-plan-pill`,
+`acct-row-plan` and sidebar chip), `Unlimited Credits` in `renderPlanHealth()`
+(`#hl-plan` on the Home System-health card) with the title
+`Developer account — every tool, unmetered.`, and no upgrade button.
+
+*Known limitation (pre-existing, unchanged here):* the role cache is a plain
+localStorage value, so this whole allowlist is a UI/entitlement convenience,
+not a security boundary — anyone can set `u:<their email>:nexora_user_role`
+to `admin` from devtools and get the same unlimited bypass, since no server
+re-checks it. Hardening would mean verifying the email server-side (a Supabase
+RLS-checked table or an edge function) instead of reading a local flag.
+
 `checkAccessAndCredits()` is the single strict gate: it reads the two raw
 keys (never deducting when it blocks), opens `showAuthRequiredModal()` /
 `showCreditLimitModal()` (thin aliases over `#gate-modal` in auth / limit
@@ -2110,7 +2147,7 @@ it touches and reports into `window.__testResult`.
 | guest (no verified Supabase session) | no tool access at all; every attempt opens the Login / Sign Up modal |
 | free (signed in, plan ≠ premium) | ONE execution per tool, persisted per account; after that: "AI Credit Limit Reached", a redirect to Premium Plans, and no second entry |
 | premium (`nexora_plan = 'premium'`) | unlimited, nothing metered; the account panel and the System-health row both read **Unlimited Credits** |
-| developer (`himalabey.503@gmail.com`) | unlimited, unmetered, exempt from every block screen |
+| developer (`ADMIN_EMAILS` — `himalabey.503@gmail.com`, `jayawardhanaworks@gmail.com`) | unlimited, unmetered, exempt from every block screen |
 
 ### What was actually letting guests through
 
@@ -3325,3 +3362,63 @@ probe keys (`__evalRetryProbe`, `nexora_confirm_loads`, `nexora_confirm_log`,
 `nexora_harness_log_v2`, `nexora_harness_runs_v2`) removed from the preview
 profile; `_signed-in-test.html` deleted. No code changed in this pass, so
 `preview.html` is still current.
+
+## Sticky footer — the page container is `<body>` (2026-09-13)
+
+**Symptom:** on a short page (empty Library, empty Backup, the guest Account
+Settings page) the footer sat directly under the content block with a large
+dead band below it instead of sitting on the bottom of the window.
+
+**Cause:** nothing was wrong with the footer itself — there was simply no
+full-height container. `<body>` was a normal block, so the document ended
+where the content ended and the footer stopped with it.
+
+**Shape of the fix** (all of it in `css/style.css`):
+
+- A new "Sticky footer" block right after `.container` (≈line 161) makes
+  `<body>` the page container:
+  `display: flex; flex-direction: column; min-height: 100vh;` then
+  `min-height: 100dvh;` (mobile: excludes the retracting URL bar).
+- `main.container { flex: 1 0 auto; }` — the main area absorbs the slack, so
+  the footer is flush with the bottom of the viewport on short pages and the
+  column just grows (footer scrolling normally after the content) as soon as
+  the content is taller than the screen.
+- Inside the `@media print` block (≈line 3199) the existing
+  `body, [data-theme="light"] body` rule gained `display: block !important;
+  min-height: 0 !important;`. Print paginates normal flow, not a flex column:
+  without the reset the offscreen documents — `position: static` in print —
+  would become shrinkable flex items and could be squashed across page breaks.
+  The reset wins on both counts (later in the sheet **and** `!important`).
+
+**Why the flex conversion is safe:** out-of-flow children are never flex items.
+`#glow-backdrop` and all eight `.modal-overlay` modals are `position: fixed`,
+and the five `.pdf-offscreen` documents are `position: absolute` — so the only
+things that became flex items are `<main>` and the footer, exactly the two that
+should. Desktop alignment is unchanged because `.container`'s `margin: 0 auto`
+still absorbs the cross-axis free space (auto margins beat
+`align-items: stretch`), and the footer, having no auto margins, still spans the
+full viewport width.
+
+**Verified live** (preview viewport 647×1000, i.e. the narrow/mobile branch).
+For every sidebar destination the invariant checked was
+`footerEnd + trailingGap == scrollHeight` and `scrollHeight >= innerHeight`:
+
+| view | scrollHeight | footerEnd | trailing gap | scrolls |
+|---|---|---|---|---|
+| Library (empty) | 1000 | 1000 | 0 | no |
+| Backup (empty) | 1000 | 1000 | 0 | no |
+| Account Settings (guest) | 1000 | 1000 | 0 | no |
+| Premium Plans | 1000 | 1000 | 0 | no |
+| Appearance | 1316 | 1316 | 0 | yes |
+| Home | 1598 | 1598 | 0 | yes |
+| Master ERP Engine | 1598 | 1598 | 0 | yes |
+| Other Utilities | 1964 | 1964 | 0 | yes |
+| Item & Client Database | 2698 | 2698 | 0 | yes |
+| Company Database | 2966 | 2966 | 0 | yes |
+
+So every short page pins the footer flush with no gap below it, and every tall
+page still ends at its own content. Light mode (`#theme-toggle`) was checked on
+a short page and also pins at gap 0. The CSSOM was inspected directly to confirm
+the print rule really is later than the sticky rule (index 698 vs 19) — not just
+that both exist. No JS or markup changed for this; `preview.html` was rebuilt
+(1,019,686 bytes).

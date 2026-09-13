@@ -169,6 +169,25 @@ main.container { z-index: 2; }
   padding: 0 20px;
 }
 
+/* ── Sticky footer ───────────────────────────────────────────────────
+   The footer is a SIBLING of <main>, so on a short page (an empty Library,
+   empty Backup, the guest Account Settings page) it used to sit directly
+   under the content with a dead band below it. <body> is the page container:
+   a viewport-tall column whose main area absorbs the slack, which parks the
+   footer flush with the bottom of the window. As soon as the content is
+   taller than the viewport the column simply grows and the footer scrolls
+   normally after it.
+   Out-of-flow children are never flex items, so this cannot disturb them:
+   #glow-backdrop and the modals are position: fixed, and the five
+   .pdf-offscreen documents are position: absolute. */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;   /* mobile: excludes the retracting URL bar's height */
+}
+main.container { flex: 1 0 auto; }
+
 /* ── Sidebar + main layout ───────────────────────────────── */
 main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0; }
 .sidebar {
@@ -3193,6 +3212,11 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   [data-theme="light"] body {
     background: #ffffff !important;
     color: #111111 !important;
+    /* Print paginates normal flow, not a flex column. Reset the sticky-footer
+       layout, otherwise the offscreen documents — position: static in print —
+       become shrinkable flex items and can be squashed across page breaks. */
+    display: block !important;
+    min-height: 0 !important;
   }
   .card,
   .dash-layout,
@@ -9163,8 +9187,18 @@ body.light-theme .tool-launch {
   /* The free tier allows exactly ONE execution per tool — not one shared
      pool across every tool, and not one per browser session. */
   const FREE_LIMIT = 1;
-  // Developer / admin test account — bypasses the gate entirely.
-  const ADMIN_EMAIL = 'himalabey.503@gmail.com';
+  /* Developer / admin accounts — each one bypasses the gate entirely.
+     THIS LIST IS THE SINGLE SOURCE OF TRUTH for the "Developer — Unlimited
+     Credits" status. There is no role/plan column to set anywhere: the five
+     Supabase tables (brand_settings, items, clients, documents,
+     appearance_settings) are keyed only by user_id, and the local role flag
+     is just a cache derived from this list. Adding an address here therefore
+     promotes that account with no other change and no data migration.
+     Matched case-insensitively against the live Supabase session email. */
+  const ADMIN_EMAILS = [
+    'himalabey.503@gmail.com',      // original developer account
+    'jayawardhanaworks@gmail.com'   // second admin account
+  ];
   function rawGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function rawSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
   function rawDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
@@ -9228,7 +9262,7 @@ body.light-theme .tool-launch {
     return (t && (t.short || t.name)) || 'this tool';
   }
   function isAdminEmail(email) {
-    return String(email || '').trim().toLowerCase() === ADMIN_EMAIL;
+    return ADMIN_EMAILS.indexOf(String(email || '').trim().toLowerCase()) !== -1;
   }
   // Admin = the developer account, by live session email or stored role.
   function isAdmin() {
