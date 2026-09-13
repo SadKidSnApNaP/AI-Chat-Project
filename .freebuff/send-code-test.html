@@ -1,0 +1,287 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>send-code hook test</title></head>
+<body>
+<pre id="out">running…</pre>
+<script>
+/* Tests the REAL api/send-code.js by importing it with `crypto`, `process`
+   and `fetch` shimmed. The signature that the handler must accept is computed
+   INDEPENDENTLY with the browser's native WebCrypto HMAC, so a bug in the
+   handler's own HMAC cannot make the test pass. The signing formula is the
+   one the reference standardwebhooks library uses:
+       base64( HMAC-SHA256( key, `${id}.${floor(ts)}.${body}` ) )
+   with key = base64-decode(secret after "whsec_").                        */
+
+const RESULTS = [];
+function ok(name, cond, extra) { RESULTS.push({ name, pass: !!cond, extra: extra === undefined ? '' : String(extra) }); }
+
+/* ── byte helpers ─────────────────────────────────────────────────────── */
+const TE = new TextEncoder();
+function bytesOf(v) { return typeof v === 'string' ? TE.encode(v) : v; }
+function b64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
+function ub64(str) { const bin = atob(str); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+function concat(list) { let n = 0; for (const p of list) n += p.length; const out = new Uint8Array(n); let o = 0; for (const p of list) { out.set(p, o); o += p.length; } return out; }
+
+/* ── pure-JS SHA-256 / HMAC (drives the handler's shimmed crypto) ─────── */
+const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+function sha256Bytes(data) {
+  const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const len = data.length, bitLen = len * 8;
+  const total = (len + 1 + 8 + 63) & ~63;
+  const buf = new Uint8Array(total); buf.set(data); buf[len] = 0x80;
+  const hi = Math.floor(bitLen / 4294967296), lo = bitLen >>> 0;
+  buf[total-8]=(hi>>>24)&255; buf[total-7]=(hi>>>16)&255; buf[total-6]=(hi>>>8)&255; buf[total-5]=hi&255;
+  buf[total-4]=(lo>>>24)&255; buf[total-3]=(lo>>>16)&255; buf[total-2]=(lo>>>8)&255; buf[total-1]=lo&255;
+  const w = new Uint32Array(64);
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = (buf[off+i*4]<<24)|(buf[off+i*4+1]<<16)|(buf[off+i*4+2]<<8)|buf[off+i*4+3];
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i-15],7) ^ rotr(w[i-15],18) ^ (w[i-15]>>>3);
+      const s1 = rotr(w[i-2],17) ^ rotr(w[i-2],19) ^ (w[i-2]>>>10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e,6)^rotr(e,11)^rotr(e,25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+      const S0 = rotr(a,2)^rotr(a,13)^rotr(a,22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) >>> 0;
+      h=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0;
+    }
+    H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
+    H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
+  }
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 8; i++) { out[i*4]=(H[i]>>>24)&255; out[i*4+1]=(H[i]>>>16)&255; out[i*4+2]=(H[i]>>>8)&255; out[i*4+3]=H[i]&255; }
+  return out;
+}
+function hmacSha256(key, msg) {
+  let k = key.slice(); if (k.length > 64) k = sha256Bytes(k);
+  const ip = new Uint8Array(64), op = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) { ip[i] = 0x36 ^ (k[i] || 0); op[i] = 0x5c ^ (k[i] || 0); }
+  return sha256Bytes(concat([op, sha256Bytes(concat([ip, msg]))]));
+}
+
+/* ── shims the handler will see ───────────────────────────────────────── */
+const cryptoShim = {
+  createHmac: function (algo, key) {
+    const k = bytesOf(key); const chunks = [];
+    return {
+      update: function (d) { chunks.push(bytesOf(d)); return this; },
+      digest: function (enc) {
+        const mac = hmacSha256(k, concat(chunks));
+        return enc === 'base64' ? b64(mac) : mac;
+      }
+    };
+  },
+  timingSafeEqual: function (a, b) {
+    const x = bytesOf(a), y = bytesOf(b);
+    if (x.length !== y.length) return false;
+    let d = 0; for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+    return d === 0;
+  }
+};
+window.__cryptoShim = cryptoShim;
+window.Buffer = {
+  from: function (v, enc) {
+    if (typeof v !== 'string') return v;
+    if (enc === 'base64') return ub64(v);
+    return TE.encode(v);
+  }
+};
+
+/* `process.env` must exist BEFORE the import: the handler reads RESEND_FROM at
+   module scope, so a late assignment would throw at import time. */
+window.process = { env: { RESEND_API_KEY: '', SEND_EMAIL_HOOK_SECRET: '', RESEND_FROM: 'Nexora Engine <no-reply@example.lk>' } };
+
+/* Fixed hook secret: 32 bytes 0..31 → base64, wrapped as Supabase shows it. */
+const SECRET_BYTES = new Uint8Array(32); for (let i = 0; i < 32; i++) SECRET_BYTES[i] = i;
+const SECRET_B64 = b64(SECRET_BYTES);
+const HOOK_SECRET = 'v1,whsec_' + SECRET_B64;
+
+/* ── Resend stub ──────────────────────────────────────────────────────── */
+const realFetch = window.fetch.bind(window);
+let resendCalls = [];
+let resendReply = { status: 200, body: JSON.stringify({ id: 'resend-msg-1' }) };
+let resendThrows = false;
+window.fetch = async function (url, init) {
+  if (String(url).indexOf('api.resend.com') !== -1) {
+    resendCalls.push({ url, init, body: JSON.parse(init.body), auth: init.headers.Authorization });
+    if (resendThrows) throw new Error('network down');
+    return new Response(resendReply.body, { status: resendReply.status, headers: { 'Content-Type': 'application/json' } });
+  }
+  return realFetch(url, init);
+};
+
+/* ── independent signer (native WebCrypto) ────────────────────────────── */
+async function nativeSign(id, tsSeconds, body) {
+  const key = await crypto.subtle.importKey('raw', SECRET_BYTES, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, TE.encode(id + '.' + tsSeconds + '.' + body));
+  return 'v1,' + b64(new Uint8Array(sig));
+}
+
+let MOD = null;
+function signedRequest(bodyObj, opts) {
+  const o = opts || {};
+  const body = typeof bodyObj === 'string' ? bodyObj : JSON.stringify(bodyObj);
+  const id = o.id || 'msg_test_1';
+  const ts = o.ts !== undefined ? o.ts : Math.floor(Date.now() / 1000);
+  return (async function () {
+    const sig = await nativeSign(id, ts, body);
+    const headers = {
+      'content-type': 'application/json',
+      'webhook-id': id,
+      'webhook-timestamp': String(ts),
+      'webhook-signature': o.signature !== undefined ? o.signature : sig
+    };
+    return new Request('https://example.vercel.app/api/send-code', { method: 'POST', headers, body });
+  })();
+}
+
+const SIGNUP = {
+  user: { id: 'u1', email: 'real.person@example.lk' },
+  email_data: {
+    token: '305805', token_hash: 'abc', redirect_to: 'https://app.example.lk/',
+    email_action_type: 'signup', site_url: 'https://app.example.lk', token_new: '', token_hash_new: ''
+  }
+};
+
+async function run() {
+  /* 0 — import the real handler */
+  const src = await realFetch('/api/send-code.js').then(r => r.text());
+  ok('module source fetched', src.length > 1000, src.length + ' bytes');
+  const shimmed = src.replace("import crypto from 'node:crypto';", 'const crypto = globalThis.__cryptoShim;');
+  ok('node:crypto import replaced for the harness', shimmed !== src);
+  const url = URL.createObjectURL(new Blob([shimmed], { type: 'text/javascript' }));
+  MOD = await import(url);
+  ok('module parses as ESM and exports POST', typeof MOD.POST === 'function');
+  ok('module exports GET', typeof MOD.GET === 'function');
+
+  /* 1 — cross-check the shimmed HMAC against native WebCrypto */
+  const probeMsg = TE.encode('webhook-id.1700000000.{"a":1}');
+  const native = new Uint8Array(await crypto.subtle.sign('HMAC',
+    await crypto.subtle.importKey('raw', SECRET_BYTES, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']), probeMsg));
+  ok('shimmed HMAC == native WebCrypto HMAC', b64(hmacSha256(SECRET_BYTES, probeMsg)) === b64(native));
+
+  /* 2 — happy path: valid signature → 200 + exactly one Resend send */
+  window.process.env.RESEND_API_KEY = 're_test_123';
+  window.process.env.SEND_EMAIL_HOOK_SECRET = HOOK_SECRET;
+  resendCalls = []; resendThrows = false; resendReply = { status: 200, body: '{"id":"resend-msg-1"}' };
+  const r2 = await MOD.POST(await signedRequest(SIGNUP));
+  const j2 = await r2.json();
+  ok('valid signature → 200', r2.status === 200, JSON.stringify(j2));
+  ok('exactly one Resend call', resendCalls.length === 1, resendCalls.length);
+  const sent = resendCalls[0] || { body: {} };
+  ok('delivered to the Supabase-supplied email', sent.body.to && sent.body.to[0] === 'real.person@example.lk', JSON.stringify(sent.body.to));
+  ok('from uses RESEND_FROM', sent.body.from === 'Nexora Engine <no-reply@example.lk>', sent.body.from);
+  ok('authorization uses the bearer key', sent.auth === 'Bearer re_test_123', sent.auth);
+  ok("email carries Supabase's own token", String(sent.body.html).indexOf('305805') !== -1 && String(sent.body.text).indexOf('305805') !== -1);
+  ok('subject is the signup subject', sent.body.subject === 'Your Nexora Engine verification code', sent.body.subject);
+  ok('plain-text part present', typeof sent.body.text === 'string' && sent.body.text.length > 20);
+
+  /* 3 — tampered body with the original signature must be refused */
+  const good = await signedRequest(SIGNUP);
+  const rawGood = await good.text();
+  const tampered = rawGood.replace('305805', '999999');
+  const badReq = new Request('https://x/api/send-code', { method: 'POST', headers: Object.fromEntries(good.headers.entries()), body: tampered });
+  resendCalls = [];
+  const r3 = await MOD.POST(badReq);
+  ok('tampered body → 401', r3.status === 401, r3.status);
+  ok('tampered body sends nothing', resendCalls.length === 0);
+
+  /* 4 — wrong secret */
+  window.process.env.SEND_EMAIL_HOOK_SECRET = 'v1,whsec_' + b64(new Uint8Array(32).fill(7));
+  const r4 = await MOD.POST(await signedRequest(SIGNUP));
+  ok('wrong secret → 401', r4.status === 401, r4.status);
+
+  /* 5 — replayed/stale timestamp */
+  window.process.env.SEND_EMAIL_HOOK_SECRET = HOOK_SECRET;
+  resendCalls = [];
+  const r5 = await MOD.POST(await signedRequest(SIGNUP, { ts: Math.floor(Date.now() / 1000) - 400 }));
+  ok('stale timestamp → 401', r5.status === 401, r5.status);
+  ok('stale timestamp sends nothing', resendCalls.length === 0);
+
+  /* 6 — missing signature headers entirely */
+  const r6 = await MOD.POST(new Request('https://x/api/send-code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(SIGNUP) }));
+  ok('no signature headers → 401', r6.status === 401, r6.status);
+
+  /* 7 — unconfigured secret must never fall back to sending */
+  window.process.env.SEND_EMAIL_HOOK_SECRET = '';
+  resendCalls = [];
+  const r7 = await MOD.POST(await signedRequest(SIGNUP));
+  ok('missing hook secret → 401 (no open relay)', r7.status === 401, r7.status);
+  ok('missing hook secret sends nothing', resendCalls.length === 0);
+
+  /* 8 — email_change uses the counterintuitive token_new field */
+  window.process.env.SEND_EMAIL_HOOK_SECRET = HOOK_SECRET;
+  resendCalls = [];
+  const r8 = await MOD.POST(await signedRequest({
+    user: { email: 'current@example.lk', new_email: 'new@example.lk' },
+    email_data: { token: '111111', token_new: '222222', email_action_type: 'email_change' }
+  }));
+  ok('email_change → 200', r8.status === 200, r8.status);
+  ok('email_change mails token_new', resendCalls.length === 1 && String(resendCalls[0].body.html).indexOf('222222') !== -1);
+
+  /* 9 — non-digits in the token are stripped, never rendered raw */
+  resendCalls = [];
+  await MOD.POST(await signedRequest({ user: { email: 'a@example.lk' }, email_data: { token: '12a4b6', email_action_type: 'recovery' } }));
+  ok('token sanitised to 1246', resendCalls.length === 1 && String(resendCalls[0].body.html).indexOf('1246') !== -1);
+  ok('recovery uses the password subject', resendCalls[0].body.subject === 'Reset your Nexora Engine password');
+
+  /* 10 — a payload with no usable token is acked, not retried */
+  resendCalls = [];
+  const r10 = await MOD.POST(await signedRequest({ user: { email: 'a@example.lk' }, email_data: { token: '', email_action_type: 'signup', redirect_to: '' } }));
+  ok('no token → 200 ack', r10.status === 200, r10.status);
+  ok('no token sends nothing', resendCalls.length === 0);
+
+  /* 11 — provider failures surface as 5xx so Supabase records them */
+  resendReply = { status: 422, body: '{"message":"domain not verified"}' };
+  const r11 = await MOD.POST(await signedRequest(SIGNUP));
+  const j11 = await r11.json();
+  ok('Resend rejection → 502', r11.status === 502, r11.status);
+  ok('provider detail surfaced to the operator', String(JSON.stringify(j11)).indexOf('domain not verified') !== -1);
+  resendThrows = true;
+  const r12 = await MOD.POST(await signedRequest(SIGNUP));
+  ok('Resend unreachable → 502', r12.status === 502, r12.status);
+  resendThrows = false;
+
+  /* 12 — responses never leak the hook secret or the API key */
+  resendReply = { status: 200, body: '{"id":"x"}' };
+  const r13 = await MOD.POST(await signedRequest(SIGNUP));
+  const text13 = await r13.text();
+  ok('response leaks neither secret', text13.indexOf(SECRET_B64) === -1 && text13.indexOf('re_test_123') === -1 && text13.indexOf('whsec_') === -1);
+
+  /* 13 — GET reports configuration without sending */
+  window.process.env.SEND_EMAIL_HOOK_SECRET = '';
+  const g = await MOD.GET();
+  const jg = await g.json();
+  ok('GET → 200', g.status === 200, g.status);
+  ok('GET reports the hook secret as unset', jg.configured.SEND_EMAIL_HOOK_SECRET === false);
+  ok('GET reports the API key as set', jg.configured.RESEND_API_KEY === true);
+  window.process.env.SEND_EMAIL_HOOK_SECRET = HOOK_SECRET;
+  const jg2 = await (await MOD.GET()).json();
+  ok('GET reports the hook secret as set when present', jg2.configured.SEND_EMAIL_HOOK_SECRET === true);
+
+  /* ── report ─────────────────────────────────────────────────────────── */
+  const pass = RESULTS.filter(r => r.pass).length;
+  const lines = RESULTS.map(r => (r.pass ? 'PASS  ' : 'FAIL  ') + r.name + (r.extra ? '   [' + r.extra + ']' : ''));
+  document.getElementById('out').textContent = lines.join('\n') + '\n\n' + pass + '/' + RESULTS.length + ' passed';
+  window.__testResults = { pass, total: RESULTS.length, results: RESULTS };
+}
+run().catch(e => {
+  document.getElementById('out').textContent = 'HARNESS ERROR: ' + (e && e.stack || e);
+  window.__testResults = { pass: 0, total: 0, error: String(e && e.stack || e) };
+});
+</script>
+</body>
+</html>

@@ -21,8 +21,11 @@
     }
     /* 2 ─ page wrappers go transparent so #glow-backdrop glows through; :root keeps the
            gradient as an opaque canvas fallback (the fixed glow div paints above it) */
+    /* --bg-user is written by Appearance → Background colour. It has to be
+       read HERE, because this block owns the canvas with !important and the
+       stylesheet's own `body { background: var(--bg) }` can never win. */
     :root {
-      background: var(--bg-gradient) !important;
+      background: var(--bg-user, var(--bg-gradient)) !important;
       background-attachment: fixed !important;
     }
     :root body,
@@ -85,7 +88,9 @@
       --card-bg: rgba(255, 255, 255, 0.72) !important;
       --card-border: rgba(15, 23, 42, 0.09) !important;
       --card-glow: 0 8px 28px 0 rgba(15, 23, 42, 0.1), inset 0 1px 0 0 rgba(255, 255, 255, 0.7) !important;
-      background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%) !important;
+      /* A background the user chose outranks the built-in light canvas —
+         otherwise the swatches would silently do nothing in light mode. */
+      background: var(--bg-user, radial-gradient(120% 120% at 50% 0%, #ffffff 0%, #eef1fb 55%, #e4e8f6 100%)) !important;
       background-attachment: fixed !important;
     }
     :root[data-theme="light"] body,
@@ -133,10 +138,19 @@
     <button type="button" class="menu-btn" id="menu-btn" aria-label="Open menu"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span>Menu</button>
     <aside class="sidebar" id="sidebar" aria-label="Site navigation">
       <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Close menu"><span class="nav-icon" data-icon="close" aria-hidden="true"></span></button>
-      <button type="button" class="sidebar-brand" id="sidebar-brand" aria-label="Nexora Engine — back to Homepage Dashboard">
-        <span class="brand-mark" id="brand-mark-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M9 14.5 l2.2 2.2 4 -4.4"/></svg></span>
-        <strong>Nexora Engine</strong>
-      </button>
+      <!-- Brand row: the logo + name opens Home, and the rail collapse toggle
+           sits directly beside it. The toggle used to be a labelled "Menu"
+           item at the bottom of the MORE section; that item is gone and this
+           is its only home now. Still a pure UI action — it collapses or
+           expands the sidebar and never navigates. Its id is unchanged, so
+           the existing handler and syncSidebarState() keep working. -->
+      <div class="sidebar-head">
+        <button type="button" class="sidebar-brand" id="sidebar-brand" aria-label="Nexora Engine — back to Homepage Dashboard">
+          <span class="brand-mark" id="brand-mark-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5 h9.5 L20 10 v9.5 h-15 Z"/><path d="M14.5 4.5 V10 H20"/><path d="M9 14.5 l2.2 2.2 4 -4.4"/></svg></span>
+          <strong>Nexora Engine</strong>
+        </button>
+        <button type="button" class="sidebar-toggle" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse the navigation" title="Collapse the navigation"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span></button>
+      </div>
       <nav class="sidebar-nav" id="sidebar-nav">
         <!-- Four independent sections. Each header toggles its own list and
              remembers that choice in localStorage; collapsing only hides
@@ -186,7 +200,6 @@
           <div class="nav-group-items" id="nav-items-more">
             <button type="button" class="sidebar-link" id="sidebar-utilities"><span class="nav-icon" data-icon="tools" aria-hidden="true"></span><span>Other Utilities</span></button>
             <button type="button" class="sidebar-link" id="sidebar-plans"><span class="nav-icon" data-icon="star" aria-hidden="true"></span><span>Premium Plans</span></button>
-            <button type="button" class="sidebar-link" id="sidebar-collapse" aria-controls="sidebar" aria-expanded="true" title="Menu — collapse the navigation" aria-label="Menu — collapse the navigation"><span class="nav-icon" data-icon="menu" aria-hidden="true"></span><span id="sidebar-collapse-label">Menu</span></button>
           </div>
         </section>
 
@@ -201,39 +214,29 @@
             <span class="nav-group-chevron" data-icon="chevron-right" aria-hidden="true"></span>
           </button>
           <div class="nav-group-items" id="nav-items-configuration">
+            <button type="button" class="sidebar-link" id="sidebar-account"><span class="nav-icon" data-icon="user" aria-hidden="true"></span><span>Account Settings</span></button>
             <button type="button" class="sidebar-link" id="sidebar-appearance"><span class="nav-icon" data-icon="palette" aria-hidden="true"></span><span>Appearance Settings</span></button>
           </div>
         </section>
       </nav>
       <div class="sidebar-foot">
-        <button type="button" class="sidebar-link sidebar-link-sm" id="theme-toggle" aria-label="Toggle light or dark theme"><span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Toggle theme</span></button>
+        <button type="button" class="sidebar-link sidebar-link-sm" id="theme-toggle" aria-label="Toggle light or dark theme"><span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Light/Dark</span></button>
         <button type="button" class="sidebar-help-btn" id="sidebar-help" aria-label="Open the How to use guide"><span class="nav-icon" data-icon="help" aria-hidden="true"></span><span>How to use</span></button>
-        <div class="sidebar-profile" id="auth-guest">
-          <div class="user-row">
-            <span class="user-avatar" aria-hidden="true">?</span>
-            <span class="user-meta">
-              <strong>Guest</strong>
-              <small><span class="acct-status acct-status-guest" aria-hidden="true"></span><span id="guest-status">Guest Account (0 Credits)</span></small>
-              <small class="user-storage js-storage-status">Local storage: —</small>
-            </span>
-          </div>
-          <div class="sidebar-auth">
-            <button type="button" class="btn btn-ghost btn-sm" id="login-btn">Login</button>
-            <button type="button" class="btn btn-primary btn-sm" id="signup-btn">Sign up</button>
-          </div>
-        </div>
-        <div class="sidebar-profile" id="user-badge" hidden>
-          <div class="user-row">
-            <span class="user-avatar" id="user-avatar" aria-hidden="true">?</span>
-            <span class="user-meta">
-              <strong id="user-name">—</strong>
-              <small><span class="acct-status" aria-hidden="true"></span><span id="user-status">Logged In (1 Credit Available)</span></small>
-              <small class="user-email" id="user-email">—</small>
-              <small class="user-storage js-storage-status">Local storage: —</small>
-            </span>
-          </div>
-          <button type="button" class="btn btn-ghost btn-sm" id="logout-btn">Log Out</button>
-        </div>
+        <!-- Compact account entry (2026-09-13). This one row replaced the old
+             5-line profile block plus its Login / Sign-up / Log-out buttons.
+             Everything that used to be listed here — email, plan, credits,
+             storage, sync status and the auth actions — now lives on the
+             Account Settings page; this chip is only the way in. Login /
+             Sign-up and Log-out kept their ids because their handlers are
+             bound by id; they simply moved to that page. -->
+        <button type="button" class="sidebar-account" id="account-chip" aria-label="Open Account Settings" title="Account Settings">
+          <span class="user-avatar" id="chip-avatar" aria-hidden="true">?</span>
+          <span class="user-meta">
+            <strong id="chip-name">Guest</strong>
+            <small><span class="acct-status acct-status-guest" id="chip-dot" aria-hidden="true"></span><span id="chip-status">Not signed in</span></small>
+          </span>
+          <span class="nav-icon sidebar-account-chevron" data-icon="chevron-right" aria-hidden="true"></span>
+        </button>
       </div>
     </aside>
     <button type="button" class="sidebar-reopen" id="sidebar-reopen" aria-controls="sidebar" aria-expanded="false" aria-label="Expand the navigation menu" title="Expand menu"><span class="nav-icon" data-icon="chevron-right" aria-hidden="true"></span></button>
@@ -307,21 +310,37 @@
           </div>
           <div class="field">
             <label for="erp-project">Project Name</label>
-            <input type="text" id="erp-project" list="erp-project-list" placeholder="e.g. Wattala Warehouse Fit-out — site / job location" autocomplete="off">
+            <input type="text" id="erp-project" list="erp-project-list" placeholder="e.g. Main Street Warehouse fit-out — site / job location" autocomplete="off">
             <datalist id="erp-project-list"></datalist>
             <div class="erp-client-suggest" id="erp-project-suggestions" hidden role="listbox" aria-label="Clients matching this project"></div>
           </div>
           <div class="field field-wide">
             <label for="erp-address">Client address</label>
-            <input type="text" id="erp-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
+            <input type="text" id="erp-address" placeholder="e.g. 456 Sample Lane, Colombo 03" autocomplete="off">
           </div>
           <div class="field">
             <label for="erp-contact">Contact person</label>
-            <input type="text" id="erp-contact" placeholder="e.g. R. Perera · +94 77 555 1234" autocomplete="off">
+            <input type="text" id="erp-contact" placeholder="e.g. Alex Perera" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-clientphone">Contact number</label>
+            <input type="text" id="erp-clientphone" placeholder="e.g. +94 71 000 0000" autocomplete="off">
+          </div>
+          <!-- Letter templates only: the Quotation's recipient address block
+               prints name / title / company / address, and the Delivery
+               Note's "Institute" is the client name. Ignored by the invoice
+               layout, which has no such rows. -->
+          <div class="field">
+            <label for="erp-recipient-title">Recipient title / position <span class="opt">(letters)</span></label>
+            <input type="text" id="erp-recipient-title" placeholder="e.g. General Manager" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="erp-recipient-company">Recipient company / institute <span class="opt">(letters)</span></label>
+            <input type="text" id="erp-recipient-company" placeholder="e.g. Acme Holdings (Pvt) Ltd" autocomplete="off">
           </div>
           <div class="field">
             <label for="erp-clienttin">Client TIN / Reg no</label>
-            <input type="text" id="erp-clienttin" placeholder="e.g. TIN 123 456 789" autocomplete="off">
+            <input type="text" id="erp-clienttin" placeholder="e.g. TIN 000 000 000" autocomplete="off">
           </div>
           <div class="field">
             <label for="erp-posupply">Place of supply</label>
@@ -337,7 +356,7 @@
           </div>
           <div class="field">
             <label for="erp-shipto">Ship to</label>
-            <input type="text" id="erp-shipto" placeholder="e.g. Site gate 2, Ekala Industrial Zone" autocomplete="off">
+            <input type="text" id="erp-shipto" placeholder="e.g. Site gate 2, Example Industrial Zone" autocomplete="off">
           </div>
           <div class="field">
             <label for="erp-hscode">HS code</label>
@@ -383,6 +402,7 @@
                 <th>#</th>
                 <th>Item Key / SKU</th>
                 <th>Item name &amp; description</th>
+                <th id="erp-model-head">Model No</th>
                 <th>Unit</th>
                 <th>Qty</th>
                 <th id="erp-rate-head">Rate</th>
@@ -402,7 +422,11 @@
       <!-- Totals + terms -->
       <div class="dash-layout">
         <div class="col col-left">
-          <section class="card" aria-labelledby="erp-totals-title">
+          <!-- Discount & Tax is INVOICE-ONLY: hidden entirely for the
+               Quotation / Offer (its letter prints neither) and for the
+               Delivery Note (no money at all). renderErpModeFields toggles
+               this card with the selected Document Mode. -->
+          <section class="card" id="erp-tax-card" aria-labelledby="erp-totals-title">
             <div class="card-head">
               <h2 id="erp-totals-title"><span class="step" aria-hidden="true">4</span> Discount &amp; Tax</h2>
             </div>
@@ -434,11 +458,12 @@
             </div>
             <div class="boq-summary" id="erp-summary"></div>
             <div class="actions actions-col">
-              <button type="button" class="btn btn-primary" id="erp-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export as PDF</button>
+              <button type="button" class="btn btn-primary" id="erp-save"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save to Library</button>
+              <button type="button" class="btn btn-ghost" id="erp-pdf"><span class="nav-icon" data-icon="pdf" aria-hidden="true"></span>Export as PDF</button>
               <button type="button" class="btn btn-ghost" id="erp-export-xlsx"><span class="nav-icon" data-icon="sheet" aria-hidden="true"></span>Export as Excel (.xlsx)</button>
-              <button type="button" class="btn btn-ghost" id="erp-save"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save Draft</button>
               <button type="button" class="btn btn-ghost" id="erp-reset">Reset document</button>
             </div>
+            <p class="hint" id="erp-save-hint">Typing only updates the working draft on this device. Click <strong>Save to Library</strong> to put the document in History &amp; Saved Documents — generating a PDF or Excel file does not create an entry.</p>
             <p class="error" id="erp-error" role="alert" hidden></p>
           </section>
         </div>
@@ -531,11 +556,40 @@
             </div>
             <div class="field">
               <label for="db-client-project">Default Project / Site Name <span class="row-muted">(optional)</span></label>
-              <input type="text" id="db-client-project" placeholder="e.g. Wattala Warehouse Fit-out" autocomplete="off">
+              <input type="text" id="db-client-project" placeholder="e.g. Main Street Warehouse fit-out" autocomplete="off">
             </div>
             <div class="field">
               <label for="db-client-address">Client address</label>
-              <input type="text" id="db-client-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
+              <input type="text" id="db-client-address" placeholder="e.g. 456 Sample Lane, Colombo 03" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-contact">Contact person</label>
+              <input type="text" id="db-client-contact" placeholder="e.g. Alex Perera" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-contactno">Contact number</label>
+              <input type="text" id="db-client-contactno" placeholder="e.g. +94 71 000 0000" autocomplete="off">
+            </div>
+            <div class="row-muted">Contact, TIN, supply and shipping feed the ERP client autofill</div>
+            <div class="field">
+              <label for="db-client-tin">TIN / Reg no</label>
+              <input type="text" id="db-client-tin" placeholder="e.g. TIN 000 000 000" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-posupply">Place of supply</label>
+              <input type="text" id="db-client-posupply" placeholder="e.g. Western Province" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-pono">PO no</label>
+              <input type="text" id="db-client-pono" placeholder="e.g. PO-2026-0451" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-termsdt">Delivery terms</label>
+              <input type="text" id="db-client-termsdt" placeholder="e.g. Delivered to site (DDP)" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="db-client-shipto">Ship to</label>
+              <input type="text" id="db-client-shipto" placeholder="e.g. Site gate 2, Example Industrial Zone" autocomplete="off">
             </div>
             <div class="field">
               <label for="db-client-currency">Default currency for this client's documents</label>
@@ -557,35 +611,6 @@
               <option value="NZD">NZ$ (NZD)</option>
               </select>
             </div>
-            <div class="row-muted">Last 8 fields feed the ERP client autofill</div>
-            <div class="field">
-              <label for="db-client-contact">Contact person</label>
-              <input type="text" id="db-client-contact" placeholder="e.g. R. Perera · +94 77 555 1234" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="db-client-tin">TIN / Reg no</label>
-              <input type="text" id="db-client-tin" placeholder="e.g. TIN 123 456 789" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="db-client-posupply">Place of supply</label>
-              <input type="text" id="db-client-posupply" placeholder="e.g. Western Province" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="db-client-pono">PO no</label>
-              <input type="text" id="db-client-pono" placeholder="e.g. PO-2026-0451" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="db-client-termsdt">Delivery terms</label>
-              <input type="text" id="db-client-termsdt" placeholder="e.g. Delivered to site (DDP)" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="db-client-shipto">Ship to</label>
-              <input type="text" id="db-client-shipto" placeholder="e.g. Site gate 2, Ekala Industrial Zone" autocomplete="off">
-            </div>
-            <div class="field">
-              <label for="db-client-hscode">HS code</label>
-              <input type="text" id="db-client-hscode" placeholder="e.g. 8536.69" autocomplete="off">
-            </div>
             <div class="actions db-form-actions">
               <button type="button" class="btn btn-primary btn-sm" id="db-client-add"><span class="nav-icon" data-icon="save" aria-hidden="true"></span>Save Client</button>
               <button type="button" class="btn btn-ghost btn-sm" id="db-client-cancel" hidden>Cancel edit</button>
@@ -597,7 +622,67 @@
           </section>
         </div>
       </div>
+
+      <!-- Saved Project / Client Header records. Creating one is the ERP's
+           "Save Record" button; this is the full list they were invisible in. -->
+      <section class="card" aria-labelledby="db-records-title">
+        <div class="card-head">
+          <h2 id="db-records-title">Saved Project / Client Records</h2>
+          <span class="pill pill-muted" id="db-records-count">0 records</span>
+        </div>
+        <p class="hint">Reusable Project / Client Header sets saved from the Master ERP Engine with <strong>Save Record</strong>. Loading one restores that document's header, items, discount, VAT and terms.</p>
+        <div class="db-list-head db-grid-records" aria-hidden="true">
+          <span>Record ID</span><span>Client / Project</span><span>Lines</span><span>Saved</span><span></span>
+        </div>
+        <div class="db-list" id="db-record-rows"></div>
+      </section>
     </div><!-- /#db-view -->
+
+    <!-- ══ VIEW: MASTER DATABASE (browse only) ════════════════════
+         The destination for the Home "Master Database" card — a separate,
+         lighter experience than the Item & Client Database above, NOT a
+         shortcut into it. One filtered list, one read-only detail pane; no
+         forms, no edit or delete row actions, no management tables. Both
+         screens read the same store, so they can never disagree. -->
+    <div id="master-data-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="database" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Master Database</h2>
+            <p class="tagline">Browse the items and clients behind your documents. Pick a record to read its full details.</p>
+          </div>
+        </div>
+        <p class="privacy-note">Read-only view · Same data the ERP engine uses</p>
+      </section>
+
+      <div class="md-layout">
+        <section class="card md-pane" aria-labelledby="md-list-title">
+          <div class="card-head">
+            <h2 id="md-list-title">Browse</h2>
+            <button type="button" class="btn btn-ghost btn-sm" id="md-back">&larr; Back to Home</button>
+          </div>
+          <div class="md-tabs" role="tablist" aria-label="What to browse">
+            <button type="button" class="md-tab active" id="md-tab-items" data-md-tab="items" role="tab" aria-selected="true">Items <span class="md-tab-count" id="md-items-count">0</span></button>
+            <button type="button" class="md-tab" id="md-tab-clients" data-md-tab="clients" role="tab" aria-selected="false">Clients <span class="md-tab-count" id="md-clients-count">0</span></button>
+          </div>
+          <input type="text" id="md-search" class="md-search" placeholder="Filter by SKU, name, client or address…" autocomplete="off" aria-label="Filter records">
+          <div class="md-rows" id="md-rows" role="tabpanel" aria-labelledby="md-list-title">
+            <!-- Rendered by renderMasterDataList() -->
+          </div>
+        </section>
+
+        <section class="card md-pane" aria-labelledby="md-detail-title">
+          <div class="card-head">
+            <h2 id="md-detail-title">Details</h2>
+            <span class="pill pill-muted md-kind" id="md-detail-kind">Nothing selected</span>
+          </div>
+          <div class="md-detail" id="md-detail">
+            <!-- Rendered by renderMasterDataDetail() -->
+          </div>
+        </section>
+      </div>
+    </div><!-- /#master-data-view -->
 
     <!-- ══ HOME / DATA-CENTRIC INSIGHTS HUB ═════════════════ -->
     <section id="home-view" aria-label="Nexora Engine — Insights Hub">
@@ -671,6 +756,24 @@
             </div>
           </section>
 
+          <!-- Saved Project / Client Header records (Master ERP "Save Record").
+               Same condensed grammar as the Master Database card above: at most
+               HOME_DB_LIMIT rows, so saving hundreds of records never changes
+               this block's height. "View all" opens the full list. -->
+          <section class="card home-db-card" aria-labelledby="home-rec-title">
+            <div class="card-head home-db-head">
+              <h2 id="home-rec-title">Saved Records</h2>
+              <button type="button" class="home-db-viewall" id="home-records-viewall">View all <span aria-hidden="true">&rarr;</span></button>
+            </div>
+            <div class="home-db-colhead">
+              <span>Recent project / client records</span>
+              <span class="home-db-count" id="home-records-count">0 records</span>
+            </div>
+            <div class="home-db-list" id="home-records-list">
+              <!-- Rendered by renderHomeRecordsPreview() -->
+            </div>
+          </section>
+
           <!-- Visual widgets: Process Map + System Health -->
           <div class="hub-widgets">
             <div class="widget-card">
@@ -689,6 +792,8 @@
                 <div class="health-item"><span>Storage</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-storage">—</strong></div>
                 <div class="health-item"><span>Database</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-db">—</strong></div>
                 <div class="health-item"><span>Documents</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-docs">—</strong></div>
+                <div class="health-item"><span>Cloud sync</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-cloud">—</strong></div>
+                <div class="health-item"><span>Plan</span><div class="health-bar"><div class="health-fill" style="width:0%"></div></div><strong id="hl-plan">—</strong></div>
               </div>
             </div>
           </div>
@@ -738,7 +843,7 @@
             <p class="tagline">Know when a project stops being profitable.</p>
           </div>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -1185,7 +1290,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <section class="card" aria-labelledby="qr-title">
@@ -1269,7 +1374,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <!-- 1 · Quotation details -->
@@ -1282,7 +1387,7 @@
           <div class="field-grid">
             <div class="field">
               <label for="bq-client">Client name</label>
-              <input type="text" id="bq-client" placeholder="e.g. R. Perera" autocomplete="off">
+              <input type="text" id="bq-client" placeholder="e.g. Alex Perera" autocomplete="off">
             </div>
             <div class="field">
               <label for="bq-designation">Designation <span class="opt">(optional)</span></label>
@@ -1294,7 +1399,7 @@
             </div>
             <div class="field">
               <label for="bq-address">Address <span class="opt">(optional)</span></label>
-              <input type="text" id="bq-address" placeholder="e.g. 42 Galle Road, Colombo 03" autocomplete="off">
+              <input type="text" id="bq-address" placeholder="e.g. 456 Sample Lane, Colombo 03" autocomplete="off">
             </div>
             <div class="field">
               <label for="bq-date">Date</label>
@@ -1302,7 +1407,7 @@
             </div>
             <div class="field">
               <label for="bq-ref">Quotation ref number</label>
-              <input type="text" id="bq-ref" placeholder="e.g. MES/QTN/2026/001" autocomplete="off">
+              <input type="text" id="bq-ref" placeholder="e.g. ACM/QTN/2026/001" autocomplete="off">
             </div>
           </div>
         </form>
@@ -1412,7 +1517,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -1520,7 +1625,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -1641,7 +1746,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -1732,7 +1837,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -1846,7 +1951,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -1963,7 +2068,7 @@
             <p class="tagline">Know the average you need in your remaining credits — and the score each assignment must carry.</p>
           </div>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -2073,7 +2178,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -2185,7 +2290,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -2273,7 +2378,7 @@
             <p class="tagline">Quotes, invoices, delivery notes and calculation snapshots — reload or re-download any of them.</p>
           </div>
         </div>
-        <p class="privacy-note">Saved locally · Never uploaded</p>
+        <p class="privacy-note">Synced to your account · Reload or re-download from any device</p>
       </section>
       <section class="card">
         <div class="card-head">
@@ -2303,7 +2408,7 @@
           <h2 id="brand-title"><span class="step" aria-hidden="true">1</span> Company Brand (letterhead)</h2>
           <span class="pill pill-muted" id="brand-status">Saved locally</span>
         </div>
-        <p class="hint">These details top every document the ERP engine generates. They also pre-fill the standalone Quotation and Invoice builders.</p>
+        <p class="hint">These details top every document the ERP engine generates. They also pre-fill the standalone Quotation and Invoice builders. Typing only changes this form — nothing is stored until you press <strong>Save brand details</strong>, and anything unsaved is discarded when you leave the page.</p>
         <div class="brand-grid">
           <div class="brand-logo-box">
             <div class="brand-logo-preview" id="brand-logo-preview">
@@ -2319,11 +2424,11 @@
             <div class="form-grid">
               <div class="field">
                 <label for="brand-name">Company name</label>
-                <input type="text" id="brand-name" placeholder="e.g. METRIX" autocomplete="off">
+                <input type="text" id="brand-name" placeholder="e.g. Acme Engineering" autocomplete="off">
               </div>
               <div class="field">
                 <label for="brand-legal">Legal entity name (documents)</label>
-                <input type="text" id="brand-legal" placeholder="e.g. METRIX ENGINEERING SERVICES (PVT) LTD" autocomplete="off">
+                <input type="text" id="brand-legal" placeholder="e.g. Acme Engineering (Pvt) Ltd" autocomplete="off">
               </div>
               <div class="field">
                 <label for="brand-tag">Tagline / sector</label>
@@ -2331,31 +2436,31 @@
               </div>
               <div class="field field-wide">
                 <label for="brand-address">Business address</label>
-                <input type="text" id="brand-address" placeholder="e.g. 123 Main Street, Colombo 05, Sri Lanka" autocomplete="off">
+                <input type="text" id="brand-address" placeholder="e.g. 123 Example Road, Colombo 05, Sri Lanka" autocomplete="off">
               </div>
               <div class="field field-wide">
                 <label for="brand-contact">Contact (phone / email)</label>
-                <input type="text" id="brand-contact" placeholder="e.g. +94 77 123 4567 · hello@company.lk" autocomplete="off">
+                <input type="text" id="brand-contact" placeholder="e.g. +94 71 000 0000 · hello@example.lk" autocomplete="off">
               </div>
               <div class="field">
                 <label for="brand-phone">Phone (letterhead)</label>
-                <input type="text" id="brand-phone" placeholder="e.g. +94 11 234 5678" autocomplete="off">
+                <input type="text" id="brand-phone" placeholder="e.g. +94 11 000 0000" autocomplete="off">
               </div>
               <div class="field">
                 <label for="brand-email">Email (letterhead)</label>
-                <input type="text" id="brand-email" placeholder="e.g. info@company.lk" autocomplete="off">
+                <input type="text" id="brand-email" placeholder="e.g. hello@example.lk" autocomplete="off">
               </div>
               <div class="field">
                 <label for="brand-website">Website</label>
-                <input type="text" id="brand-website" placeholder="e.g. www.company.lk" autocomplete="off">
+                <input type="text" id="brand-website" placeholder="e.g. www.example.lk" autocomplete="off">
               </div>
               <div class="field">
                 <label for="brand-tin">Supplier TIN / VAT Reg No</label>
-                <input type="text" id="brand-tin" placeholder="e.g. TIN 114 567 890" autocomplete="off">
+                <input type="text" id="brand-tin" placeholder="e.g. TIN 000 000 000" autocomplete="off">
               </div>
               <div class="field field-wide">
                 <label for="brand-spec">Specialization tagline</label>
-                <input type="text" id="brand-spec" placeholder="e.g. Specialized in Construction, Designing, Supplying, Installation &amp; Maintenance of Life &amp; Life Safety Systems" autocomplete="off">
+                <input type="text" id="brand-spec" placeholder="e.g. Specialized in design, supply, installation &amp; maintenance of building services" autocomplete="off">
               </div>
               <div class="field field-wide">
                 <label for="brand-terms">Default terms &amp; conditions (used on every PDF)</label>
@@ -2363,6 +2468,7 @@
               </div>
             </div>
             <div class="actions">
+              <button type="button" class="btn btn-primary" id="brand-save" disabled>Save brand details</button>
               <button type="button" class="btn btn-ghost" id="brand-reset">Reset brand data</button>
             </div>
           </div>
@@ -2371,9 +2477,10 @@
       <section class="card" aria-labelledby="brand-bank-title">
         <div class="card-head">
           <h2 id="brand-bank-title"><span class="step" aria-hidden="true">2</span> Bank &amp; Beneficiary (invoice footer)</h2>
+          <span class="pill pill-muted" id="bank-status">Saved locally</span>
           <span class="pill pill-muted">Optional</span>
         </div>
-        <p class="hint">Shown in the bottom-left block of ERP invoices, pro-formas and quotations — the formal Beneficiary Details box. Leave blank to keep per-document hand-typed bank fields.</p>
+        <p class="hint">Shown in the bottom-left block of ERP invoices, pro-formas and quotations — the formal Beneficiary Details box. Leave blank to keep per-document hand-typed bank fields. This section saves and resets on its own, independently of the letterhead above.</p>
         <div class="form-grid">
           <div class="field field-wide">
             <label for="brand-payterms">Payment terms</label>
@@ -2381,28 +2488,32 @@
           </div>
           <div class="field">
             <label for="brand-beneficiary">Beneficiary name</label>
-            <input type="text" id="brand-beneficiary" placeholder="e.g. Metrix Engineering Services (Pvt) Ltd" autocomplete="off">
+            <input type="text" id="brand-beneficiary" placeholder="e.g. Acme Engineering (Pvt) Ltd" autocomplete="off">
           </div>
           <div class="field">
             <label for="brand-bankbranch">Bank &amp; branch</label>
-            <input type="text" id="brand-bankbranch" placeholder="e.g. Commercial Bank — Ekala Branch" autocomplete="off">
+            <input type="text" id="brand-bankbranch" placeholder="e.g. Example Bank — Main Street Branch" autocomplete="off">
           </div>
           <div class="field">
             <label for="brand-swift">SWIFT code</label>
-            <input type="text" id="brand-swift" placeholder="e.g. CCEYLKLX" autocomplete="off">
+            <input type="text" id="brand-swift" placeholder="e.g. EXAMPLKA" autocomplete="off">
           </div>
           <div class="field">
             <label for="brand-branchcode">Branch code</label>
-            <input type="text" id="brand-branchcode" placeholder="e.g. 7056" autocomplete="off">
+            <input type="text" id="brand-branchcode" placeholder="e.g. 0001" autocomplete="off">
           </div>
           <div class="field">
             <label for="brand-accountno">Account number</label>
-            <input type="text" id="brand-accountno" placeholder="e.g. 8001234567" autocomplete="off">
+            <input type="text" id="brand-accountno" placeholder="e.g. 0001234567" autocomplete="off">
           </div>
           <div class="field">
             <label for="brand-accountcur">Account currency</label>
             <input type="text" id="brand-accountcur" placeholder="e.g. LKR / USD" autocomplete="off">
           </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="bank-save" disabled>Save bank details</button>
+          <button type="button" class="btn btn-ghost" id="bank-reset">Reset bank details</button>
         </div>
       </section>
       <section class="card">
@@ -2483,6 +2594,94 @@
       </section>
     </div><!-- /#appearance-view -->
 
+    <!-- ══ VIEW: ACCOUNT SETTINGS ═══════════════════════════════
+         Everything that used to crowd the sidebar footer. Three cards, and
+         only the ones that apply are shown: guests get the sign-in card,
+         signed-in accounts get the profile and account cards. -->
+    <div id="account-view" hidden>
+      <section class="tool-banner card">
+        <div class="tool-banner-inner">
+          <span class="tool-badge" data-icon="user" aria-hidden="true"></span>
+          <div>
+            <h2 class="tool-name">Account Settings</h2>
+            <p class="tagline">Your profile, plan and cloud sync — everything about the account you are signed in with.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Guests: the only place Login / Sign up now lives -->
+      <section class="card" id="acct-guest" hidden>
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">1</span> You are browsing as a guest</h2>
+          <span class="pill pill-muted" id="acct-guest-pill">Guest</span>
+        </div>
+        <p class="hint">Sign in to sync your brand details, items, clients and documents to your account, and to unlock tool usage. As a guest you can look around, but nothing can be saved or run.</p>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost" id="login-btn">Login</button>
+          <button type="button" class="btn btn-primary" id="signup-btn">Sign up</button>
+        </div>
+      </section>
+
+      <!-- Signed in: profile -->
+      <section class="card" id="acct-user" hidden>
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">1</span> Profile</h2>
+        </div>
+        <p class="hint">Your display name is stored on your account, so it follows you to every device. A profile picture is kept in <strong>this browser only</strong>.</p>
+        <div class="acct-profile">
+          <div class="acct-avatar-col">
+            <div class="acct-avatar" id="acct-avatar">
+              <img id="acct-avatar-img" alt="Profile picture" hidden>
+              <span id="acct-avatar-initial">?</span>
+            </div>
+            <div class="actions actions-col">
+              <label class="btn btn-ghost btn-sm file-label" for="acct-avatar-input"><span class="nav-icon" data-icon="image" aria-hidden="true"></span>Upload picture</label>
+              <input type="file" id="acct-avatar-input" accept="image/*" hidden>
+              <button type="button" class="btn btn-ghost btn-sm" id="acct-avatar-remove" hidden>Remove picture</button>
+            </div>
+          </div>
+          <div class="acct-fields">
+            <div class="form-grid">
+              <div class="field">
+                <label for="acct-name">Display name</label>
+                <input type="text" id="acct-name" placeholder="e.g. Alex Perera" autocomplete="name" maxlength="80">
+              </div>
+              <div class="field">
+                <label for="acct-email">Email address</label>
+                <input type="email" id="acct-email" readonly aria-describedby="acct-email-note">
+              </div>
+              <div class="field field-wide">
+                <small class="hint" id="acct-email-note">Read-only: changing it needs an email re-confirmation, which is not wired up yet.</small>
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" class="btn btn-primary" id="acct-name-save">Save profile</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Signed in: account, plan and sync -->
+      <section class="card" id="acct-meta-card" hidden>
+        <div class="card-head">
+          <h2><span class="step" aria-hidden="true">2</span> Account, plan &amp; sync</h2>
+          <span class="pill pill-muted" id="acct-plan-pill">—</span>
+        </div>
+        <div class="acct-rows">
+          <div class="acct-row"><span>Email</span><strong id="acct-row-email">—</strong></div>
+          <div class="acct-row"><span>Account created</span><strong id="acct-row-created">—</strong></div>
+          <div class="acct-row"><span>Plan</span><strong id="acct-row-plan">—</strong></div>
+          <div class="acct-row"><span>Credits</span><strong id="acct-row-credits">—</strong></div>
+          <div class="acct-row"><span>Cloud sync</span><strong class="js-cloud-status" title="Cloud sync status">Cloud: —</strong></div>
+          <div class="acct-row"><span>Local cache</span><strong class="js-storage-status">Local storage: —</strong></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost" id="acct-change-plan">Change plan</button>
+          <button type="button" class="btn btn-ghost btn-danger" id="logout-btn">Log Out</button>
+        </div>
+      </section>
+    </div><!-- /#account-view -->
+
     <!-- ══ VIEW: DATA BACKUP & RESTORE ═════════════════════════ -->
     <div id="backup-view" hidden>
       <section class="tool-banner card">
@@ -2523,7 +2722,7 @@
           <span class="tool-badge" data-icon="star" aria-hidden="true"></span>
           <div>
             <h2 class="tool-name">Premium Plans</h2>
-            <p class="tagline">Lift the 1-credit ceiling and unlock every calculator, document export and database slot at one flat price.</p>
+            <p class="tagline">Lift the one-free-use-per-tool limit and unlock every calculator, document export and database slot at one flat price.</p>
           </div>
         </div>
       </section>
@@ -2565,7 +2764,10 @@
         </section>
       </div>
 
-      <p class="hint">Checkout is not wired up in this build — the buttons record the plan you picked and confirm it on screen only.</p>
+      <p class="hint" id="plan-state-note">Free tier: every tool includes one free execution. Premium lifts the limit on all of them at once. Checkout is not wired up in this build — subscribing activates the entitlement on this account directly.</p>
+      <div class="actions" style="justify-content:center;">
+        <button type="button" class="btn btn-ghost btn-sm" id="plan-free-cta">Return to Free plan</button>
+      </div>
     </div><!-- /#plans-section -->
 
     <!-- ══ TOOL: SMART INVOICE & DOCUMENT BUILDER ═══════════ -->
@@ -2597,7 +2799,7 @@
             </select>
           </label>
         </div>
-        <p class="privacy-note">Private · No account · No tracking · Data stays in your browser</p>
+        <p class="privacy-note">Synced to your account · Visible only to you</p>
       </section>
 
       <div class="dash-layout">
@@ -2629,15 +2831,15 @@
             <div class="field-grid">
               <div class="field field-wide">
                 <label for="inv-co-name">Company name</label>
-                <input type="text" id="inv-co-name" placeholder="e.g. Metrix Engineering Services" autocomplete="off">
+                <input type="text" id="inv-co-name" placeholder="e.g. Acme Engineering" autocomplete="off">
               </div>
               <div class="field field-wide">
                 <label for="inv-co-address">Address</label>
-                <input type="text" id="inv-co-address" placeholder="e.g. No. 12, Industrial Estate Rd, Colombo 04" autocomplete="off">
+                <input type="text" id="inv-co-address" placeholder="e.g. 12 Example Estate Road, Colombo 04" autocomplete="off">
               </div>
               <div class="field field-wide">
                 <label for="inv-co-contact">Contact</label>
-                <input type="text" id="inv-co-contact" placeholder="e.g. +94 77 123 4567 · metrix@email.com" autocomplete="off">
+                <input type="text" id="inv-co-contact" placeholder="e.g. +94 71 000 0000 · hello@example.lk" autocomplete="off">
               </div>
               <div class="field field-wide">
                 <label for="inv-co-logo">Logo <span class="opt">(optional)</span></label>
@@ -2737,7 +2939,7 @@
           <button type="button" class="footer-link" data-legal="privacy">Privacy Policy</button>
         </div>
       </div>
-      <p class="footer-copy">© 2026 Nexora Engine. All tools run locally in your browser — no accounts, no tracking.</p>
+      <p class="footer-copy">© 2026 Nexora Engine. Your data is synced securely to your account and readable only by you. Tools keep a local cache so they still work offline.</p>
     </div>
   </footer>
 
@@ -2760,11 +2962,11 @@
           </div>
           <div class="auth-field">
             <label for="auth-email">Email</label>
-            <input type="email" id="auth-email" autocomplete="email" placeholder="you@company.com">
+            <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com">
           </div>
           <div class="auth-field">
             <label for="auth-pass">Password</label>
-            <input type="password" id="auth-pass" autocomplete="current-password" placeholder="Minimum 6 characters">
+            <input type="password" id="auth-pass" autocomplete="current-password" placeholder="Minimum 6 characters" minlength="6">
           </div>
           <p class="auth-error" id="auth-error" hidden></p>
           <button type="submit" class="btn btn-primary auth-submit" id="auth-submit">Login</button>
@@ -2773,12 +2975,12 @@
 
       <!-- Step 2 of Sign Up: Email OTP verification -->
       <form id="otp-form" novalidate hidden>
-        <p class="otp-sub">We sent a 6-digit verification code to <strong id="otp-email">you@company.com</strong>.</p>
+        <p class="otp-sub">We sent a 6-digit verification code to <strong id="otp-email">you@example.com</strong>.</p>
         <div class="auth-field">
           <label for="otp-code">6-digit verification code</label>
           <input type="text" id="otp-code" class="otp-input" inputmode="numeric" autocomplete="one-time-code"
                  maxlength="6" placeholder="••••••" aria-describedby="otp-help otp-timer">
-          <p class="otp-help" id="otp-help">Check your inbox (or dev console during local testing) for your 6-digit verification code.</p>
+          <p class="otp-help" id="otp-help">Enter the 6-digit code we just emailed you. If it has not arrived in a minute, check your spam folder or click Resend Code.</p>
         </div>
         <p class="otp-timer timer-live" id="otp-timer">Code expires in: 02:00</p>
         <p class="auth-error" id="otp-error" hidden></p>
@@ -2786,7 +2988,7 @@
         <button type="button" class="btn btn-ghost auth-submit otp-resend" id="otp-resend">Resend Code</button>
       </form>
 
-      <p class="auth-note">Accounts are stored locally in this browser only — each account keeps its own projects, documents, and database.</p>
+      <p class="auth-note">Accounts are verified by email and protected by database row-level security. Your projects, documents and databases sync to your account and are visible only to you.</p>
     </div>
   </div>
 
@@ -2801,6 +3003,7 @@
       <div class="actions gate-actions">
         <button type="button" class="btn btn-ghost" id="gate-login">Login</button>
         <button type="button" class="btn btn-primary" id="gate-signup">Sign Up</button>
+        <button type="button" class="btn btn-primary" id="gate-upgrade" hidden>View Premium Plans</button>
       </div>
     </div>
   </div>
@@ -2935,6 +3138,9 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Supabase (auth + cloud storage). Cloud layer first, then the app. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/calculations.js"></script>
   <script src="js/app.js"></script><!-- app.js r7: client/project field standardization -->
 </body>

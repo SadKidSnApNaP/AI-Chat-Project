@@ -1,8 +1,10 @@
 # Nexora Engine (formerly CalcMall) — Business Intelligence & ERP — preview & run notes
 
-Static, dependency-free web app: `index.html` + `css/style.css` +
+Static web app: `index.html` + `css/style.css` + `js/cloud.js` +
 `js/calculations.js` + `js/app.js`. No package.json, no build step, no server
-software included. In a normal browser, just double-click `index.html`
+software included. `js/cloud.js` (added 2026-09-13) needs the Supabase SDK,
+loaded from a CDN tag in `index.html` just before it — see "Cloud backend
+(Supabase)" below. In a normal browser, just double-click `index.html`
 (`file://` works; data lives in `localStorage`). Renamed to "Nexora Engine"
 2026-09-10 (user-visible strings only — `calcmall_*` localStorage keys kept
 for data compatibility).
@@ -254,6 +256,232 @@ First preview load shows the "How to use" onboarding modal automatically
 (`hasSeenOnboarding` is empty in the preview's fresh localStorage); Skip / X /
 Get Started all dismiss it for the session. The permanent "❓ How to use"
 button at the bottom of the sidebar re-opens it anytime.
+
+## Verification email delivery via Resend (2026-09-13, supersedes the simulated-OTP notes above)
+
+Everything in the section above about a locally simulated PIN is **obsolete**.
+Auth is real Supabase now: `signUp()` mints and emails the code, `verifyOtp()`
+(with `type: 'signup'`) validates it, and the session — not a flag — is what
+`isLoggedIn()` reads. `window.currentSignupOTP`, `sendVerificationEmail`,
+`hashPass`, the local `users` store and `#otp-mail-toast` no longer exist; do
+not reintroduce them. The countdown, `#otp-help`, `resendOtp()`, the
+digits-only `#otp-code` filter and `resetAuthFlow()` all still work as
+described.
+
+### Why delivery moved off Supabase's mailer
+
+Supabase's built-in email provider is capped at **2 emails/hour per project**
+(`supabase.com/docs/guides/auth/rate-limits`), which rejected the first real
+signups with "email rate limit exceeded". The supported fix is the **Send Email
+hook**: Supabase keeps minting and verifying the code, but hands *delivery* to
+us, and the limit becomes configurable instead of fixed at 2/hour.
+
+```
+browser → supabase.auth.signUp()      ← Supabase creates the user
+              ↓
+Supabase Auth → POST /api/send-code   ← signed webhook (api/send-code.js)
+              ↓
+Resend API → the user's inbox
+browser → supabase.auth.verifyOtp()   ← unchanged; Supabase checks the code
+```
+
+So nothing changed in `js/app.js` or `js/cloud.js` — only *who sends the mail*.
+The endpoint is a transport, never an authority: it can only relay a code
+Supabase already generated, and it stores nothing.
+
+### `api/send-code.js`
+
+Exports `POST` and `GET` as Web-standard handlers (`export async function
+POST(request)`) so the **raw** body can be read with `request.text()`. This is
+load-bearing: Vercel's Node runtime pre-parses a JSON body for a classic
+`(req, res)` handler, which would destroy the exact bytes the HMAC covers and
+make every signature fail. Both handler forms are documented for `/api/*.js`
+in Vercel's Functions API Reference.
+
+Signature check is standard-webhooks (Svix-compatible), verified against the
+reference implementation rather than assumed: signing input is
+`<webhook-id>.<integer seconds>.<raw body>`, key is the **base64-decoded**
+secret with the `v1,` and `whsec_` prefixes stripped, output is base64
+HMAC-SHA256 compared in constant time. Only `v1,`-prefixed candidates are
+considered, the timestamp must be within ±300s, and **there is no unverified
+fallback** — an unset or wrong secret returns 401 and sends nothing, so the URL
+cannot be abused as an open mail relay.
+
+`email_action_type` selects the copy and the subject for signup /
+reauthentication / recovery / invite / magiclink / email_change. For
+`email_change` the counterintuitive field mapping is explicit (`token_new`,
+because Supabase names the pair backwards). Non-digits are stripped from the
+code before it is rendered.
+
+### Operator setup (required — the endpoint refuses to send without it)
+
+1. **Supabase → Authentication → Hooks → Send Email**, type **HTTPS**, URL
+   `https://<production-domain>/api/send-code`, and generate the secret
+   (`v1,whsec_…`). With the Email provider enabled *and* the hook enabled, the
+   hook owns sending and SMTP is not used at all.
+2. **Vercel → Settings → Environment Variables**: `SEND_EMAIL_HOOK_SECRET`
+   (that `v1,whsec_…` value) and `RESEND_API_KEY`. Optional `RESEND_FROM`.
+3. **Raise the limit**: Authentication → Rate Limits → "Emails sent per hour" —
+   with a custom sender/hook this is configurable, but the value may still sit
+   at 2 until it is changed.
+4. **Verify a sending domain in Resend.** `onboarding@resend.dev` is Resend's
+   sandbox sender and can only mail the Resend account owner, so `RESEND_FROM`
+   must become a verified-domain address before real users can receive codes.
+
+A browser hitting `/api/send-code` gets a JSON self-report (which env vars are
+configured, and the active `from`) — that is the quickest post-deploy check.
+
+### Test harness
+
+`.freebuff/send-code-test.html` (open via the preview server) imports the REAL
+`api/send-code.js` with `crypto`, `process` and `fetch` shimmed, and signs the
+request independently with native WebCrypto HMAC. 35/35 assertions cover:
+the shimmed HMAC matching WebCrypto byte-for-byte, a valid signup payload
+producing exactly one Resend send carrying Supabase's own token, tampered body
+/ wrong secret / stale timestamp / missing headers / unset secret all refused
+with no send, the `email_change` token mapping, code sanitisation, provider
+failures surfacing as 502, no secret leaking into any response, and `GET`
+reporting configuration. The real file parses as ESM and exports both handlers.
+
+Note the hook owns **every** auth email, so subjects and branding now come from
+`ACTIONS` in the endpoint, not from Supabase's email templates. `resetPassword`
+in `js/cloud.js` is currently unreferenced — there is no password-reset UI yet;
+when one is added the hook already delivers that code (`email_action_type:
+'recovery'`, `token` is the 6-digit OTP for `verifyOtp({type:'recovery'})`).
+
+## Sidebar collapse toggle moved beside the brand (2026-09-13)
+
+The rail collapse control used to be the last item of the **MORE** section,
+rendered as a labelled `Menu` sidebar-link (`#sidebar-collapse-label`). It is
+now the conventional icon button in a header row next to the Nexora Engine
+logo:
+
+```html
+<div class="sidebar-head">
+  <button class="sidebar-brand" id="sidebar-brand">…logo + name…</button>
+  <button class="sidebar-toggle" id="sidebar-collapse" …>hamburger</button>
+</div>
+```
+
+- **Id unchanged** (`#sidebar-collapse`), so the handler in `wireEvents()` and
+  `syncSidebarState()` were not touched. The old label span is gone.
+- `.sidebar-toggle` was already declared but **unused** CSS; it was restyled
+  into the 34x34 icon button rather than adding a parallel class. `.sidebar-head`
+  took over `.sidebar-brand`'s `flex: 0 0 auto` (the brand is now the flex
+  child that grows, with `min-width: 0` so a long name truncates instead of
+  pushing the button out of the rail).
+- **MORE now holds exactly Other Utilities and Premium Plans.**
+- Icon-only means the accessible name carries the action: `syncSidebarState()`
+  now sets "Collapse the navigation" / "Expand the navigation" (and "Close the
+  navigation" on the mobile drawer) instead of the old `Menu — …` wording,
+  which only existed because the visible label was the word "Menu".
+- Still a pure UI action: it never navigates, in either layout.
+
+### Verifying it (desktop behaviour needs a wide viewport)
+
+The preview viewport is ~645px, where the sidebar is an off-canvas drawer and
+BOTH the collapse transform and the reopen handle live inside
+`@media (min-width: 1025px)`. `.freebuff/sidebar-toggle-test.html` therefore
+loads `preview.html` in a **1280px iframe** (same-origin, so its DOM can be
+driven directly) and asserts **32/32**: the toggle is the brand's next sibling
+inside `.sidebar-head`, 4px to its right (`brand.right=215`, `toggle.left=219`),
+vertically centred to 0.00px, inside the rail (right edge 253 of 270) and above
+`#sidebar-nav`; MORE holds exactly the two items; clicking leaves the hash alone
+while the rail moves to `translateX(-270px)` with `opacity: 0` and
+`pointer-events: none`; the reopen handle appears at `left: 0` and restores it;
+and the label flips Collapse/Expand.
+
+At the real 645px width the same button closes the open drawer, does not set
+`sidebar-collapsed` (a desktop-only flag) and does not navigate — verified
+separately in the live preview.
+
+Two assertion bugs worth remembering: the collapse is a 0.34s transition, so a
+synchronous `getComputedStyle` read sees the *start* state (identity matrix);
+and `position: fixed` blockifies a declared `inline-flex`, so the reopen
+handle's computed `display` is `flex`, not `inline-flex`.
+
+## Account Settings page + compact sidebar footer (2026-09-13)
+
+The sidebar footer used to hold a 5-line profile block (Guest / status /
+`Local storage: …` / `Cloud: …`) plus Login and Sign-up buttons — 235px in
+total, the tallest thing in the rail. It is now ONE row: a chip with the
+avatar, the display name and the plan, which opens the new
+**Account Settings** page. Everything that was listed there moved onto that
+page, so nothing was lost.
+
+```
+.sidebar-foot  before 235px   after 155px   (-34%)
+account block  before 119px   after  43px   (-64%)
+footer buttons before 3       after  0
+```
+
+### Where things live now
+
+- View id `#account-view`, route `#/account`, registered in `VIEW_NAMES` and
+  toggled in `showView()` (which repaints it on entry, alongside
+  `renderStorageStatus()` / `renderCloudStatus()`).
+- Sidebar entry **Account Settings** sits under **CONFIGURATION**, directly
+  above Appearance Settings (`#sidebar-account`). `navIds` maps
+  `'sidebar-account' → ['account']` for the active pill.
+- The chip is `#account-chip` (`chip-avatar` / `chip-name` / `chip-status` /
+  `chip-dot`). Both the chip and the sidebar link call `showView('account')`.
+- Three cards, and only the applicable ones show: `#acct-guest` for visitors,
+  `#acct-user` (profile) and `#acct-meta-card` (account · plan · sync) for
+  signed-in accounts.
+- **Login / Sign-up / Log-out kept their ids** (`#login-btn`, `#signup-btn`,
+  `#logout-btn`) — `initAuthUi()` binds them by id, so they simply moved into
+  the page with no rebinding. Do not rename them.
+- The old `#auth-guest` / `#user-badge` / `#guest-status` / `#user-status` /
+  `#user-name` / `#user-email` / `#user-avatar` ids and the `.sidebar-profile`
+  CSS block are gone. `renderAuthUi()` is now the single painter for the chip,
+  the page and (via `renderPlanHealth`) the Home health row, all fed by
+  `planState()`.
+
+### Profile
+
+- **Display name** → Supabase `user_metadata.full_name` via
+  `NexoraCloud.auth.updateProfile({ fullName })` (`client.auth.updateUser`). It
+  is server-side, so it follows the account to any device; supabase-js writes
+  the updated user back into the stored session, which is why `currentUser()`
+  picks it up without a reload.
+- **Profile picture** → a data URL under `nexora_avatar_v1` in the per-user
+  shim, so it is per account but **per browser** — deliberately not
+  `user_metadata`, because that is carried in the JWT and anything multi-KB
+  there breaks request headers. Files are refused unless they are images under
+  8 MB, then downscaled to 256px on a canvas (PNG while it stays under ~60KB,
+  otherwise JPEG 0.85) so a camera photo cannot blow the quota.
+- **Email is read-only** (`#acct-email`): changing an address needs a
+  re-confirmation round-trip that is not wired up.
+- Account created date comes from `NexoraCloud.sessionCreatedAt()`
+  (`user.created_at`, formatted with `toLocaleDateString`).
+
+### Verifying the signed-in path without a real login
+
+`.freebuff/account-test-stub.html` + `.freebuff/make-account-test.ps1` inject a
+fake session and stubbed auth responses immediately before the inline app.js
+block of `preview.html`, producing `.freebuff/account-test.html`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build-preview.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .freebuff/make-account-test.ps1
+# → open /.freebuff/account-test.html
+```
+
+The stub must be injected *before* app.js because `SESSION_EMAIL` is captured
+once at module evaluation — seeding a session and only changing the hash does
+nothing (a hash-only navigation never re-evaluates the page). Keep
+`make-account-test.ps1` pure ASCII: Windows PowerShell reads `.ps1` as ANSI
+without a BOM, so a non-ASCII literal becomes mojibake and every `IndexOf` on
+it fails silently. The generated `account-test.html` is not kept (it is a
+~870KB duplicate of the bundle) — regenerate it when needed.
+
+Verified that way: the chip and page render the signed-in state; saving the
+name issues `PUT /auth/v1/user {data:{full_name}}` and the chip updates with no
+reload; the picture round-trips and downscales to 256x171 from 1200x800; a
+Premium subscription turns the pill into `Premium — Unlimited Credits` with
+`Unlimited Credits` in the credits row and hides *Change plan*; Remove picture
+routes through the shared confirm dialog; and Log out confirms, clears the
+session and boots as a guest.
 
 ## How to reproduce the preview artifact
 
@@ -1584,3 +1812,497 @@ document, not a database record.
 - `index.html` — canonical app the user opens/distributes.
 - `preview.html` — generated single-file copy ONLY for the Preview tab.
   Do not edit by hand; edit the sources and regenerate (above).
+
+## Cloud backend (Supabase) — 2026-09-13
+
+**Preview-visible right now:** the app boots, renders and authenticates against
+the real project. Verified in the registered preview: `POST
+https://oknfjbwfvhctpohusnfk.supabase.co/auth/v1/token?grant_type=password`
+returns 400 for a fake account and the modal shows the mapped message
+("Incorrect email or password…"), then re-enables the submit button.
+
+### Pieces and where each lives
+
+| piece | file | state |
+|---|---|---|
+| 5 tables + RLS + `updated_at` triggers | `supabase/schema.sql` | written, **NOT YET RUN** |
+| Supabase client, real auth, sync engine, offline queue, status events | `js/cloud.js` | complete |
+| SDK + cloud script tags, copy, health row, sidebar Cloud line | `index.html` | complete |
+| real signup/OTP/login/logout, session-derived gate, per-user credits, shim hook | `js/app.js` | complete |
+| `NexoraCloud.configure()` + `bootstrap()` in the boot block, `renderCloudStatus()` | `js/app.js` | **STILL MISSING** |
+
+Because the two boot calls above are not wired yet, the app currently runs
+**local-cache-only**: auth is real, but no pull/push happens. That is the one
+outstanding code step.
+
+### Required dashboard steps (they are NOT optional)
+
+1. **Run `supabase/schema.sql`** in the SQL editor. As of this note the tables
+do not exist — probing them returns `404 PGRST205 "Could not find the table
+'public.<name>' in the schema cache"`. The app treats that condition as
+`status: 'setup'` with the message "Cloud tables are missing — run
+supabase/schema.sql…" rather than crashing.
+2. **Authentication → Emails → Confirm signup:** include `{{ .Token }}` in the
+body. The built-in template only carries `{{ .ConfirmationURL }}`, so without
+this change the 6-digit code entry in step 2 of sign-up has nothing to accept
+(the confirmation *link* still works either way — `detectSessionInUrl` picks
+it up).
+3. **OTP expiry** (Authentication → Emails): Supabase defaults to 3600s. The
+`OTP_TTL_MS` constant in `js/app.js` drives the on-screen countdown and is a
+hard local block, so if you change the dashboard value, change that constant
+to match or the countdown will lie.
+
+### Data model / sync rules (all implemented in `js/cloud.js`)
+
+- Keys that sync: `calcmall_brand_v1` → `brand_settings`;
+  `cm-theme`+`cm-accent-v1`+`cm-bg-v1` → `appearance_settings` (one row);
+  `nexora_item_db` → `items`; `nexora_client_db` → `clients`;
+  `calcmall_history` (+`calcmall_history_drafts` as the `data` payload) →
+  `documents`. Everything else (tool drafts, usage counters, onboarding) stays
+  local on purpose — that is the offline draft layer.
+- Row keys are the app's own identifiers, lower-cased: SKU for `items`, client
+  name for `clients`, history id for `documents`; PK is `(user_id, id)`.
+- **A push can never precede a successful pull.** `flush()` pulls first if
+  `pulledOK` is false, and `noteWrite()` only schedules when `pulledOK`, so a
+  fresh device with an empty cache cannot overwrite real cloud data.
+- Conflict policy is per-key last-write-wins: local writes stamp
+  `nexora_cloud_meta_v1[email][key] = Date.now()`, and a pull adopts a row only
+  when `updated_at >=` that stamp (or the local key is absent). An empty cloud
+  collection never wins over local rows — that case is a first-ever push.
+- Pull-then-render: `bootstrap()` adopts remote values into the local cache and
+  asks for ONE guarded reload (sessionStorage key `nexora_cloud_pull_guard`) so
+  the synchronous app re-reads them without a reload loop.
+- Offline: writes queue in `nexora_cloud_queue_v1` and retry on `online`,
+  on tab-visible, and on the next boot. Status is published on the
+  `nexora-cloud` window event and mirrored by `renderCloudStatus()`.
+
+### Two follow-on notes
+
+- `api/send-code.js` (Vercel + Resend) is **no longer called** — Supabase sends
+the verification mail itself. Left in place in case custom SMTP is wanted.
+- `initAccessState()` deletes the pre-Supabase auth artefacts
+  (`nexora_user_logged_in`, `users`, `currentUser`) on every boot so a stale
+  local flag can never be mistaken for a session. Per-account caches under
+  `u:<email>:` are deliberately left alone.
+
+### Vercel
+
+No environment variables are required. The publishable key is public and is
+compiled into `js/cloud.js` on purpose; all protection is RLS. (A
+`SUPABASE_SERVICE_ROLE_KEY` would only be needed for a server-side admin task,
+which this app does not have — never put one in frontend code.)
+
+## ERP → Library: one explicit commit (2026-09-13)
+
+**The reported symptom (typing filling Library) does not exist in the code.**
+Verified by instrumenting `Storage.prototype.setItem` in the running preview:
+typing across the Project/Client Header, Document Mode tabs, Items rows,
+Terms, Discount, VAT and the Record ID field — plus an edit on the editable
+PDF sheet — produced **zero** writes to `calcmall_history`. Typing only calls
+`saveErp()`, which rewrites the working draft in `calcmall_erp_v1`.
+
+What was actually writing Library was four *explicit* buttons, one of them
+misleadingly labelled:
+
+| trigger | entry written |
+|---|---|
+| `#erp-save` — labelled **"Save Draft"** | `type: 'copy'`, one per click |
+| `#erp-pdf` (Export as PDF) | `type: 'pdf'`, one per export |
+| `#erp-export-xlsx` | `type: 'copy'`, one per export |
+| `#erp-record-save` (Save Record) | `type: 'copy'` — mixing the reusable-record action with Library |
+
+### What changed
+
+- `#erp-save` is now **"Save to Library"** (`erpSaveToLibrary`), `btn-primary`
+  and first in the actions column; the exports are `btn-ghost` below it.
+  `saveErpDraft()` is deleted — a separate "save the draft" button was
+  redundant because the working draft is already persisted on every keystroke.
+- `erpState.libraryId` (new field in `emptyErp()`) makes Save an **upsert**: with
+  no id it prepends a new entry and remembers the id; with an id it rewrites
+  that entry in place (title, ref, total, client, `at`) so re-saving never
+  stacks a duplicate.
+- Entries now carry a **full document snapshot** in
+  `draftStore[id] = { tool: 'erp', state: <erpState deep copy> }`. This makes
+  "View / Load draft" genuinely restore the saved document (it previously only
+  opened the engine) and sets `libraryId`, so saving after a restore updates
+  that row. Entries saved before this have no snapshot and fall back to the old
+  behaviour of just opening the engine.
+- `erpSaveRecord` no longer writes Library at all — Save Record maintains
+  `calcmall_erp_records_v1` only. The two stores are independent.
+- The exports call `erpRefreshLibraryEntry()`: if the document is already in
+  the Library they refresh its figures and snapshot (so a re-download stays
+  accurate) and create **nothing**.
+- A hint line under the buttons (`#erp-save-hint`, reusing `.hint`) states that
+  typing is a local draft and only Save to Library creates an entry.
+
+### Verified in the preview
+
+| check | result |
+|---|---|
+| type across every ERP section | Library count unchanged, **0** Library writes |
+| click Save to Library | count +1, exactly **1** write, snapshot stored, `libraryId` persisted |
+| edit + Save again | count unchanged, **1** write, same id, fields updated |
+| click Save Record | Library unchanged; record lands in `calcmall_erp_records_v1` |
+| View / Load draft, then Save | document restored (ref `LIB-001-REV2`), no duplicate row |
+
+Testing cleanup: the preview's ERP working draft was reset to a blank document
+and the test record/entry removed, so the preview carries the same 4 Library
+entries and 2 items it had before.
+
+## Saved Project/Client records are visible now (2026-09-13)
+
+`erpRecords` (`calcmall_erp_records_v1`) is the store behind the ERP's
+Project/Client Header → **Save Record**. It had no listing anywhere — saving a
+record only updated the one-line `#erp-record-meta` caption under the field, so
+there was no way to see or confirm what had been saved.
+
+### What was added
+
+- **Home → "Saved Records" card** (`#home-records-list`), placed directly after
+the Master Database card and built from the same grammar
+(`.home-db-card` / `.home-db-colhead` / `.home-db-row` / `.home-db-empty`):
+Record ID in bold, the Client/Project label beneath it, line count on the
+right. Bounded to `HOME_DB_LIMIT` (5) most-recent rows, so saving hundreds of
+records never changes the card's height. Clicking a row loads that record into
+the ERP; "View all →" opens the full list.
+- **Full list** in the Item & Client Database view (`#db-view`) as a new
+full-width section "Saved Project / Client Records" (`#db-record-rows`), using
+the existing `.db-list-head` / `.db-row` / `.db-list` grammar with a new
+`.db-grid-records` column set: Record ID · Client/Project · Lines · Saved ·
+actions. Each row has **Load** and **Delete**; delete routes through the shared
+`confirmAction()` dialog like every other destructive action.
+- New CSS is limited to `.db-grid-records` (plus its `760px` responsive rule,
+where the Lines and Saved columns drop out first and only the id, label and
+actions survive) — the Home card needed no new CSS at all.
+
+### Refresh mechanics
+
+`saveErpRecords()` is the **only** writer of the record store, so both listings
+are re-rendered from there: saving or deleting a record is visible immediately
+with no second call site to keep in step. `renderDb()` also refreshes them, so
+boot and "Reset all data" stay in step too.
+
+New helpers: `recordEntries()` (one ordering — `savedAt` descending), then
+`recordLabel()` / `recordDetail()` / `recordLineCount()` / `recordSavedWhen()`,
+`renderHomeRecordsPreview()`, `renderDbRecords()`, `erpLoadRecordById(id)`.
+`erpDeleteRecord(idArg)` now takes an optional id; the ERP button's wiring got a
+wrapper (`function () { erpDeleteRecord(); }`) so the click event is not passed
+in as an id. The ERP's own Delete button behaves exactly as before.
+
+### Verified in the preview
+
+| check | result |
+|---|---|
+| Save Record with the ERP open | Home card + list count update **immediately** (1 record, correct label) |
+| Save a second record | both lists order newest-first (`TEST-B`, `TEST-A`) |
+| click the Home row | that record loads into the ERP (`#/erp`, client/project/record id restored) |
+| View all → | `#db-view` opens with every record, Load + Delete per row |
+| Delete from the full list | confirm dialog appears, both lists drop to 1, store empty after the second delete |
+| empty state | "No records yet…" shown in both places when the store is empty |
+
+## Master Database view — the Home card's own destination — 2026-09-13
+
+The Home **Master Database** card used to send a row click to `#/db` and open
+that record in the *management* page's edit form, so the "separate, lighter
+preview" was really a shortcut into the full database. It now has its own
+view: **`#/master-data`**, added to `VIEW_NAMES` and toggled in `showView()`
+(plus a `renderMasterData()` repaint on entry, so a bookmark, a back/forward
+step and the Home card all land on live data).
+
+### What it is
+
+`#master-data-view` in `index.html` — a tool banner plus a two-pane
+`.md-layout`: a list pane (Items / Clients tabs, a free-text filter, rows that
+reuse the `.home-db-row` grammar) and a read-only detail pane built from
+`.md-field` definition rows. No forms, no edit or delete actions, no
+management tables. It reads the same `db` store as the DB page, so the two can
+never show a different record set.
+
+- The list is **uncapped** (the Home card stays at `HOME_DB_LIMIT`), so
+  "View all" has somewhere honest to go: `#home-db-viewall` now calls
+  `openMasterData()` instead of `showView('db')`.
+- A row click calls `openMasterData(kind, key)` — the Home rows carry
+  `data-md-key` for this, so no index is passed across views.
+- Selection is stored as **identity** (`{kind, key}` — SKU for an item, client
+  name for a client), never a list index: the list is sorted and filtered, so
+  an index could point at a different record after any change.
+  `mdFindSelection()` resolves it back to `{rec, index}` on demand and is the
+  only place an index is produced.
+- `#md-back` returns to Home; `master-data` keeps the Home nav item lit, the
+  same way `utilities` does.
+- The detail pane shows an item's rate as **`Not set` / `Invalid — re-enter
+  it`** rather than `0`, and a client's blank fields as an em dash, so "never
+  entered" stays distinguishable from a real zero.
+
+### The one deliberate exit
+
+Each detail pane ends in a labelled **"Manage in Item & Client Database →"**
+button that opens `#/db` with that record in its edit form (`.md-manage`, one
+delegated handler on `#md-detail`). Row clicks never leave the view — this is
+the only way across, and it exists so the view can stay read-only without
+becoming a dead end. It is one `mdManageHtml()` call per branch if the crossing
+should be removed entirely.
+
+### Verified in the preview
+
+| check | result |
+|---|---|
+| Home item row click | `#/home` → `#/master-data`; `db-view` stayed **hidden** |
+| focused record | that SKU selected + detailed (`FIRE-SUP`), tab auto-picked |
+| View all → | `#/master-data`, all rows, **no** selection |
+| filter | `detection` → 1 row; `zzzz` → "Nothing matches …" naming the term and the count; cleared → 2 |
+| tab switch | Clients → its own empty state, detail reset with a client-specific hint |
+| Manage → | `#/db` with `FIRE-DET` loaded (button reads "Update Item") |
+| old DB page | unchanged: 2 rows, `db-item-edit` / `db-item-del` per row, records section intact |
+| refresh on `#/master-data` | lands back on the view, items tab, 2 rows, Home nav lit |
+| responsive / light theme | 645px → single column, no horizontal overflow; light overrides apply |
+
+## Cloud sync wired up (Supabase) — 2026-09-13
+
+`supabase/schema.sql` was run by the user; the app now actually pulls and
+pushes. `initCloudSync()` (called last in the boot `try` block) hands the
+storage shim its key rule via `configure({ email, keyFor })`, then calls
+`bootstrap()` — verify the session, pull, and reload **once** (guarded in
+`sessionStorage`) so the synchronous modules re-read the pulled values.
+
+Cloud health is visible in two places, both fed by `renderCloudStatus()`:
+`.js-cloud-status` nodes (sidebar + System health) and `#hl-cloud`, whose bar
+width tracks the status. Labels: signed-out → "Cloud: sign in to sync",
+synced → "Cloud: synced", offline / syncing / pending / unavailable / setup.
+
+### Expired-session handling (fixed this pass)
+
+`verifySession()` already read the persisted session synchronously and asked
+the server whether it was still valid, but it delegated the *cleanup* to
+`client.auth.signOut()`. Verified against the real bundle
+(`auth-js` `_signOut`): supabase-js does call `_removeSession()` even when the
+server-side revoke fails — but `signOut()` can still **throw** (lock-acquire
+timeout, storage error), and every caller here swallows that. In that case the
+dead token stayed in storage, so `isSignedIn()` kept returning true: the login
+gate stayed open, the sidebar showed the account, and `flush()` retried
+against a token the server rejects.
+
+`clearLocalSession()` now removes the persisted session slot as part of the
+expired verdict, so the decision is self-enforcing rather than delegated. The
+per-email queue is deliberately NOT cleared — it holds unsynced work, and
+`loadQueue()` already ignores a queue belonging to another account.
+
+### Engine test harness
+
+`.freebuff/cloud-sync-test.html` — 30 checks against a stubbed PostgREST +
+GoTrue that mimics RLS (another user's rows are invisible; a mismatched
+`user_id` upsert is rejected). Covers: cold-device adoption, NULL-vs-0 rate
+fidelity, push + remote delete, singleton upserts, newer-side-wins conflict
+resolution, offline queue and reconnect, expired-session detection, and
+"offline is not an expiry". Run it by pointing the preview at
+`http://127.0.0.1:8437/.freebuff/cloud-sync-test.html`; it restores every slot
+it touches and reports into `window.__testResult`.
+
+
+## Access model: guest · free · premium — 2026-09-13
+
+### The tiers, and where each is decided
+
+`checkAccessAndCredits(toolId)` in `js/app.js` is the ONLY gate:
+
+| tier | behaviour |
+|---|---|
+| guest (no verified Supabase session) | no tool access at all; every attempt opens the Login / Sign Up modal |
+| free (signed in, plan ≠ premium) | ONE execution per tool, persisted per account; after that: "AI Credit Limit Reached", a redirect to Premium Plans, and no second entry |
+| premium (`nexora_plan = 'premium'`) | unlimited, nothing metered; the account panel and the System-health row both read **Unlimited Credits** |
+| developer (`himalabey.503@gmail.com`) | unlimited, unmetered, exempt from every block screen |
+
+### What was actually letting guests through
+
+Not the gate itself — the *missing call sites*. Only launch links and the
+PDF/Excel triggers asked for permission, so a guest could still reach `#/erp`
+or any calculator view from the sidebar and fill it in. Gating now happens in
+`showView(name, opts)`, the single choke point every route passes through
+(sidebar link, tool card, footer link, hash, deep link), so a tool view cannot
+be painted without permission. The `gateClick(...)` wrappers were removed from
+the twelve `footer-open-*` links — leaving them would have charged a nameless
+second execution before the tool's own gate ran.
+
+### Metering: per tool, and only per tool
+
+The old model was ONE shared pool — `nexora_ai_credits`, seeded to `1` per
+account — so the first tool used up the allowance for all twelve. It is
+replaced by `nexora_free_usage` = `{ toolId: timesUsed }` with
+`FREE_LIMIT = 1` per tool (12 calculators + `erp` = 13 metered sections).
+`nexora_ai_credits` is deleted on boot and is no longer read by anything.
+
+A tool's single use is spent when the tool is *opened*; every PDF/Excel
+trigger fired from inside that open tool is part of the same execution, via a
+session grant (`sessionGrants[id]`) that is dropped the moment the view
+changes. That is what keeps a document export from costing a second use — and
+what makes re-entering the tool after the free use a blocked action, even in
+the same browser session. `Reset all data` is the meter's only reset path; a
+paid plan is deliberately not cleared by it.
+
+Usage and plan live in localStorage under the per-user shim (so each account
+has its own), but they are **not** in the cloud `SYNC` map — entitlements are
+device-local for now. Moving them to a table would need a schema change and a
+server-side check, which is the only way to make the limit tamper-proof.
+
+### Background colour (Appearance) — the real bug
+
+The click handler was never broken: it stored the value and moved the
+`.active` class. Nothing *repainted*, because the forced-glass block in
+`index.html` owns the canvas (`:root { background: var(--bg-gradient)
+!important }`, `body → transparent`), so `css/style.css`'s
+`body { background: var(--bg) }` could never win. The block now reads
+`--bg-user`, which `applyBg()` publishes alongside `--bg`, in both the dark and
+the light rules. The selected ring is an `outline` (the swatch markup carries
+an inline `border-color` that beats the stylesheet's `border-color`).
+
+### Sidebar label
+
+`applyTheme()` used to rewrite the sidebar button's label on every boot, which
+is why renaming it to `Light/Dark` in the HTML kept reverting. The painter now
+writes `Light/Dark` too; the icon still tracks the theme and `aria-pressed`
+carries the state.
+
+### Verified in the running preview
+
+- Guest: ERP link → "Authentication Required", hash untouched, view unchanged;
+  a tool card → same modal; a lying `nexora_plan = premium` does NOT open the
+  gate (the session check comes first).
+- Free: opening Qty & Rate wrote `{"qr":1}` and toasted "1 AI Credit Used —
+  free use of Qty & Rate"; an export from that open tool left the count at 1;
+  Pricing then spent its OWN use; leaving and re-entering Qty & Rate was
+  blocked, redirected to `#/plans`, and the modal named the tool.
+- Premium (real Subscribe click): plan stored, health row ``Unlimited Credits``,
+  a used tool re-opened with no meter write and no modal.
+- Free/guest/premium status strings, the `hl-plan` health row, the background
+  swatch repaint + reset, and the `Light/Dark` label, all re-read after fresh
+  loads. Console clean after a walk through every view.
+
+Test seeds used while verifying (fake `sb-*-auth-token`, `nexora_plan`,
+`nexora_free_usage`, `nexora_user_role`) were removed afterwards.
+
+
+## Settings: explicit Save per section, bank-only reset, placeholder sweep — 2026-09-13
+
+### Drafts instead of autosave
+
+Every `#brand-*` input used to write `brand[field]` and call `saveBrand()` on
+`input`, so each keystroke hit localStorage (and the cloud sync queue). The two
+sections now edit in-memory drafts:
+
+| | letterhead (card 1) | bank & beneficiary (card 2) |
+|---|---|---|
+| draft | `brandDraft` | `bankDraft` |
+| fields | `BRAND_SECTION_FIELDS` (11 + logo) | `BANK_SECTION_FIELDS` (7) |
+| Save | `#brand-save` → `commitBrandSection()` | `#bank-save` → `commitBankSection()` |
+| reset | `#brand-reset` (whole card, as before) | `#bank-reset` (bank fields ONLY) |
+| status pill | `#brand-status` | `#bank-status` |
+
+`brand` — the object every other feature reads — is untouched until Save, so an
+unsaved edit can never leak into a document or the ERP letterhead. The status
+pill flips to **Unsaved changes** (`.pill-out`) while a draft differs from the
+saved value and the section's Save button enables; typing a value back to what
+was saved clears the draft again, so the pill never lies. `renderBrand()` paints
+from `brandView()` = saved brand + BOTH drafts, because merging only the section
+being saved let a letterhead Save repaint the bank card from saved data and hide
+in-progress text while the pill still said "unsaved".
+
+Abandoning an edit needs no unload handler: a draft lives in memory, so closing
+the tab discards it. Navigating away from Settings goes through
+`showView`, which calls `discardBrandDrafts()` when the current view is
+`settings` and the next one is not — that drops both drafts, repaints the saved
+values and toasts "Unsaved changes to Settings were discarded", so an abandoned
+edit is visibly gone rather than quietly pending.
+
+### Placeholder sweep (fictional examples everywhere)
+
+The app's headings and `<input placeholder=…>` text carried the reference
+company's real details. Replaced across `index.html` (25 distinct strings, 31
+occurrences) and `js/app.js` (`ERP_FIELDS` and `DOC_MODE_FIELDS` `ph:` values,
+plus the ERP Excel **import template** rows, which are user-downloaded sample
+data):
+
+- company name → `Acme Engineering` / `Acme Engineering (Pvt) Ltd`
+- address → `123 Example Road, Colombo 05`, `456 Sample Lane, Colombo 03`
+- phone / email / web → `+94 71 000 0000`, `hello@example.lk`, `www.example.lk`
+- TIN → `TIN 000 000 000`; SWIFT → `EXAMPLKA`; branch `0001`; account `0001234567`
+- bank → `Example Bank — Main Street Branch`
+- contact / preparer / issuer name → `Alex Perera`
+- industrial zone → `Example Industrial Zone`; project → `Example Warehouse fit-out`
+- ref → `ACM/QTN/2026/001`
+
+Pages affected: Company & Brand Settings, Master ERP Engine (header, items, and
+all four document modes), Item & Client Database (client + item forms), the
+Quotation/Invoice builders' own client blocks, the auth modal, and the
+System-Health/backup copy. The reference name survives only inside CSS/JS
+**comments** that record which print template the layout was measured against
+(and the `.mx-*` class prefix that goes with them).
+
+### Verified in the preview
+
+Typing in either section wrote nothing (`calcmall_brand_v1` byte-identical) and
+raised that section's pill to "Unsaved changes"; saving card 1 stored the name
+while the bank card stayed dirty and kept its typed text; saving card 2 stored
+both and disabled both Save buttons; a value typed back to its saved state
+cleared the flag. Leaving Settings discarded the pending edit (field showed the
+saved value again, pill cleared, toast shown). **Reset bank details** (through
+the confirm dialog) cleared only the seven bank fields and left name / legal
+name / address untouched; the letterhead reset still clears everything.
+
+
+## Client contact split + HS code retired — 2026-09-13
+
+### The client form, in this order
+
+`Client Name` · `Default Project / Site Name (optional)` · `Client address` ·
+`Contact person` · `Contact number` · `TIN / Reg no` · `Place of supply` ·
+`PO no` · `Delivery terms` · `Ship to` ·
+`Default currency for this client's documents`
+
+`#db-client-contactno` is the new number field (`e.g. +94 71 000 0000`);
+`#db-client-contact` is now a NAME only (`e.g. Alex Perera`). `#db-client-hscode`
+is gone from the form, from `DB_CLIENT_FIELDS`, from the saved record, from the
+Master Data detail pane and from the cloud column map. The ERP's own `erp-hscode`
+stays where it is — that is the DOCUMENT's HS code, a different field.
+
+The currency select moved to the bottom of the form. `resetDbForm('client')`
+still owns it (it resets the select to the company currency, which is why it is
+not in `DB_CLIENT_FIELDS`, a list `clearDbForm` blanks).
+
+### Where the phone now lives
+
+One value, one home: `erpState.clientPhone`, backed by the new
+`#erp-clientphone` input.
+
+- `PDF_FIELD_MAP.clientPhone` now maps state ⇄ input like every other field, so
+  the special case in `pdfCommitField` (and `pdfSetPurchaserPhone`, which spliced
+  the number into the contact string) are both deleted.
+- `purchaserPhone()` returns `clientPhone`, falling back to a phone-shaped token
+  in the contact string only when the field is empty — so a draft saved before
+  the split still prints its number, and a plain name can never print as one.
+- `erpSelectClient()` fills `contact` from `contactPerson` and `clientPhone` from
+  `contactNumber`; the retired `client.hsCode` line is gone.
+
+Old records — locally or already in Supabase — are split **on the way in**, in
+`loadDb()` via `splitContactPhone()`: `"Alex Perera · +94 77 555 1234"` becomes
+name + number, and a value with no phone-shaped token is left byte-identical.
+Nothing is rewritten in storage; the split is applied every load, and the record
+is only normalised when the user next saves it.
+
+`js/cloud.js` maps `contactNumber` onto the clients table's EXISTING `phone`
+column (the schema always had one) and drops the `hsCode → hs_code` mapping, so
+this needs no SQL migration; the full record still round-trips through `data`.
+
+### Verified in the preview
+
+Saved a client from the new form: the stored record carries `contactPerson:
+"Alex Perera"` and `contactNumber: "+94 71 000 0000"` with **no** `hsCode` key,
+and the form blanked itself. Selecting that client by name in the ERP filled
+`erp-contact = Alex Perera` and `erp-clientphone = +94 71 000 0000`, wrote both
+into the draft, and the Pro Forma sheet printed
+`Telephone No : +94 71 000 0000` with the contact's name appearing nowhere in the
+document. The Delivery Note's `Contact :` line printed the same number. A seeded
+legacy record (`"Alex Perera · +94 77 555 1234"`) opened in the editor as a clean
+name plus a populated number, with storage left untouched. Console clean.
+
+Note: this testing emptied the preview profile's client list and cleared the ERP
+header fields it had filled; items, history, brand and appearance were untouched.

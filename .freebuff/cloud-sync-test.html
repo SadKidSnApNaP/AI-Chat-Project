@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nexora cloud sync — engine test</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #0c0e18; color: #cbd5e1; padding: 20px; }
+  h1 { font-size: 15px; color: #fff; }
+  .pass { color: #4ade80; }
+  .fail { color: #f87171; font-weight: 700; }
+  .name { color: #a5b4fc; }
+  pre { white-space: pre-wrap; margin: 2px 0 10px 18px; color: #94a3b8; }
+  #summary { margin-top: 16px; font-size: 15px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>cloud.js — sync engine test (stubbed Supabase client)</h1>
+<div id="out"></div>
+<div id="summary">running…</div>
+
+<script>
+/* ── Minimal PostgREST + GoTrue stand-in ────────────────────────────────
+   Mimics the parts of supabase-js that cloud.js uses, INCLUDING the RLS
+   rule: a row is invisible unless user_id matches the session user, and an
+   upsert whose user_id does not match is rejected. */
+const PROJECT_REF = 'oknfjbwfvhctpohusnfk';
+const TOKEN_KEY = 'sb-' + PROJECT_REF + '-auth-token';
+const ME = { id: 'uid-e2e', email: 'e2e@test.local' };
+
+const fake = { offline: false, authError: null, signOutThrows: false, store: {}, calls: [] };
+
+function tables() {
+  ['brand_settings', 'items', 'clients', 'documents', 'appearance_settings'].forEach(function (t) {
+    if (!fake.store[t]) fake.store[t] = [];
+  });
+}
+function exec(q) {
+  fake.calls.push({ op: q.mode, table: q.table, ids: (q.payload || []).map(function (r) { return r.id; }) });
+  if (fake.offline) return Promise.reject(new TypeError('Failed to fetch'));
+  const rows = fake.store[q.table] || [];
+  if (q.mode === 'select') {
+    return Promise.resolve({ data: rows.filter(function (r) { return r.user_id === ME.id; }), error: null });
+  }
+  if (q.mode === 'upsert') {
+    for (let i = 0; i < q.payload.length; i++) {
+      const incoming = q.payload[i];
+      if (incoming.user_id !== ME.id) return Promise.resolve({ data: null, error: { message: 'new row violates row-level security policy', code: '42501' } });
+      const keys = incoming.id === undefined ? ['user_id'] : ['user_id', 'id'];
+      const at = rows.findIndex(function (r) { return keys.every(function (k) { return r[k] === incoming[k]; }); });
+      const next = Object.assign({}, incoming, { updated_at: new Date().toISOString() });
+      if (at === -1) rows.push(next);
+      else rows[at] = Object.assign({}, rows[at], next);
+    }
+    return Promise.resolve({ data: null, error: null });
+  }
+  if (q.mode === 'delete') {
+    const f = q.filters.find(function (x) { return x[0] === 'id' && x[2] === 'in'; });
+    if (f) {
+      fake.store[q.table] = rows.filter(function (r) {
+        return r.user_id !== ME.id || f[1].indexOf(r.id) === -1;
+      });
+    }
+    return Promise.resolve({ data: null, error: null });
+  }
+  return Promise.resolve({ data: null, error: null });
+}
+function builder(table) {
+  const q = { table: table, mode: 'select', payload: null, filters: [] };
+  const b = {
+    select: function () { q.mode = 'select'; return b; },
+    eq: function (k, v) { q.filters.push([k, v]); return b; },
+    in: function (k, v) { q.filters.push([k, v, 'in']); return b; },
+    upsert: function (rows) { q.mode = 'upsert'; q.payload = Array.isArray(rows) ? rows : [rows]; return b; },
+    delete: function () { q.mode = 'delete'; return b; },
+    then: function (res, rej) { return exec(q).then(res, rej); }
+  };
+  return b;
+}
+window.supabase = {
+  createClient: function () {
+    return {
+      from: builder,
+      auth: {
+        getUser: function () {
+          if (fake.offline) return Promise.reject(new TypeError('Failed to fetch'));
+          if (fake.authError) return Promise.resolve({ data: { user: null }, error: fake.authError });
+          return Promise.resolve({ data: { user: ME }, error: null });
+        },
+        signOut: function () {
+          /* Faithful to auth-js _signOut(): it calls _removeSession() even
+             when the server-side revoke fails, and can still throw itself
+             (lock acquire timeout). The throw path below is what proves
+             cloud.js does not depend on this working. */
+          if (fake.signOutThrows) return Promise.reject(new Error('lock acquire timeout'));
+          localStorage.removeItem(TOKEN_KEY);
+          return Promise.resolve({ error: null });
+        },
+        onAuthStateChange: function () { return { data: { subscription: { unsubscribe: function () {} } } }; }
+      }
+    };
+  }
+};
+
+/* ── slots this test touches, snapshotted for restore ─────────────────── */
+const KEY = k => 'u:' + ME.email + ':' + k;
+const SLOTS = [TOKEN_KEY, 'nexora_cloud_queue_v1', 'nexora_cloud_meta_v1',
+  KEY('nexora_item_db'), KEY('nexora_client_db'), KEY('calcmall_brand_v1'),
+  KEY('cm-theme'), KEY('cm-accent-v1'), KEY('cm-bg-v1'),
+  KEY('calcmall_history'), KEY('calcmall_history_drafts')];
+const before = {};
+SLOTS.forEach(function (k) { before[k] = localStorage.getItem(k); });
+function restore() {
+  SLOTS.forEach(function (k) {
+    if (before[k] === null) localStorage.removeItem(k); else localStorage.setItem(k, before[k]);
+  });
+  try { sessionStorage.removeItem('nexora_cloud_pull_guard'); } catch (e) { /* ignore */ }
+}
+function setSession() {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({
+    access_token: 'fake-access', refresh_token: 'fake-refresh',
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    user: { id: ME.id, email: ME.email, user_metadata: { full_name: 'E2E User' } }
+  }));
+}
+function resetLocal() { SLOTS.forEach(function (k) { if (k !== TOKEN_KEY) localStorage.removeItem(k); }); }
+
+const out = document.getElementById('out');
+let pass = 0, fail = 0;
+function check(name, cond, detail) {
+  const el = document.createElement('div');
+  el.className = cond ? 'pass' : 'fail';
+  el.innerHTML = (cond ? 'PASS ' : 'FAIL ') + '<span class="name">' + name + '</span>';
+  out.appendChild(el);
+  if (!cond && detail !== undefined) {
+    const pre = document.createElement('pre');
+    pre.textContent = '  got: ' + JSON.stringify(detail);
+    out.appendChild(pre);
+  }
+  cond ? pass++ : fail++;
+}
+</script>
+
+<!-- cloud.js loads AFTER the stub, exactly as it does in index.html after the CDN tag -->
+<script src="/js/cloud.js"></script>
+
+<script>
+(async function run() {
+  const C = window.NexoraCloud;
+  /* Mirrors the app's storage shim: the value lands in localStorage FIRST and
+     the write is then handed to cloud.js. flushKey always pushes the live
+     local value, so skipping the first half would push nothing at all. */
+  function write(k, v) { localStorage.setItem(KEY(k), v); C.noteWrite(k, v); }
+  function read(k, fallback) { try { return JSON.parse(localStorage.getItem(KEY(k)) || fallback); } catch (e) { return fallback; } }
+
+  try {
+    check('cloud.js initialised against the stub client', !!(C && C.available === true));
+    setSession();
+    tables();
+    C.configure({ email: ME.email, keyFor: KEY });
+    check('session is read from the persisted token (not a flag)',
+      C.isSignedIn() === true && C.sessionEmail() === ME.email && C.sessionUserId() === ME.id);
+
+    /* ── A. cold device adopts the account's data ─────────────────────── */
+    resetLocal();
+    fake.store.items = [
+      { user_id: ME.id, id: 'fire-det', sku: 'FIRE-DET', name: 'Detection', unit: 'Nr', rate: 10000, added_at: 1, updated_at: new Date().toISOString() },
+      { user_id: ME.id, id: 'fire-sup', sku: 'FIRE-SUP', name: 'Suppression', unit: 'Nr', rate: null, added_at: 2, updated_at: new Date().toISOString() },
+      { user_id: 'someone-else', id: 'theirs', sku: 'THEIRS', name: 'Not mine', updated_at: new Date().toISOString() }
+    ];
+    fake.store.brand_settings = [{ user_id: ME.id, name: 'ACME', tin: 'TIN-1', account_cur: 'LKR', updated_at: new Date().toISOString() }];
+    fake.store.appearance_settings = [{ user_id: ME.id, theme: 'light', accent: '#6366f1', background: 'preset-2', updated_at: new Date().toISOString() }];
+    fake.store.documents = [{ user_id: ME.id, id: 'doc-1', type: 'pdf', title: 'INV 1', total_text: 'Rs1,000', amount: 1000, happened_at: 5, data: { tool: 'erp' }, updated_at: new Date().toISOString() }];
+
+    const boot = await C.bootstrap();
+    const items = read('nexora_item_db', []);
+    check('A1 bootstrap asks for exactly one reload after adopting', boot.reload === true, boot);
+    check('A2 items pulled, and the other user\'s row is invisible',
+      items.length === 2 && items.map(function (i) { return i.sku; }).join(',') === 'FIRE-DET,FIRE-SUP',
+      items.map(function (i) { return i.sku; }));
+    check('A3 a NULL rate survives the round trip as null, not 0',
+      (items.find(function (i) { return i.sku === 'FIRE-SUP'; }) || {}).rate === null,
+      items.find(function (i) { return i.sku === 'FIRE-SUP'; }));
+    check('A4 brand row mapped into the app\'s brand shape',
+      read('calcmall_brand_v1', {}).name === 'ACME' && read('calcmall_brand_v1', {}).accountCur === 'LKR');
+    check('A5 appearance row fanned out to all three local keys',
+      localStorage.getItem(KEY('cm-theme')) === 'light' &&
+      localStorage.getItem(KEY('cm-accent-v1')) === '#6366f1' &&
+      localStorage.getItem(KEY('cm-bg-v1')) === 'preset-2');
+    const hist = read('calcmall_history', []);
+    check('A6 documents pull with their draft payload attached',
+      hist.length === 1 && read('calcmall_history_drafts', {})['doc-1'].tool === 'erp', hist);
+
+    /* ── B. local edits push, and removals delete ──────────────────────── */
+    fake.calls.length = 0;
+    write('nexora_item_db', JSON.stringify([
+      items[0],
+      { sku: 'NEW-ITEM', name: 'Added on this device', unit: 'Nr', rate: 500, addedAt: Date.now() }
+    ]));
+    const push = await C.flush();
+    const mine = fake.store.items.filter(function (r) { return r.user_id === ME.id; });
+    check('B1 flush reports success and pushed the changed set', push.ok === true, push);
+    check('B2 the new row reached the cloud with its rate and number type',
+      !!mine.find(function (r) { return r.id === 'new-item' && Number(r.rate) === 500; }),
+      mine.map(function (r) { return r.id + ':' + r.rate; }));
+    check('B3 the removed row was deleted remotely', !mine.find(function (r) { return r.id === 'fire-sup'; }),
+      mine.map(function (r) { return r.id; }));
+    check('B4 the push touched the items table only',
+      fake.calls.length > 0 && fake.calls.every(function (c) { return c.table === 'items'; }),
+      fake.calls.map(function (c) { return c.table; }));
+    check('B5 nothing was written for the other user',
+      fake.store.items.every(function (r) { return r.user_id === ME.id || r.id === 'theirs'; }));
+
+    /* ── C. brand + appearance singletons upsert one row each ──────────── */
+    write('calcmall_brand_v1', JSON.stringify({ name: 'Edited Here', legalName: 'Edited Here Ltd', accountCur: 'USD' }));
+    write('cm-theme', 'dark');                     // alias → same appearance row
+    await C.flush();
+    const brandRow = fake.store.brand_settings[0];
+    const appRow = fake.store.appearance_settings[0];
+    check('C1 brand upserted into the single row for this user',
+      fake.store.brand_settings.length === 1 && brandRow.name === 'Edited Here' && brandRow.legal_name === 'Edited Here Ltd',
+      brandRow);
+    check('C2 appearance row carries all three keys (theme changed, others kept)',
+      fake.store.appearance_settings.length === 1 && appRow.theme === 'dark' && appRow.accent === '#6366f1' && appRow.background === 'preset-2',
+      appRow);
+
+    /* ── D. conflict: the newer side wins, per key ─────────────────────── */
+    const current = read('nexora_item_db', []);
+    write('nexora_item_db', JSON.stringify(current));       // local stamped "now"
+    const future = new Date(Date.now() + 120000).toISOString();
+    fake.store.items = fake.store.items.map(function (r) {
+      return r.id === 'new-item' ? Object.assign({}, r, { name: 'RENAMED ELSEWHERE', updated_at: future }) : r;
+    });
+    await C.pull();
+    const adopted = read('nexora_item_db', []);
+    const newItem = adopted.find(function (i) { return i.sku === 'NEW-ITEM'; }) || {};
+    check('D1 a newer cloud edit is adopted locally', newItem.name === 'RENAMED ELSEWHERE', adopted);
+
+    /* ── E. offline: queued, never lost, then synced ───────────────────── */
+    fake.offline = true;
+    const offlinePull = await C.pull();
+    write('nexora_item_db', JSON.stringify(adopted.concat([{ sku: 'OFFLINE-ITEM', name: 'offline add', unit: 'Nr', rate: 7, addedAt: Date.now() }])));
+    const offlineFlush = await C.flush();
+    const offStatus = C.status();
+    check('E1 an offline pull reports the offline kind', offlinePull.ok === false && offlinePull.error.kind === 'offline', offlinePull.error);
+    check('E2 an offline flush refuses to push (no partial write)', offlineFlush.ok === false, offlineFlush);
+    check('E3 the offline edit is still in the local cache', (localStorage.getItem(KEY('nexora_item_db')) || '').indexOf('OFFLINE-ITEM') !== -1);
+    check('E4 status reports offline with the change queued',
+      offStatus.status === 'offline' && offStatus.pendingKeys > 0, offStatus);
+    fake.offline = false;
+    const backOnline = await C.flush();
+    check('E5 reconnecting flushes the queued write',
+      backOnline.ok === true && !!fake.store.items.find(function (r) { return r.id === 'offline-item'; }),
+      { flush: backOnline, ids: fake.store.items.map(function (r) { return r.id; }) });
+
+    /* ── F. an expired session signs itself out ────────────────────────── */
+    fake.authError = { message: 'JWT expired', status: 401, code: '401' };
+    const verify = await C.verifySession();
+    check('F1 an expired session is detected', verify.reason === 'expired', verify);
+    check('F2 the dead session is cleared from storage', localStorage.getItem(TOKEN_KEY) === null);
+    check('F3 the app now reports signed-out', C.isSignedIn() === false && C.status().status === 'signed-out', C.status());
+    const resume = await C.bootstrap();
+    check('F4 a guest bootstrap does nothing', resume.ok === false && !resume.reload, resume);
+    const signedOutPush = await C.flush();
+    check('F5 flush refuses to push without a session', signedOutPush.ok === false, signedOutPush);
+
+    /* ── H. a signOut that itself fails must not strand a dead session ─── */
+    setSession();
+    fake.authError = { message: 'JWT expired', status: 401, code: '401' };
+    fake.signOutThrows = true;
+    const harsh = await C.verifySession();
+    fake.signOutThrows = false;
+    fake.authError = null;
+    check('H1 an expiry is detected even when signOut throws', harsh.reason === 'expired', harsh);
+    check('H2 the dead session is still cleared (cloud.js backstop, not the SDK)',
+      localStorage.getItem(TOKEN_KEY) === null);
+    check('H3 the app reports signed-out after the failed signOut', C.isSignedIn() === false);
+
+    /* ── G. offline is NOT treated as an expired session ───────────────── */
+    setSession();
+    fake.authError = null;
+    fake.offline = true;
+    const offVerify = await C.verifySession();
+    check('G1 an unreachable server does not sign anyone out',
+      offVerify.reason === 'unreachable' && localStorage.getItem(TOKEN_KEY) !== null, offVerify);
+    fake.offline = false;
+  } catch (err) {
+    check('the harness ran to completion', false, String(err && err.stack || err));
+  } finally {
+    restore();
+  }
+  document.getElementById('summary').innerHTML = fail === 0
+    ? '<span class="pass">ALL ' + pass + ' CHECKS PASSED</span>'
+    : '<span class="fail">' + fail + ' FAILED</span> of ' + (pass + fail);
+  window.__testResult = { pass: pass, fail: fail, done: true };
+})();
+</script>
+</body>
+</html>

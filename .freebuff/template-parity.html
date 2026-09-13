@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invoice template parity — refactor vs HEAD</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #0c0e18; color: #cbd5e1; padding: 20px; }
+  h1 { font-size: 15px; color: #fff; }
+  .pass { color: #4ade80; } .fail { color: #f87171; font-weight: 700; }
+  .name { color: #a5b4fc; }
+  pre { white-space: pre-wrap; margin: 2px 0 10px 18px; color: #94a3b8; max-height: 260px; overflow: auto; }
+  #summary { margin-top: 16px; font-size: 15px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>Invoice template parity — the refactored builder vs the pre-refactor one</h1>
+<p style="color:#64748b">Slices <code>generatePrintHTML</code> out of the committed app.js and the current one,
+compiles each in its own scope, and feeds both the SAME payload. Any difference at all fails the run.</p>
+<div id="out"></div>
+<div id="summary">running…</div>
+
+<script>
+const out = document.getElementById('out');
+let pass = 0, fail = 0;
+function check(name, cond, detail) {
+  const el = document.createElement('div');
+  el.className = cond ? 'pass' : 'fail';
+  el.innerHTML = (cond ? 'PASS ' : 'FAIL ') + '<span class="name">' + name + '</span>';
+  out.appendChild(el);
+  if (!cond && detail !== undefined) {
+    const pre = document.createElement('pre');
+    pre.textContent = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2);
+    out.appendChild(pre);
+  }
+  cond ? pass++ : fail++;
+}
+function slice(text, fromMarker, toMarker) {
+  const a = text.indexOf(fromMarker);
+  const b = text.indexOf(toMarker);
+  if (a === -1 || b === -1 || b <= a) throw new Error('slice failed: ' + fromMarker + ' .. ' + toMarker);
+  return text.slice(a, b);
+}
+
+/* ── One representative payload per layout choice ───────────────────── */
+function payload(opts) {
+  const o = opts || {};
+  return {
+    template: o.template || 'invoice',
+    bannerUrl: o.banner ? 'data:image/png;base64,iVBORw0KGgo=' : '',
+    logoUrl: o.logo ? 'data:image/png;base64,AAAA' : '',
+    supplierName: o.long ? 'METRIX ENGINEERING SERVICES &amp; CONSTRUCTION (PRIVATE) LIMITED' : 'METRIX ENGINEERING SERVICES (PVT) LTD',
+    supplierAddress: o.long ? 'No. 275/1, 2nd Lane, Kandawala Road, Rathmalana, Western Province, Sri Lanka' : '5/1A, Samagi Mw, Depanama, Pannipitiya, Sri Lanka',
+    supplierContact: 'Contact: +94 112 286695 | email: info@metrixes.com | www.metrixes.com',
+    supplierPhone: '+94 112 286695',
+    tagline: 'Specialized in Construction, Designing, Supplying, Installation & Maintenance of Life Safety Systems',
+    documentType: o.documentType || 'TAX INVOICE',
+    docNoLabel: 'Tax Invoice No',
+    invoiceDate: '05/03/2026',
+    longDate: 'March 5, 2026',
+    supplyDate: '05/03/2026',
+    supplierTin: 'TIN 123 456 789',
+    docNo: 'INV-2026-007',
+    clientTin: 'TIN 987 654 321',
+    clientName: o.long ? 'ACCESS EKALA SERVICE AND ENGINEERING (PRIVATE) LIMITED' : 'ACME HOLDINGS (PVT) LTD',
+    clientAddress: '42 Galle Road, Colombo 03, Sri Lanka',
+    clientPhone: '+94 77 555 1234',
+    placeOfSupply: 'Western Province',
+    poNo: 'PO-2026-0451',
+    projectName: 'Wattala Warehouse Fit-out — Fire & Life Safety Package',
+    items: o.items || [
+      { description: 'Service of Fire Detection System', name: 'Service of Fire Detection System', model: 'Grundfos CR-10', unit: 'Nr', qty: '100', rate: 10000, amount: 1000000 },
+      { description: '1.5mm\u00b2 twisted pair fire cable — supply, laying & termination', name: '1.5mm\u00b2 twisted pair fire cable — supply, laying & termination', model: '', unit: 'm', qty: '1200', rate: 395.5, amount: 474600 }
+    ],
+    subTotal: 1474600, discount: o.discount || 0, netTotal: 1474600, vatPct: o.vat ? 18 : 0, vat: o.vat || 0,
+    freight: 45000, grandTotal: 1474600 + (o.vat ? 265428 : 0),
+    currencyCode: 'LKR', amountInWords: 'Rupees "One Million Four Hundred Seventy Four Thousand Six Hundred" Only'
+  };
+}
+
+(async function run() {
+  try {
+    const headTxt = await (await fetch('/.freebuff/head-app.js')).text();
+    const curTxt = await (await fetch('/js/app.js?cb=' + Date.now())).text();
+    check('both sources loaded', headTxt.length > 1000 && curTxt.length > 1000, { head: headTxt.length, cur: curTxt.length });
+
+    const headSrc = slice(headTxt, 'const MXPT = {', 'function pdfPreviewState(text) {');
+    const curSrc =
+      slice(curTxt, 'const MXPT = {', '/* ── Template dispatch') +
+      slice(curTxt, 'const MX_UI_FONT = ', 'function mxLetterhead(data) {') +
+      slice(curTxt, 'function mxLetterhead(data) {', 'function mxInvoiceSheet(data) {') +
+      slice(curTxt, 'function mxInvoiceSheet(data) {', 'function pdfPreviewState(text) {');
+
+    check('the committed version has no template dispatcher (so it IS the pre-refactor builder)',
+      headTxt.indexOf('MX_TEMPLATES') === -1 && curTxt.indexOf('MX_TEMPLATES') !== -1);
+    check('the current version keeps the original builder as mxInvoiceSheet',
+      curTxt.indexOf('function mxInvoiceSheet(data) {') !== -1);
+
+    /* `esc` lives outside the sliced windows (it is a general helper, not
+       part of the template block), so supply the identical definition that
+       app.js uses. Both the committed and the current builders share it. */
+    const ESC_SRC = "function esc(s) { return String(s == null ? '' : s).replace(/[&<>\"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]; }); }\n";
+
+    /* Compile each in its own scope so their MXPT constants cannot collide. */
+    const headFn = new Function('DATA', ESC_SRC + headSrc + '\nreturn generatePrintHTML(DATA);');
+    const curFn = new Function('DATA', ESC_SRC + curSrc + '\nreturn generatePrintHTML(DATA);');
+
+    const cases = [
+      ['invoice · no logo, no banner, no discount/VAT', payload({})],
+      ['invoice · with logo', payload({ logo: true })],
+      ['invoice · with full-width banner', payload({ banner: true })],
+      ['invoice · long supplier + client names (wrapping)', payload({ long: true })],
+      ['invoice · discount + VAT rows shown', payload({ discount: 73730, vat: true })],
+      ['invoice · many items', payload({ items: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'].map(function (n, i) {
+        return { description: 'Item ' + n + ' — a long description that wraps onto a second line for ' + n, name: 'Item ' + n, model: 'M-' + i, unit: 'Nr', qty: String(i + 1), rate: 1234.56, amount: 1234.56 * (i + 1) };
+      }) })],
+      ['pro forma title on the same layout', payload({ documentType: 'PRO FORMA INVOICE' })],
+      ['invoice · an item with no rate', payload({ items: [{ description: 'Unpriced line', name: 'Unpriced line', model: '', unit: 'Nr', qty: '3', rate: 0, amount: 0 }] })]
+    ];
+
+    cases.forEach(function (c) {
+      const label = c[0], data = c[1];
+      let a = '', b = '', err = null;
+      try { a = headFn(data); } catch (e) { err = 'HEAD threw: ' + (e && e.message); }
+      try { b = curFn(data); } catch (e) { err = (err ? err + ' | ' : '') + 'CURRENT threw: ' + (e && e.message); }
+      if (err) { check(label, false, err); return; }
+      if (a === b) { check(label + ' — byte-identical', true); return; }
+      // Report the first difference with a little context either side.
+      let i = 0;
+      while (i < a.length && i < b.length && a[i] === b[i]) i++;
+      check(label + ' — byte-identical', false,
+        'first difference at index ' + i + ' (lengths ' + a.length + ' vs ' + b.length + ')\n' +
+        'HEAD  ...' + JSON.stringify(a.slice(Math.max(0, i - 90), i + 90)) + '\n' +
+        'CURR  ...' + JSON.stringify(b.slice(Math.max(0, i - 90), i + 90)));
+    });
+
+    /* The new layouts must not be reachable from the invoice path. */
+    const curQ = new Function('DATA', ESC_SRC + curSrc + '\nreturn generatePrintHTML(DATA);');
+    const q = curQ(payload({ template: 'quotation', documentType: 'QUOTATION' }));
+    const d = curQ(payload({ template: 'delivery', documentType: 'DELIVERY NOTE' }));
+    const inv = curQ(payload({}));
+    check('template:"quotation" renders the letter (no VAT row, no TIN field)',
+      q.indexOf('VAT') === -1 && q.indexOf("TIN") === -1 && q.indexOf('Estimated Freight') !== -1);
+    check('template:"quotation" has the letter furniture (recipient, salutation, subject, T&C, sign-off)',
+      q.indexOf('Dear Sir,') !== -1 && q.indexOf('Our Ref') !== -1 && q.indexOf('Terms &amp; Conditions') !== -1 &&
+      q.indexOf('Validity') !== -1 && q.indexOf('Thanking you,') !== -1 && q.indexOf('Prepared by') !== -1);
+    check('template:"delivery" renders the receipt (no Rate/Amount columns)',
+      d.indexOf('DELIVERY NOTE') !== -1 && d.indexOf('Amount (LKR)') === -1 && d.indexOf('Model No') !== -1 &&
+      d.indexOf('Rate (LKR)') === -1 && d.indexOf('Item No') !== -1);
+    check('template:"delivery" has the form furniture (details, Issued By, Remarks, confirmation, NIC)',
+      d.indexOf('Delivery Details') !== -1 && d.indexOf('Issued By') !== -1 && d.indexOf('Remarks') !== -1 &&
+      d.indexOf('confirm the receipt of above items') !== -1 && d.indexOf('NIC No') !== -1);
+    check('the document title follows the mode, not a hardcoded string',
+      curQ(payload({ template: 'delivery', documentType: 'PRO FORMA INVOICE' })).indexOf('PRO FORMA INVOICE') !== -1 &&
+      curQ(payload({ template: 'invoice', documentType: 'PRO FORMA INVOICE' })).indexOf('PRO FORMA INVOICE') !== -1);
+    check('template:"invoice" is unchanged by the dispatcher', inv === headFn(payload({})));
+    check('an unknown template falls back to the invoice layout',
+      curQ({ ...payload({}), template: 'nonsense' }) === inv);
+  } catch (err) {
+    check('the harness ran to completion', false, String(err && err.stack || err));
+  }
+  document.getElementById('summary').innerHTML = fail === 0
+    ? '<span class="pass">ALL ' + pass + ' CHECKS PASSED</span>'
+    : '<span class="fail">' + fail + ' FAILED</span> of ' + (pass + fail);
+  window.__parityResult = { pass: pass, fail: fail, done: true };
+})();
+</script>
+</body>
+</html>

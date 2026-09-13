@@ -172,15 +172,27 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
   -webkit-backdrop-filter: blur(16px);
   z-index: 40;
 }
+/* Sidebar header row: the brand (opens Home) and, directly beside it, the rail
+   collapse toggle — the conventional spot for it. The toggle used to be a
+   labelled "Menu" item at the bottom of the MORE section; MORE now holds only
+   Other Utilities and Premium Plans. */
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 24px;
+}
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px 10px;
-  margin-bottom: 24px;
+  /* Takes the row minus the toggle; min-width:0 lets the name truncate rather
+     than pushing the toggle out of the rail. */
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
   background: none;
   border: none;
-  width: 100%;
   text-align: left;
   font: inherit;
   color: inherit;
@@ -190,7 +202,7 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 }
 .sidebar-brand:hover { background: var(--accent-soft); }
 .sidebar-brand:active { transform: scale(0.98); }
-.sidebar-brand strong { font-size: 16px; letter-spacing: -0.02em; color: var(--text-strong); }
+.sidebar-brand strong { font-size: 16px; letter-spacing: -0.02em; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar-brand:hover .brand-mark { transform: scale(1.08); }
 .brand-mark { display: inline-block; transition: transform 0.2s var(--ease); }
 .sidebar-nav {
@@ -217,9 +229,10 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
 .sidebar-nav { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
 [data-theme="light"] .sidebar-nav::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.18); }
 [data-theme="light"] .sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.3); }
-/* The brand, collapser, theme toggle and account block are pinned: only the
-   nav list scrolls, so the footer controls are always on screen. */
-.sidebar-brand, .sidebar-foot { flex: 0 0 auto; }
+/* The brand row (brand + collapse toggle), theme toggle and account chip are
+   pinned: only the nav list scrolls, so the header and footer controls are
+   always on screen. */
+.sidebar-head, .sidebar-foot { flex: 0 0 auto; }
 /* ── Collapsible navigation sections ──
    A section is a header button plus its item list. The header keeps the old
    muted uppercase look but is now a full-width control with a chevron that
@@ -305,19 +318,27 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
   padding-left: 9px; /* 12px minus the 3px left border keeps labels aligned */
   box-shadow: 0 0 18px rgba(99, 102, 241, 0.25), inset 0 0 12px rgba(99, 102, 241, 0.08);
 }
+/* Icon-only collapse toggle, sized to the brand row. The accessible name (set
+   by syncSidebarState) carries the action, since there is no visible label. */
 .sidebar-toggle {
-  margin-top: 8px;
-  padding: 8px 12px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 12.5px;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.25s var(--ease);
 }
-.sidebar-toggle:hover { color: var(--text-strong); border-color: var(--border-strong); }
+.sidebar-toggle:hover { color: var(--text-strong); border-color: var(--border-strong); background: var(--accent-soft); }
+.sidebar-toggle:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.sidebar-toggle .nav-icon { width: 17px; height: 17px; }
 .sidebar-close { display: none; }
 /* Collapsed-rail handle: appears only while the desktop sidebar is hidden,
    so there is always a way to bring the navigation back. */
@@ -337,43 +358,80 @@ main.container { display: flex; align-items: flex-start; gap: 0; padding-left: 0
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
-/* Bottom profile/account widget — avatar + account status */
-.sidebar-profile {
-  margin-top: 8px;
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 12px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* Compact account chip — ONE row in the sidebar footer (2026-09-13).
+   The block this replaced listed email, plan, credits, storage, sync and then
+   Login / Sign-up / Log-out buttons, ~5 lines plus an action row. All of that
+   moved to Account Settings, so this is now only the door: avatar, name, plan. */
+.sidebar-account {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.25s var(--ease);
 }
-.sidebar-profile .user-row { min-width: 0; }
-.sidebar-profile .user-avatar {
-  flex: 0 0 34px;
-  width: 34px; height: 34px;
+.sidebar-account:hover { border-color: var(--border-strong); background: rgba(255, 255, 255, 0.06); }
+.sidebar-account:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.sidebar-account .user-avatar {
+  flex: 0 0 28px;
+  width: 28px; height: 28px;
   border-radius: 50%;
   background: var(--accent, #ffffff);
   color: var(--accent-ink, #000000);
   font-weight: 700;
-  font-size: 14px;
+  font-size: 12px;
   display: flex; align-items: center; justify-content: center;
+  background-size: cover; background-position: center;
 }
-.sidebar-profile .user-meta { display: flex; flex-direction: column; min-width: 0; }
-.sidebar-profile .user-meta strong { font-size: 13px; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sidebar-profile .user-meta small { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.sidebar-account .user-meta { flex: 1 1 auto; }
+/* Explicit line-heights: the default ones make the two-line stack taller than
+   the 28px avatar, which is what drives the chip's height. */
+.sidebar-account .user-meta strong { font-size: 12.5px; line-height: 1.25; }
+.sidebar-account .user-meta small { font-size: 10.5px; line-height: 1.25; display: flex; align-items: center; gap: 5px; }
+.sidebar-account-chevron { flex: none; opacity: 0.45; }
+.sidebar-account-chevron svg { width: 14px; height: 14px; }
+/* An uploaded picture replaces the initial, so the glyph must not sit on top
+   of the image (the base .user-avatar paints ink, not transparency). */
+.user-avatar.has-image { color: transparent; }
 .acct-status { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); flex: none; }
-.sidebar-profile .user-storage { font-size: 10.5px; color: #6b7280; display: block; margin-top: 2px; }
-.sidebar-profile .user-email { font-size: 10.5px; color: var(--muted); display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Amber dot for guest mode (logged-in keeps the green .acct-status) */
 .acct-status-guest { background: #f59e0b; box-shadow: 0 0 8px rgba(245, 158, 11, 0.8); }
 /* Access / AI-credit gate modal */
 .gate-msg { color: var(--muted); font-size: 13.5px; line-height: 1.6; margin: 2px 0 18px; }
 .gate-actions { display: flex; gap: 10px; }
 .gate-actions .btn { flex: 1; }
-.sidebar-profile .btn { width: 100%; }
+/* ── Account Settings page ────────────────────────────────────────
+   Three cards: guest sign-in, profile, and account/plan/sync. */
+.acct-profile { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.acct-avatar-col { display: flex; flex-direction: column; gap: 10px; align-items: stretch; flex: 0 0 auto; }
+.acct-avatar {
+  width: 112px; height: 112px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent, #ffffff);
+  color: var(--accent-ink, #000000);
+  font-size: 40px; font-weight: 700;
+  border: 2px solid var(--border-strong);
+  flex: none;
+  align-self: center;
+}
+.acct-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.acct-fields { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.acct-rows { display: flex; flex-direction: column; gap: 1px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+.acct-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 11px 14px; background: rgba(255, 255, 255, 0.02); }
+.acct-row > span { color: var(--muted); font-size: 12.5px; flex: none; }
+.acct-row > strong { color: var(--text-strong); font-size: 13px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+[data-theme="light"] .acct-row { background: rgba(0, 0, 0, 0.02); }
 /* Permanent "How to use" guide entry — distinct accent treatment */
 .sidebar-help-btn {
   display: flex;
@@ -1022,7 +1080,10 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
 .db-row:hover { background: rgba(255, 255, 255, 0.04); }
 .db-grid-items { grid-template-columns: minmax(110px, 0.9fr) 2.2fr minmax(52px, 0.5fr) minmax(90px, 0.8fr) 72px; }
 .db-grid-clients { grid-template-columns: minmax(150px, 1.2fr) 2.4fr minmax(52px, 0.5fr) 72px; }
-.db-list-head.db-grid-items, .db-list-head.db-grid-clients { display: grid; align-items: center; gap: 12px; }
+/* Saved Project / Client Header records (Master ERP Engine — Save Record).
+   Same row grammar as the two databases above: id · label · lines · saved · actions. */
+.db-grid-records { grid-template-columns: minmax(110px, 0.85fr) 2.4fr minmax(56px, 0.5fr) minmax(100px, 0.8fr) 118px; }
+.db-list-head.db-grid-items, .db-list-head.db-grid-clients, .db-list-head.db-grid-records { display: grid; align-items: center; gap: 12px; }
 .db-sku strong { color: var(--text-strong); font-size: 13.5px; letter-spacing: 0.01em; }
 .db-name { color: var(--text); font-size: 13.5px; overflow-wrap: anywhere; }
 .db-addr { color: #94a3b8; font-size: 13px; }
@@ -1072,10 +1133,15 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 54
 .db-row .empty-cell { display: block; padding: 18px 10px; }
 @media (max-width: 760px) {
   .db-list-head.db-grid-items,
-  .db-list-head.db-grid-clients { display: none; }
+  .db-list-head.db-grid-clients,
+  .db-list-head.db-grid-records { display: none; }
   .db-grid-items, .db-grid-clients { grid-template-columns: 1fr 72px; }
+  .db-grid-records { grid-template-columns: 1fr 118px; }
   .db-row .db-unit, .db-row .db-rate { grid-column: 1; }
   .db-row .db-del { grid-row: span 3; }
+  /* The saved-date and line-count columns are the first to go when the row
+     runs out of width — the id, the label and the actions always survive. */
+  .db-row .db-rec-lines, .db-row .db-rec-when { display: none; }
 }
 th {
   text-align: left;
@@ -2387,7 +2453,8 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   background: rgba(255, 255, 255, 0.72);
 }
 [data-theme="light"] .sidebar-foot { border-top-color: rgba(0, 0, 0, 0.08); }
-[data-theme="light"] .sidebar-profile { background: rgba(0, 0, 0, 0.03); border-color: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .sidebar-account { background: rgba(0, 0, 0, 0.03); border-color: rgba(0, 0, 0, 0.08); }
+[data-theme="light"] .sidebar-account:hover { background: rgba(0, 0, 0, 0.06); }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
 /* ── Homepage: how-it-works steps ────────────────────────── */
@@ -2697,10 +2764,18 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
   transition: all 0.25s var(--ease);
 }
 .bg-preset:hover { transform: scale(1.08); }
-.bg-preset.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* outline, not just border-color: the swatches carry an inline border-color,
+   which beats a stylesheet declaration — the outline is the part that can
+   never be overridden from the markup. */
+.bg-preset.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .bg-picker { width: 38px; height: 38px; padding: 0; cursor: pointer; border: 1px solid var(--border-strong); background: none; }
 .bg-row { display: flex; align-items: center; gap: 12px; justify-content: center; }
-[data-theme="light"] .bg-preset.active { border-color: var(--accent); }
+[data-theme="light"] .bg-preset.active { border-color: var(--accent); outline-color: var(--text-strong); }
 [data-theme="light"] .bg-preset { border-color: var(--border); }
 .footer-col h3 { margin: 0 0 6px; }
 .footer-link {
@@ -3720,6 +3795,116 @@ body.light-theme .tool-launch {
 [data-theme="light"] .home-db-title { color: #0b1220; }
 [data-theme="light"] .home-db-sub { color: #64748b; }
 [data-theme="light"] .home-db-viewall { color: #4f46e5; }
+
+/* ════════════════════════════════════════════════════════════════
+   MASTER DATABASE — the browse-only view behind the Home card
+   Reuses the .home-db-row grammar for list rows so Home and this view
+   read as one family. New here: the two-pane shell, the tabs, and the
+   read-only detail definitions.
+   ════════════════════════════════════════════════════════════════ */
+.md-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.md-pane { min-width: 0; }
+.md-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.md-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.md-tab:hover { color: var(--text-strong); border-color: rgba(255, 255, 255, 0.16); }
+.md-tab.active {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.45);
+  color: var(--text-strong);
+}
+.md-tab-count {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #8b949e;
+  font-variant-numeric: tabular-nums;
+}
+.md-tab.active .md-tab-count { color: #a5b4fc; }
+.md-search { margin-bottom: 10px; }
+.md-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 470px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.md-rows .home-db-row.is-selected {
+  background: rgba(99, 102, 241, 0.16);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+.md-detail { display: block; }
+.md-empty { margin: 0; font-size: 13px; line-height: 1.55; color: #8b949e; }
+.md-detail-title {
+  margin: 0 0 2px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+.md-detail-sub { margin: 0 0 12px; font-size: 12.5px; color: #8b949e; overflow-wrap: anywhere; }
+.md-field {
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.md-field:last-of-type { border-bottom: none; }
+.md-field dt {
+  flex: 0 0 132px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6b7280;
+  padding-top: 2px;
+}
+.md-field dd {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+.md-field dd.md-blank { color: #6b7280; }
+.md-field dd.md-note { font-size: 12px; color: #94a3b8; }
+.md-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+@media (max-width: 1000px) {
+  .md-layout { grid-template-columns: minmax(0, 1fr); }
+  .md-rows { max-height: 320px; }
+}
+@media (max-width: 560px) {
+  .md-field { flex-direction: column; gap: 3px; }
+}
+[data-theme="light"] .md-tab { background: rgba(15, 23, 42, 0.03); border-color: rgba(15, 23, 42, 0.1); }
+[data-theme="light"] .md-tab:hover { border-color: rgba(15, 23, 42, 0.2); }
+[data-theme="light"] .md-tab.active { background: rgba(99, 102, 241, 0.12); }
+[data-theme="light"] .md-rows .home-db-row.is-selected { background: rgba(99, 102, 241, 0.12); }
+[data-theme="light"] .md-field { border-bottom-color: rgba(15, 23, 42, 0.08); }
+[data-theme="light"] .md-field dt { color: #64748b; }
+[data-theme="light"] .md-detail-sub,
+[data-theme="light"] .md-empty { color: #64748b; }
 
 /* ════════════════════════════════════════════════════════════════
    CONFIRMATION DIALOG — one prompt for every destructive action

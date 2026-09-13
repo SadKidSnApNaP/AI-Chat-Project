@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>sidebar toggle placement test</title>
+<style>html,body{margin:0;font:13px/1.5 monospace}#frame{width:1280px;height:900px;border:0}pre{padding:12px}</style>
+</head>
+<body>
+<iframe id="frame" src="/preview.html"></iframe>
+<pre id="out">running…</pre>
+<script>
+/* The preview viewport is ~645px wide, where the sidebar is an off-canvas
+   drawer and BOTH the collapse transform and the reopen handle live inside
+   `@media (min-width: 1025px)`. A 1280px iframe gives the app a real desktop
+   viewport so the desktop rules actually apply, and being same-origin it lets
+   us drive and measure its DOM directly. */
+const RESULTS = [];
+function ok(name, cond, extra) {
+  RESULTS.push({ name, pass: !!cond, extra: extra === undefined ? '' : String(extra) });
+}
+
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function run() {
+  const w = document.getElementById('frame').contentWindow;
+  const d = w.document;
+  const $ = (id) => d.getElementById(id);
+  const brand = $('sidebar-brand');
+  const toggle = $('sidebar-collapse');
+  const sidebar = $('sidebar');
+  const reopen = $('sidebar-reopen');
+  const more = $('nav-items-more');
+
+  ok('desktop viewport inside the iframe', w.innerWidth >= 1025, w.innerWidth + 'px');
+  ok('toggle exists', !!toggle);
+  ok('brand exists', !!brand);
+
+  // ── Where exactly it sits ──────────────────────────────────────────────
+  ok('toggle is inside .sidebar-head', !!toggle.closest('.sidebar-head'));
+  ok('brand is inside the same .sidebar-head', !!brand.closest('.sidebar-head'));
+  ok('toggle is the NEXT SIBLING of the brand',
+    brand.nextElementSibling === toggle,
+    brand.nextElementSibling ? brand.nextElementSibling.id || brand.nextElementSibling.className : '(none)');
+  ok('toggle is NOT inside #sidebar-nav any more', !toggle.closest('#sidebar-nav'));
+  ok('toggle is NOT inside the MORE section', !toggle.closest('[data-nav-section="more"]'));
+  ok('old "Menu" label span is gone', $('sidebar-collapse-label') === null);
+  ok('toggle is icon-only', toggle.textContent.trim() === '' && !!toggle.querySelector('svg'));
+
+  const br = brand.getBoundingClientRect();
+  const tr = toggle.getBoundingClientRect();
+  const sr = sidebar.getBoundingClientRect();
+  ok('toggle sits to the RIGHT of the brand name', tr.left >= br.right - 1,
+    'brand.right=' + Math.round(br.right) + ' toggle.left=' + Math.round(tr.left));
+  ok('toggle is vertically centred on the brand row',
+    Math.abs((tr.top + tr.height / 2) - (br.top + br.height / 2)) <= 2,
+    'Δ=' + ((tr.top + tr.height / 2) - (br.top + br.height / 2)).toFixed(2) + 'px');
+  ok('both fit inside the sidebar', tr.right <= sr.right && br.left >= sr.left,
+    'sidebar right=' + Math.round(sr.right) + ' toggle right=' + Math.round(tr.right));
+  ok('toggle is at the TOP of the sidebar (above the nav)',
+    tr.top < $('sidebar-nav').getBoundingClientRect().top,
+    'toggle.top=' + Math.round(tr.top));
+  ok('toggle does not overlap the brand', tr.left >= br.right - 1);
+  ok('brand name is not truncated at rest',
+    brand.querySelector('strong').scrollWidth <= brand.querySelector('strong').clientWidth + 1);
+
+  // ── MORE section contents ──────────────────────────────────────────────
+  const moreIds = Array.from(more.querySelectorAll('.sidebar-link')).map(b => b.id);
+  ok('MORE holds exactly two items', moreIds.length === 2, moreIds.join(', '));
+  ok('MORE = Other Utilities + Premium Plans',
+    moreIds.length === 2 && moreIds.indexOf('sidebar-utilities') !== -1 && moreIds.indexOf('sidebar-plans') !== -1);
+  ok('MORE header still toggles', !!more.closest('.nav-section').querySelector('.nav-group-label'));
+
+  // ── Behaviour: collapse, no navigation ────────────────────────────────
+  const hashBefore = w.location.hash;
+  const cls = d.body.classList;
+  toggle.click();
+  ok('click collapses the rail', cls.contains('sidebar-collapsed'));
+  // The slide is a 0.34s transition, so read the final values after it ends —
+  // a synchronous read still sees the start state (identity matrix, opacity 1).
+  await wait(600);
+  const st = w.getComputedStyle(sidebar);
+  ok('sidebar is actually off-screen',
+    st.opacity === '0' && st.transform !== 'none' && st.transform.indexOf('matrix(1, 0, 0, 1, 0, 0)') !== 0,
+    'opacity=' + st.opacity + ' transform=' + st.transform);
+  ok('sidebar stops catching clicks while collapsed', st.pointerEvents === 'none', st.pointerEvents);
+  ok('collapsing did NOT navigate', w.location.hash === hashBefore, hashBefore + ' → ' + w.location.hash);
+  ok('toggle reports the action for assistive tech',
+    toggle.getAttribute('aria-label') === 'Expand the navigation' && toggle.getAttribute('aria-expanded') === 'false',
+    toggle.getAttribute('aria-label'));
+
+  // ── The way back: the left-edge handle ────────────────────────────────
+  const rr = reopen.getBoundingClientRect();
+  const rd = w.getComputedStyle(reopen).display;
+  // position:fixed blockifies the declared inline-flex, so the computed value
+  // is 'flex' — assert visibility, not the exact keyword.
+  ok('reopen handle is visible while collapsed', rd !== 'none' && rr.width > 0,
+    'display=' + rd + ' width=' + Math.round(rr.width) + 'px');
+  ok('reopen handle sits at the left edge',
+    Math.round(rr.left) === 0 && rr.top > 0,
+    'left=' + Math.round(rr.left) + ' top=' + Math.round(rr.top));
+  reopen.click();
+  await wait(600);
+  ok('reopen restores the rail', !cls.contains('sidebar-collapsed'));
+  ok('reopen still did not navigate', w.location.hash === hashBefore, w.location.hash);
+  ok('toggle resets its label after expanding',
+    toggle.getAttribute('aria-label') === 'Collapse the navigation' && toggle.getAttribute('aria-expanded') === 'true',
+    toggle.getAttribute('aria-label'));
+  ok('sidebar is back on screen', w.getComputedStyle(sidebar).opacity === '1');
+
+  // ── Round trip twice, to prove the state is not one-way ───────────────
+  toggle.click();
+  const collapsedAgain = cls.contains('sidebar-collapsed');
+  reopen.click();
+  await wait(500);
+  ok('collapse → expand → collapse → expand round-trips',
+    collapsedAgain && !cls.contains('sidebar-collapsed'));
+
+  // ── The brand button still opens Home ─────────────────────────────────
+  w.location.hash = '#/plans';
+  brand.click();
+  ok('brand button still navigates Home', w.location.hash === '#/home', w.location.hash);
+
+  const pass = RESULTS.filter(r => r.pass).length;
+  const lines = RESULTS.map(r => (r.pass ? 'PASS  ' : 'FAIL  ') + r.name + (r.extra ? '   [' + r.extra + ']' : ''));
+  document.getElementById('out').textContent = lines.join('\n') + '\n\n' + pass + '/' + RESULTS.length + ' passed';
+  window.__testResults = { pass, total: RESULTS.length, results: RESULTS };
+}
+
+document.getElementById('frame').addEventListener('load', function () {
+  try { setTimeout(run, 700); }
+  catch (e) {
+    document.getElementById('out').textContent = 'HARNESS ERROR: ' + (e && e.stack || e);
+    window.__testResults = { pass: 0, total: 0, error: String(e && e.stack || e) };
+  }
+});
+</script>
+</body>
+</html>

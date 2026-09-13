@@ -21,64 +21,60 @@
    * Global keys (theme, accent, auth itself) stay unprefixed.
    * The local `localStorage` below shadows window.localStorage
    * for the whole IIFE, so no module code had to change.        */
-  const GLOBAL_KEYS = [];
+  const GLOBAL_KEYS = ['cm-theme', 'cm-accent-v1', 'cm-bg-v1', 'users', 'currentUser'];
   const SESSION_EMAIL = (function () {
     /* Read via window.localStorage: the IIFE-scoped shim below is in its
-     * temporal dead zone at this point (const not yet initialized). The
-     * address comes from the REAL Supabase session that cloud.js has
-     * already loaded from storage, so no local flag can fake it. */
-    try {
-      if (window.NexoraCloud) {
-        const email = window.NexoraCloud.sessionEmail();
-        if (email) return email;
-      }
-    } catch (e) { /* ignore */ }
-    return '';
+     * temporal dead zone at this point (const not yet initialized). */
+    try { return window.localStorage.getItem('currentUser') || ''; } catch (e) { return ''; }
   })();
   function userKey(key) {
     if (GLOBAL_KEYS.indexOf(key) !== -1 || !SESSION_EMAIL) return key;
     return 'u:' + SESSION_EMAIL + ':' + key;
   }
-  /* The shim stays the single write choke point: every per-user write is
-     also handed to the Supabase sync queue (cloud.js), which is why no
-     module code had to change to become cloud-backed. */
   const localStorage = {
     getItem: function (k) { try { return window.localStorage.getItem(userKey(k)); } catch (e) { return null; } },
-    setItem: function (k, v) {
-      try { window.localStorage.setItem(userKey(k), v); } catch (e) { /* ignore */ }
-      try { if (window.NexoraCloud) window.NexoraCloud.noteWrite(k, v); } catch (e) { /* ignore */ }
-    },
-    removeItem: function (k) {
-      try { window.localStorage.removeItem(userKey(k)); } catch (e) { /* ignore */ }
-      try { if (window.NexoraCloud) window.NexoraCloud.noteRemove(k); } catch (e) { /* ignore */ }
-    }
+    setItem: function (k, v) { try { window.localStorage.setItem(userKey(k), v); } catch (e) { /* ignore */ } },
+    removeItem: function (k) { try { window.localStorage.removeItem(userKey(k)); } catch (e) { /* ignore */ } }
   };
 
-  /* ── Auth (real Supabase accounts) ───────────────────────
-     There is no local account store any more: identity, password checking
-     and the email OTP all live in Supabase. These helpers only READ the
-     session that cloud.js keeps in sync. */
-  function cloud() { return window.NexoraCloud || null; }
+  /* ── Auth (local accounts, persisted) ──────────────────── */
+  const USERS_KEY = 'users';
+  const SESSION_KEY = 'currentUser';
+  function hashPass(pw) {
+    /* Non-reversible digest — local convenience only, NOT real security. */
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    const s = String(pw);
+    for (let i = 0; i < s.length; i++) {
+      const ch = s.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36) + '-' + ((h2 >>> 0).toString(36));
+  }
+  function getUsers() {
+    try { return JSON.parse(window.localStorage.getItem(USERS_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function saveUsers(users) {
+    try { window.localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch (e) { /* ignore */ }
+  }
   function validEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim()); }
-  /** The signed-in account, derived from the real session — never a flag. */
   function currentUser() {
     if (!SESSION_EMAIL) return null;
-    const c = cloud();
-    const name = (c && c.sessionName()) || SESSION_EMAIL.split('@')[0];
-    return { name: name, email: SESSION_EMAIL };
+    const users = getUsers();
+    for (let i = 0; i < users.length; i++) {
+      if (users[i].email === SESSION_EMAIL) return users[i];
+    }
+    return { name: SESSION_EMAIL.split('@')[0], email: SESSION_EMAIL };
   }
-  /* Reload so every module re-reads its (re-namespaced) data keys. */
-  function reloadApp() { window.location.reload(); }
-  /* Pre-Supabase fake-auth artefacts. They no longer grant anything —
-     `nexora_user_logged_in` is not consulted at all — but they are purged
-     so a stale flag can never be mistaken for a real session. Per-account
-     caches under "u:<email>:" are deliberately left alone. */
-  function purgeLegacyAuth() {
+  function setSession(email) {
     try {
-      window.localStorage.removeItem('nexora_user_logged_in');
-      window.localStorage.removeItem('users');
-      window.localStorage.removeItem('currentUser');
+      if (email) window.localStorage.setItem(SESSION_KEY, email);
+      else window.localStorage.removeItem(SESSION_KEY);
     } catch (e) { /* ignore */ }
+    /* Reload so every module re-reads its (now namespaced) data keys. */
+    window.location.reload();
   }
 
   /* ── Auth UI (modal + sidebar badge) ─────────────────── */
@@ -118,147 +114,69 @@
     $('auth-modal').hidden = true;
   }
 
-  /* ── Access control & the free-use meter ────────────────────────
-     Three tiers, and the gate is the REAL Supabase session (see isLoggedIn):
-
-       guest   → no tool access at all; every attempt opens Login / Sign Up
-       free    → ONE execution of each tool, ever (persisted per account)
-       premium → unlimited; the account panel reads "Unlimited Credits"
-
-     Every key here goes through the per-user shim, so one account can never
-     spend another account's allowance. */
+  /* ── Access control & AI credits ────────────────────────────────
+     Two GLOBAL window.localStorage keys (deliberately NOT routed
+     through the per-user key shim): the login flag and the balance. */
+  const LOGGED_IN_KEY = 'nexora_user_logged_in';
+  const CREDITS_KEY = 'nexora_ai_credits';
   const ROLE_KEY = 'nexora_user_role';
-  const PLAN_KEY = 'nexora_plan';                 // 'free' (default) | 'premium'
-  const FREE_USAGE_KEY = 'nexora_free_usage';     // { toolId: timesUsed }
-  const LEGACY_CREDITS_KEY = 'nexora_ai_credits'; // retired single-pool counter
-  /* The free tier allows exactly ONE execution per tool — not one shared
-     pool across every tool, and not one per browser session. */
-  const FREE_LIMIT = 1;
-  // Developer / admin test account — bypasses the gate entirely.
+  // Developer / admin test account — bypasses the credit gate entirely.
   const ADMIN_EMAIL = 'himalabey.503@gmail.com';
+  const ADMIN_CREDITS = 99999;
   function rawGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function rawSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
   function rawDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
-  // Signed in = a session really exists (verified by Supabase), not a flag.
-  function isLoggedIn() { const c = cloud(); return !!(c && c.isSignedIn()); }
-  /* ── Plan: free (default) or premium ────────────────────────────
-     Per account, via the namespaced shim. No payment provider is wired up
-     in this build, so the Premium Plans buttons set this flag themselves;
-     swapping in a real subscription means replacing setPlan() and leaving
-     the gate below untouched. */
-  function getPlan() {
-    try { return localStorage.getItem(PLAN_KEY) === 'premium' ? 'premium' : 'free'; } catch (e) { return 'free'; }
-  }
-  function setPlan(plan) {
-    try { localStorage.setItem(PLAN_KEY, plan === 'premium' ? 'premium' : 'free'); } catch (e) { /* ignore */ }
-    updateCreditUI();
-  }
-  /* Premium — and the developer account — are unlimited: no meter, no limit. */
-  function isPremium() { return isAdmin() || getPlan() === 'premium'; }
-
-  /* ── Free-use meter, PER TOOL ───────────────────────────────────
-     { toolId: uses }. Using one tool never spends another tool's single
-     free execution, and the count survives reloads — it is only ever
-     cleared by "Reset all data". */
-  function usageMap() {
-    let raw = null;
-    try { raw = localStorage.getItem(FREE_USAGE_KEY); } catch (e) { raw = null; }
-    let obj = null;
-    try { obj = raw ? JSON.parse(raw) : null; } catch (e) { obj = null; }
-    return (obj && typeof obj === 'object') ? obj : {};
-  }
-  function usesFor(toolId) {
-    const n = parseInt(usageMap()[toolId], 10);
+  function isLoggedIn() { return rawGet(LOGGED_IN_KEY) === 'true'; }
+  function getCredits() {
+    const n = parseInt(rawGet(CREDITS_KEY), 10);
     return (isFinite(n) && n > 0) ? n : 0;
   }
-  function freeLeft(toolId) { return Math.max(0, FREE_LIMIT - usesFor(toolId)); }
-  function recordToolUse(toolId) {
-    const map = usageMap();
-    map[toolId] = usesFor(toolId) + 1;
-    try { localStorage.setItem(FREE_USAGE_KEY, JSON.stringify(map)); } catch (e) { /* ignore */ }
-  }
-  /* Every metered section: the 12 calculators + the ERP engine. */
-  function meteredToolIds() { return Object.keys(TOOL_VIEWS).concat(['erp']); }
-  function freeToolsLeft() {
-    const ids = meteredToolIds();
-    let left = 0;
-    for (let i = 0; i < ids.length; i++) if (freeLeft(ids[i]) > 0) left++;
-    return left;
-  }
-  /* view → tool id, so an export fired from inside a tool is metered against
-     the tool that is actually open rather than a shared bucket. */
-  function toolIdForView(view) {
-    const v = view || currentView;
-    for (const tid in TOOL_VIEWS) { if (TOOL_VIEWS[tid] === v) return tid; }
-    if (v === 'erp') return 'erp';
-    return '';
-  }
-  function toolLabel(toolId) {
-    if (toolId === 'erp') return 'Master ERP Engine';
-    const t = TOOLS[toolId];
-    return (t && (t.short || t.name)) || 'this tool';
-  }
+  function setCredits(n) { rawSet(CREDITS_KEY, String(Math.max(0, Math.floor(Number(n)) || 0))); }
   function isAdminEmail(email) {
     return String(email || '').trim().toLowerCase() === ADMIN_EMAIL;
   }
-  // Admin = the developer account, by live session email or stored role.
+  // Admin = the developer account, either by role flag or by live session email.
   function isAdmin() {
-    let role = null;
-    try { role = localStorage.getItem(ROLE_KEY); } catch (e) { role = null; }
-    if (role === 'admin') return true;
+    if (rawGet(ROLE_KEY) === 'admin') return true;
     const user = currentUser();
     return !!(user && isAdminEmail(user.email));
   }
-  // The developer account stores the admin role — the unlimited bypass.
+  // Developer accounts store the admin role and an effectively unlimited balance.
   function grantAdminEntitlements() {
-    try { localStorage.setItem(ROLE_KEY, 'admin'); } catch (e) { /* ignore */ }
+    rawSet(ROLE_KEY, 'admin');
+    rawSet(CREDITS_KEY, String(ADMIN_CREDITS));
   }
-  // A normal account is simply a free-tier account.
+  // Every fresh login / sign-up grants the single free AI execution
+  // (developer accounts skip the metering instead).
   function grantLoginEntitlements(email) {
-    const who = email || SESSION_EMAIL;
-    if (isAdminEmail(who)) { grantAdminEntitlements(); return; }
-    try { localStorage.setItem(ROLE_KEY, 'user'); } catch (e) { /* ignore */ }
-  }
-  /* Runs on every boot: purge the old fake-auth keys, then derive this
-     account's role from the real session. Nothing is granted to a guest,
-     and the free-use meter is never reset here. */
-  function initAccessState() {
-    purgeLegacyAuth();
-    // The old single-pool counter is retired — drop it so it can never be
-    // mistaken for a balance the gate still consults.
-    try { localStorage.removeItem(LEGACY_CREDITS_KEY); } catch (e) { /* ignore */ }
-    if (!isLoggedIn()) return;
+    rawSet(LOGGED_IN_KEY, 'true');
     const user = currentUser();
+    const who = email || (user && user.email) || '';
+    if (isAdminEmail(who)) { grantAdminEntitlements(); return; }
+    rawSet(ROLE_KEY, 'user');
+    rawSet(CREDITS_KEY, '1');
+  }
+  // Accounts created before the gate keep their session, granted one credit;
+  // an existing developer session is promoted to admin with unlimited credits.
+  function initAccessState() {
+    const user = currentUser();
+    if (user && !isLoggedIn()) rawSet(LOGGED_IN_KEY, 'true');
     if (user && isAdminEmail(user.email)) { grantAdminEntitlements(); return; }
-    grantLoginEntitlements(user ? user.email : '');
+    if (isLoggedIn() && rawGet(CREDITS_KEY) === null) rawSet(CREDITS_KEY, '1');
   }
-  /* Executions granted in THIS session. Opening a tool spends its single free
-     use once; every PDF / Excel trigger fired from inside that open tool is
-     part of the same execution, so a document never costs a second use. The
-     grant is dropped the moment the view changes, which is what makes
-     re-entry after the free use a blocked, upgrade-prompting action. */
-  const sessionGrants = {};
-  function releaseGrantsFrom(view) {
-    const tid = toolIdForView(view);
-    if (tid) delete sessionGrants[tid];
-  }
-
-  function openGateModal(kind, toolId) {
+  function openGateModal(kind) {
     const t = $('gate-title'), m = $('gate-msg');
-    const lb = $('gate-login'), sb = $('gate-signup'), up = $('gate-upgrade');
+    const lb = $('gate-login'), sb = $('gate-signup');
     if (kind === 'limit') {
       if (t) t.textContent = 'AI Credit Limit Reached';
-      if (m) m.textContent = 'You have used the free execution of ' + toolLabel(toolId) +
-        '. Premium gives you unlimited use of every tool, export and document.';
+      if (m) m.textContent = 'You have used your 1 free AI tool execution. Upgrade or contact support for full access.';
       if (lb) lb.hidden = true;
       if (sb) sb.hidden = true;
-      if (up) up.hidden = false;
     } else {
       if (t) t.textContent = 'Authentication Required';
       if (m) m.textContent = 'Please Login or Sign Up to access Nexora Engine AI utilities.';
       if (lb) lb.hidden = false;
       if (sb) sb.hidden = false;
-      if (up) up.hidden = true;
     }
     const modal = $('gate-modal');
     if (modal) modal.hidden = false;
@@ -268,61 +186,46 @@
   // Spec-named modal openers (thin aliases over the shared gate modal:
   // 'auth' = "Authentication Required", 'limit' = "AI Credit Limit Reached").
   function showAuthRequiredModal() { openGateModal('auth'); }
-  function showCreditLimitModal(toolId) { openGateModal('limit', toolId); }
-  // Refresh every metered piece of UI at once (sidebar panel + health row).
-  function updateCreditUI() { renderAuthUi(); renderStorageStatus(); renderPlanHealth(); }
+  function showCreditLimitModal() { openGateModal('limit'); }
+  // Refresh every credit-bearing piece of UI at once (sidebar status + storage line).
+  function updateCreditUI() { renderAuthUi(); renderStorageStatus(); }
 
-  /* Strict access validation — the one gate.
+  /* Strict access + credit validation. Every tool launch, PDF generator and
+     Excel export trigger must pass through here BEFORE any of its own logic
+     (or any print dialog) runs. Returns false without deducting when blocked. */
+  function checkAccessAndCredits() {
+    const loggedIn = rawGet(LOGGED_IN_KEY) === 'true';
 
-       guest   → blocked, with the Login / Sign Up modal
-       free    → spends this tool's single use the first time; blocked and
-                 redirected to Premium Plans once that use is gone
-       premium → allowed, nothing metered
-
-     `toolId` names the tool being opened or exported from. When it is
-     omitted the tool is derived from the view that is open, so an export
-     inside a tool is metered against that tool and not a shared bucket.
-     Returns false without charging anything when it blocks. */
-  function checkAccessAndCredits(toolId) {
-    const id = toolId || toolIdForView(currentView) || 'general';
-    // Guest: no tool usage of any kind — ask them to sign in.
-    if (!isLoggedIn()) {
+    if (!loggedIn) {
       showAuthRequiredModal();
       return false;
     }
-    // Premium / developer: unlimited, and never metered.
-    if (isPremium()) {
-      let role = null;
-      try { role = localStorage.getItem(ROLE_KEY); } catch (e) { role = null; }
-      if (isAdminEmail(SESSION_EMAIL) && role !== 'admin') grantAdminEntitlements();
+    // Developer / admin bypass — run every tool, PDF and export without
+    // spending credits or ever seeing a block screen.
+    if (isAdmin()) {
+      if (rawGet(ROLE_KEY) !== 'admin') grantAdminEntitlements();
       return true;
     }
-    // Continuing an execution that already paid for itself — an export from
-    // the tool that is open right now — is not a second use.
-    if (sessionGrants[id]) return true;
-    if (freeLeft(id) <= 0) {
-      showCreditLimitModal(id);
-      // Block the tool AND take the user where they can lift the limit.
-      if (currentView !== 'plans') showView('plans', { gate: false });
+    const credits = parseInt(rawGet(CREDITS_KEY) || '0', 10) || 0;
+    if (credits <= 0) {
+      showCreditLimitModal();
       return false;
     }
-    recordToolUse(id);
-    sessionGrants[id] = true;
-    showToast('1 AI Credit Used \u2014 free use of ' + toolLabel(id));
+    // Deduct credit upon valid execution
+    rawSet(CREDITS_KEY, String(credits - 1));
+    showToast('1 AI Credit Used');
     updateCreditUI();
     return true;
   }
 
   // Single choke point every tool launch passes through.
-  function consumeToolCredit(toolId) { return checkAccessAndCredits(toolId); }
+  function consumeToolCredit() { return checkAccessAndCredits(); }
 
   /* Wrap a click handler so a failed gate blocks the underlying logic
-     outright — no export, no print dialog, no tool view. Pass the tool id
-     for actions that run outside the tool's own view; inside a tool view
-     the active view already supplies it. */
-  function gateClick(handler, toolId) {
+     outright — no export, no print dialog, no tool view. */
+  function gateClick(handler) {
     return function (e) {
-      if (!checkAccessAndCredits(toolId)) {
+      if (!checkAccessAndCredits()) {
         if (e) {
           if (e.preventDefault) e.preventDefault();
           if (e.stopPropagation) e.stopPropagation();
@@ -336,213 +239,50 @@
 
   // Same gate for programmatic starters that receive no click event
   // (e.g. re-running an export from the History list).
-  function gated(start, toolId) {
+  function gated(start) {
     return function () {
-      if (!checkAccessAndCredits(toolId)) return false;
+      if (!checkAccessAndCredits()) return false;
       return start.apply(this, arguments);
     };
   }
-  /* ── Account surface: the compact sidebar chip + Account Settings page ──
-     Both are painted from ONE plan/session state so they can never disagree.
-     The chip is deliberately one row; everything it used to list (email,
-     credits, storage, sync, Log out, Login / Sign up) now lives on the page
-     it opens. */
-  function planState() {
-    if (!isLoggedIn()) return { key: 'guest', pill: 'Guest', credits: 'Sign in required' };
-    if (isAdmin()) return { key: 'admin', pill: 'Developer \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
-    if (getPlan() === 'premium') return { key: 'premium', pill: 'Premium \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
-    const total = meteredToolIds().length;
-    const left = freeToolsLeft();
-    return {
-      key: 'free',
-      pill: 'Free plan',
-      credits: left > 0 ? left + ' of ' + total + ' tools still free' : 'Free uses used up'
-    };
-  }
-
-  /* Profile picture: a data URL in the namespaced shim, so it is per account.
-     Deliberately NOT in Supabase — a data URL in user_metadata would be
-     carried in the JWT, and anything multi-KB there breaks request headers. */
-  const AVATAR_KEY = 'nexora_avatar_v1';
-  function getAvatar() { try { return localStorage.getItem(AVATAR_KEY) || ''; } catch (e) { return ''; } }
-  function setAvatar(dataUrl) {
-    try {
-      if (dataUrl) localStorage.setItem(AVATAR_KEY, dataUrl);
-      else localStorage.removeItem(AVATAR_KEY);
-    } catch (e) { /* ignore */ }
-    paintAvatar();
-  }
-  function avatarInitial() {
-    const user = currentUser();
-    const name = (user && user.name) || 'G';
-    return (name.trim().charAt(0) || '?').toUpperCase();
-  }
-  /* Paints every avatar node at once (chip + page) — one picture, two sizes. */
-  function paintAvatar() {
-    const url = getAvatar();
-    const initial = avatarInitial();
-    const chip = $('chip-avatar');
-    if (chip) {
-      chip.style.backgroundImage = url ? 'url("' + url + '")' : '';
-      chip.classList.toggle('has-image', !!url);
-      chip.textContent = url ? '' : initial;
-    }
-    const img = $('acct-avatar-img'), ini = $('acct-avatar-initial');
-    if (img) {
-      if (url) { img.src = url; img.hidden = false; }
-      else { img.removeAttribute('src'); img.hidden = true; }
-    }
-    if (ini) { ini.textContent = initial; ini.hidden = !!url; }
-    const rm = $('acct-avatar-remove');
-    if (rm) rm.hidden = !url;
-  }
-  /* Downscale before storing. The picture is a data URL in localStorage, so an
-     unshrunk camera photo would both blow the quota and be re-decoded on every
-     boot. PNG keeps transparency when it stays small; otherwise JPEG. */
-  function shrinkImageFile(file, max) {
-    return new Promise(function (resolve, reject) {
-      if (!file || !/^image\//.test(file.type || '')) { reject(new Error('Please choose an image file.')); return; }
-      if (file.size > 8 * 1024 * 1024) { reject(new Error('That image is larger than 8 MB. Please choose a smaller one.')); return; }
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = function () {
-        try {
-          const scale = Math.min(1, (max || 256) / Math.max(img.width || 1, img.height || 1));
-          const w = Math.max(1, Math.round((img.width || 1) * scale));
-          const h = Math.max(1, Math.round((img.height || 1) * scale));
-          const cv = document.createElement('canvas');
-          cv.width = w; cv.height = h;
-          cv.getContext('2d').drawImage(img, 0, 0, w, h);
-          let out = cv.toDataURL('image/png');
-          if (out.length > 60000) out = cv.toDataURL('image/jpeg', 0.85);
-          resolve(out);
-        } catch (err) {
-          reject(new Error('That image could not be processed.'));
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-      };
-      img.onerror = function () {
-        URL.revokeObjectURL(url);
-        reject(new Error('That file could not be read as an image.'));
-      };
-      img.src = url;
-    });
-  }
-  function fmtJoined(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  }
-  /* The Account Settings page shows only the cards that apply: guests get the
-     sign-in card, signed-in accounts get profile + account. */
-  function renderAccount() {
-    const user = currentUser();
-    const signedIn = !!user;
-    const guestCard = $('acct-guest'), userCard = $('acct-user'), metaCard = $('acct-meta-card');
-    if (guestCard) guestCard.hidden = signedIn;
-    if (userCard) userCard.hidden = !signedIn;
-    if (metaCard) metaCard.hidden = !signedIn;
-    if (!signedIn) { paintAvatar(); return; }
-
-    const plan = planState();
-    const pill = $('acct-plan-pill');
-    if (pill) {
-      pill.textContent = plan.pill;
-      const strong = plan.key === 'premium' || plan.key === 'admin';
-      pill.classList.toggle('pill-muted', !strong);
-      pill.classList.toggle('pill-in', strong);
-    }
-    const set = function (id, text) {
-      const el = $(id);
-      if (el) el.textContent = text || '\u2014';
-    };
-    const c = cloud();
-    set('acct-row-email', user.email);
-    set('acct-row-created', fmtJoined(c && c.sessionCreatedAt ? c.sessionCreatedAt() : ''));
-    set('acct-row-plan', plan.pill);
-    set('acct-row-credits', plan.credits);
-    const changeBtn = $('acct-change-plan');
-    if (changeBtn) changeBtn.hidden = plan.key !== 'free';
-
-    const email = $('acct-email');
-    if (email) email.value = user.email || '';
-    const name = $('acct-name');
-    // Never overwrite what is being typed — a repaint can land mid-edit.
-    if (name && document.activeElement !== name) name.value = user.name || '';
-    paintAvatar();
-  }
-
-  /* The ONE painter for the chip, the page and (via renderPlanHealth) the Home
-     health row — so no two of them can ever show a different plan. */
   function renderAuthUi() {
     const user = currentUser();
-    const signedIn = !!user;
-    const chipName = $('chip-name');
-    if (chipName) chipName.textContent = signedIn ? (user.name || user.email.split('@')[0]) : 'Guest';
-    const chipStatus = $('chip-status');
-    if (chipStatus) {
-      const plan = planState();
-      chipStatus.textContent = !signedIn ? 'Not signed in'
-        : plan.key === 'admin' ? 'Admin \u2014 unlimited'
-        : plan.key === 'premium' ? 'Premium \u2014 unlimited'
-        : 'Free plan';
+    const guest = $('auth-guest'), badge = $('user-badge');
+    if (!guest || !badge) return;
+    guest.hidden = !!user;
+    badge.hidden = !user;
+    if (user) {
+      const name = user.name || user.email.split('@')[0];
+      $('user-name').textContent = name;
+      $('user-email').textContent = user.email;
+      $('user-avatar').textContent = name.trim().charAt(0).toUpperCase() || '?';
     }
-    const dot = $('chip-dot');
-    if (dot) dot.classList.toggle('acct-status-guest', !signedIn);
-    renderAccount();
-    renderPlanHealth();
-  }
-
-  /* Display name lives in Supabase user_metadata.full_name, so it follows the
-     account to any device. supabase-js writes the updated user back into the
-     stored session, which is why currentUser() picks it up without a reload. */
-  async function saveDisplayName() {
-    const input = $('acct-name');
-    const name = input ? String(input.value || '').trim() : '';
-    if (!name) { showToast('Please enter a display name.', 'error'); return; }
-    if (name.length > 80) { showToast('Please keep the display name under 80 characters.', 'error'); return; }
-    const c = cloud();
-    if (!c || !c.auth || !c.auth.updateProfile) {
-      showToast('The cloud backend could not be loaded. Check your connection and reload.', 'error');
-      return;
-    }
-    const btn = $('acct-name-save');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
-    const res = await c.auth.updateProfile({ fullName: name });
-    if (btn) { btn.disabled = false; btn.textContent = 'Save profile'; }
-    if (!res.ok) { showToast(res.message || 'Could not save your profile.', 'error'); return; }
-    renderAuthUi();
-    showToast('Display name updated.');
-  }
-
-  async function useAvatarFile(file) {
-    try {
-      const dataUrl = await shrinkImageFile(file, 256);
-      setAvatar(dataUrl);
-      showToast('Profile picture updated \u2014 kept in this browser only.');
-    } catch (e) {
-      showToast((e && e.message) || 'That image could not be used.', 'error');
+    // Access status + live AI-credit line
+    const credits = user ? getCredits() : 0;
+    const gs = $('guest-status');
+    if (gs) gs.textContent = 'Guest Account (0 Credits)';
+    const us = $('user-status');
+    if (us) {
+      us.textContent = (user && isAdmin())
+        ? 'Logged In (Admin - Unlimited Testing)'
+        : 'Logged In (' + credits + (credits === 1 ? ' Credit Available)' : ' Credits Left)');
     }
   }
   /* ── Sign-up Email OTP verification (step 2 of the auth modal) ────
-     Sign up is two steps: the registration form creates the account in
-     Supabase (which emails a 6-digit code), then the verification view
-     exchanges that code for a real session through verifyOtp().
-
-     The code is generated and checked BY SUPABASE, never locally, so no
-     secret is kept in the page and no code is ever rendered into the UI.
-
-     OTP_TTL_MS only drives the on-screen countdown; the authoritative
-     expiry is the project's Auth setting. Supabase's email OTP expiry
-     defaults to 3600s — if you change it in the dashboard
-     (Authentication → Emails → OTP expiry), change this constant to
-     match so the countdown tells the truth. */
-  const OTP_TTL_MS = 60 * 60 * 1000; // keep in step with the Supabase OTP expiry
+     Sign up is two steps: the registration form issues a random
+     6-digit code, then the verification view checks it against an
+     exact 2-minute expiry before the account is actually created.
+     The code is NEVER rendered into the page — there is no on-screen
+     toast — it is handed to sendVerificationEmail(), whose dev build
+     logs it to the console. Swap the commented fetch() back in to
+     deliver real mail from a backend. */
+  const OTP_TTL_MS = 2 * 60 * 1000; // codes are valid for exactly 2 minutes
   let otpTimerId = null;
-  let pendingSignup = null; // { name, email } held until the code verifies
+  let pendingSignup = null; // { name, email, pass } held until the code verifies
+  window.currentSignupOTP = null; // spec-named globals (also handy for testing)
   window.otpExpiry = 0;
+
+  function randomOtp() { return Math.floor(100000 + Math.random() * 900000).toString(); }
   function showOtpError(msg) {
     const el = $('otp-error');
     if (!el) return;
@@ -579,13 +319,21 @@
       if (Date.now() > window.otpExpiry) stopOtpTimer();
     }, 1000);
   }
-  /* Supabase mints AND checks the 6-digit code; only the DELIVERY is ours.
-     With the "Send Email" auth hook configured, Supabase stops using its own
-     mailer (the 2 emails/hour cap that was rejecting signups) and POSTs the
-     signed payload to /api/send-code, which relays it through Resend. Nothing
-     is called from here: signUp() triggers the mail server-side, and
-     verifyOtp() below is what validates the code the user types.
-     See api/send-code.js. */
+ async function sendVerificationEmail(email, otp) {
+  try {
+    const res = await fetch('/api/send-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code: otp }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to send email');
+    console.log('Verification email dispatched:', data);
+  } catch (err) {
+    console.error('Email dispatch error:', err);
+    showOtpError(err.message);
+  }
+}
   // Swap the modal between the registration form and the verification view.
   function showAuthStep(step) {
     const isOtp = step === 'otp';
@@ -605,106 +353,101 @@
   function resetAuthFlow() {
     stopOtpTimer();
     pendingSignup = null;
+    window.currentSignupOTP = null;
     window.otpExpiry = 0;
     showOtpError('');
     const f = $('otp-code');
     if (f) f.value = '';
     showAuthStep('form');
   }
-  /* Step 1 submitted: create the (unverified) Supabase account, which is
-     what triggers the verification email, then show the code entry view.
-     `alreadyRegistered` skips creation — used when someone tries to log in
-     with an account that was never verified. */
-  async function beginOtpVerification(name, email, pass, alreadyRegistered) {
-    pendingSignup = { name: name || '', email: email };
-    const c = cloud();
-    if (!c) { showAuthError('The cloud backend could not be loaded. Check your connection and reload.'); return; }
-    if (!alreadyRegistered) {
-      const res = await c.auth.signUp(email, pass, name);
-      if (!res.ok) { showAuthError(res.message); return; }
-      if (!res.needsVerification) { reloadApp(); return; } // confirmations disabled → already signed in
-    }
+  // Issue a fresh code (+2 minutes) and open the verification view.
+  function beginOtpVerification(name, email, passHash) {
+    pendingSignup = { name: name, email: email, pass: passHash };
+    const randomCode = randomOtp();
+    window.currentSignupOTP = randomCode;
+    window.otpExpiry = Date.now() + OTP_TTL_MS;
     const em = $('otp-email');
     if (em) em.textContent = email;
     const f = $('otp-code');
     if (f) f.value = '';
-    showAuthError('');
     showOtpError('');
     showAuthStep('otp');
-    window.otpExpiry = Date.now() + OTP_TTL_MS;
     startOtpTimer();
+    // Fire-and-forget: the code is only ever delivered out of band (console
+    // in dev, email in production) — never printed into the page.
+    sendVerificationEmail(email, randomCode).catch(function () { /* ignore */ });
   }
-  // Resend: fresh code from Supabase, countdown restarted from the top.
-  async function resendOtp() {
+  // Resend: clear timers, fresh code, +2 minutes, new delivery attempt.
+  function resendOtp() {
     if (!pendingSignup) return;
-    const c = cloud();
-    if (!c) { showOtpError('The cloud backend could not be loaded. Check your connection and reload.'); return; }
-    const btn = $('otp-resend');
-    if (btn) btn.disabled = true;
-    const res = await c.auth.resendOtp(pendingSignup.email);
-    if (btn) btn.disabled = false;
-    if (!res.ok) { showOtpError(res.message); return; }
     stopOtpTimer();
+    const randomCode = randomOtp();
+    window.currentSignupOTP = randomCode;
+    window.otpExpiry = Date.now() + OTP_TTL_MS;
     const f = $('otp-code');
     if (f) { f.value = ''; f.focus(); }
     showOtpError('');
-    window.otpExpiry = Date.now() + OTP_TTL_MS;
     startOtpTimer();
-    showToast('A new verification code is on its way to ' + pendingSignup.email);
+    sendVerificationEmail(pendingSignup.email, randomCode).catch(function () { /* ignore */ });
   }
-  /* Code submitted — Supabase decides whether it is valid. On success a real
-     session exists, so the page reloads and every module re-reads its
-     (re-namespaced) data keys. */
-  async function handleOtpSubmit(e) {
+  // Code accepted — create the account and sign in.
+  function finishSignup() {
+    if (!pendingSignup) return;
+    const users = getUsers();
+    users.push({
+      name: pendingSignup.name,
+      email: pendingSignup.email,
+      pass: pendingSignup.pass,
+      created: new Date().toISOString()
+    });
+    saveUsers(users);
+    grantLoginEntitlements(pendingSignup.email);
+    const email = pendingSignup.email;
+    resetAuthFlow();
+    setSession(email); // auto sign-in, reloads
+  }
+  function handleOtpSubmit(e) {
     e.preventDefault();
     if (!pendingSignup) { showOtpError('Please start the sign up again.'); return; }
     const code = (($('otp-code').value || '')).replace(/\D/g, '');
-    if (code.length !== 6) { showOtpError('Enter the 6-digit code from your email.'); return; }
     if (Date.now() > window.otpExpiry) {
       showOtpError("Verification code has expired. Please click 'Resend Code'.");
       return;
     }
-    const c = cloud();
-    if (!c) { showOtpError('The cloud backend could not be loaded. Check your connection and reload.'); return; }
-    const btn = $('otp-verify');
-    if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
-    const res = await c.auth.verifyOtp(pendingSignup.email, code);
-    if (btn) { btn.disabled = false; btn.textContent = 'Verify & Create Account'; }
-    if (!res.ok) { showOtpError(res.message); return; }
+    if (code !== window.currentSignupOTP) {
+      showOtpError('Invalid verification code. Please check and try again.');
+      return;
+    }
     stopOtpTimer();
-    reloadApp();
+    finishSignup();
   }
 
-  async function handleAuthSubmit(e) {
+  function handleAuthSubmit(e) {
     e.preventDefault();
     const email = ($('auth-email').value || '').trim().toLowerCase();
     const pass = $('auth-pass').value || '';
     if (!validEmail(email)) return showAuthError('Please enter a valid email address.');
     if (pass.length < 6) return showAuthError('Password must be at least 6 characters.');
-    const c = cloud();
-    if (!c) return showAuthError('The cloud backend could not be loaded. Check your connection and reload.');
-    const btn = $('auth-submit');
+    const users = getUsers();
     if (authMode === 'signup') {
       const name = ($('auth-name').value || '').trim();
       if (!name) return showAuthError('Please enter your full name.');
+      for (let i = 0; i < users.length; i++) {
+        if (users[i].email === email) return showAuthError('An account with this email already exists. Try logging in.');
+      }
+      // Step 1 done — issue the code and hand over to the verification view.
       showAuthError('');
-      if (btn) { btn.disabled = true; btn.textContent = 'Creating account…'; }
-      await beginOtpVerification(name, email, pass, false);
-      if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
-      return;
+      beginOtpVerification(name, email, hashPass(pass));
+    } else {
+      let match = null;
+      for (let i = 0; i < users.length; i++) {
+        if (users[i].email === email) { match = users[i]; break; }
+      }
+      if (!match) return showAuthError('No account found with this email. Sign up first.');
+      if (match.pass !== hashPass(pass)) return showAuthError('Incorrect password. Please try again.');
+      grantLoginEntitlements(email);
+      setSession(email); // reloads
     }
-    // Login — checked by Supabase against the real account.
-    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
-    const res = await c.auth.signIn(email, pass);
-    if (btn) { btn.disabled = false; btn.textContent = 'Login'; }
-    if (res.ok) { reloadApp(); return; }
-    // An account that exists but was never verified can enter its code here.
-    if (/not been verified|not confirmed/i.test(res.message)) {
-      await beginOtpVerification('', email, '', true);
-      showOtpError(res.message);
-      return;
-    }
-    showAuthError(res.message);
   }
   function initAuthUi() {
     const modal = $('auth-modal');
@@ -729,30 +472,18 @@
       });
     }
     modal.addEventListener('click', function (e) { if (e.target === modal) closeAuthModal(); });
-    $('logout-btn').addEventListener('click', async function () {
-      if (!(await confirmAction({
-        title: 'Log out?',
-        message: 'Your data stays saved to your account in the cloud and will be here when you sign back in.',
-        confirmLabel: 'Log out'
-      }))) return;
-      const btn = $('logout-btn');
-      if (btn) btn.disabled = true;
-      const c = cloud();
-      if (c) await c.auth.signOut();
-      reloadApp();
+    $('logout-btn').addEventListener('click', function () {
+      if (window.confirm('Log out? Your data stays saved in this browser under your account.')) {
+        rawDel(LOGGED_IN_KEY);
+        setSession('');
+      }
     });
-    // Access gate modal (Authentication Required · AI Credit Limit Reached)
+    // Access / AI-credit gate modal
     const gate = $('gate-modal');
     if (gate) {
       if ($('gate-close')) $('gate-close').addEventListener('click', closeGateModal);
       if ($('gate-login')) $('gate-login').addEventListener('click', function () { closeGateModal(); openAuthModal('login'); });
       if ($('gate-signup')) $('gate-signup').addEventListener('click', function () { closeGateModal(); openAuthModal('signup'); });
-      // "Limit reached" ends at the plans page; the gate already put the user
-      // there, this is the same destination for anyone who closed the modal.
-      if ($('gate-upgrade')) $('gate-upgrade').addEventListener('click', function () {
-        closeGateModal();
-        showView('plans', { gate: false });
-      });
       gate.addEventListener('click', function (e) { if (e.target === gate) closeGateModal(); });
     }
     initAccessState();
@@ -993,15 +724,11 @@
     const light = theme === 'light';
     document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
     document.body.classList.toggle('light-theme', light);
-    /* The sidebar label is a fixed "Light/Dark" (this painter used to rewrite
-       it to "Toggle theme" on every boot, which is why the rename kept
-       reverting). The ICON still tracks the theme, and aria-pressed carries
-       the state for screen readers. */
     const tt = $('theme-toggle');
     if (tt) {
       tt.innerHTML = light
-        ? '<span class="nav-icon" data-icon="moon" aria-hidden="true"></span><span>Light/Dark</span>'
-        : '<span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Light/Dark</span>';
+        ? '<span class="nav-icon" data-icon="moon" aria-hidden="true"></span><span>Toggle theme</span>'
+        : '<span class="nav-icon" data-icon="sun" aria-hidden="true"></span><span>Toggle theme</span>';
       hydrateIcons(tt);
     }
     const st = $('theme-toggle-settings');
@@ -1053,20 +780,10 @@
       swatches[i].classList.toggle('active', swatches[i].getAttribute('data-accent') === (hex || 'default'));
     }
   }
-  /* The canvas is painted by the forced-glass block in index.html, which owns
-     it with !important — so the stylesheet's own `body { background: var(--bg) }`
-     can never show a chosen colour. The block reads `--bg-user` instead, and
-     that is what this publishes (alongside --bg, for anything else reading it). */
   function applyBg(hex) {
     const root = document.documentElement.style;
-    if (!hex) {
-      root.removeProperty('--bg');
-      root.removeProperty('--bg-user');
-      root.removeProperty('--bg-overlay');
-    } else {
-      root.setProperty('--bg', hex);
-      root.setProperty('--bg-user', hex);
-    }
+    if (!hex) { root.removeProperty('--bg'); root.removeProperty('--bg-overlay'); }
+    else root.setProperty('--bg', hex);
     const sw = document.querySelectorAll('.bg-preset');
     for (let i = 0; i < sw.length; i++) {
       sw[i].classList.toggle('active', sw[i].getAttribute('data-bg') === hex);
@@ -1111,14 +828,13 @@
     const toggle = $('sidebar-collapse');
     if (toggle) {
       toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      /* The button sits beside the brand and is icon-only, so the accessible
-         name and tooltip must carry the action itself — the old "Menu — …"
-         wording existed because the visible label was the word "Menu". */
+      // The visible label is a fixed "Menu" (rename of "Collapse menu"); the
+      // action it will take is carried by the accessible name + tooltip.
       const action = desktop
-        ? (collapsed ? 'Expand the navigation' : 'Collapse the navigation')
-        : 'Close the navigation';
-      toggle.setAttribute('aria-label', action);
-      toggle.setAttribute('title', action);
+        ? (collapsed ? 'expand the navigation' : 'collapse the navigation')
+        : 'close the navigation';
+      toggle.setAttribute('aria-label', 'Menu — ' + action);
+      toggle.setAttribute('title', 'Menu — ' + action);
     }
     const reopen = $('sidebar-reopen');
     if (reopen) reopen.setAttribute('aria-expanded', collapsed ? 'true' : 'false');
@@ -1504,9 +1220,9 @@
      dies on reload. That is what makes F5 land on the page you were
      actually looking at. No fragment at all → Home; an unrecognised one
      is ignored rather than blanking every view. */
-  const VIEW_NAMES = ['home', 'erp', 'db', 'master-data', 'utilities', 'tool', 'qr', 'boq', 'pricing',
+  const VIEW_NAMES = ['home', 'erp', 'db', 'utilities', 'tool', 'qr', 'boq', 'pricing',
     'invoice', 'duty', 'variation', 'breakeven', 'fx', 'gpa', 'retainer', 'delay',
-    'history', 'settings', 'appearance', 'account', 'backup', 'plans'];
+    'history', 'settings', 'appearance', 'backup', 'plans'];
   const DEFAULT_VIEW = 'home';
   let currentView = '';
 
@@ -1531,31 +1247,12 @@
     }
   }
 
-  function showView(name, opts) {
+  function showView(name) {
     if (VIEW_NAMES.indexOf(name) === -1) name = DEFAULT_VIEW;
-    /* Entering a tool view IS a tool execution, so the gate runs here — the
-       single choke point every route passes through (sidebar link, tool card,
-       footer link, hash, deep link). `{ gate: false }` is reserved for
-       internal moves that must not be charged or blocked, such as the
-       upgrade redirect itself and the boot fallback. */
-    if (!opts || opts.gate !== false) {
-      const targetTool = toolIdForView(name);
-      if (targetTool && !checkAccessAndCredits(targetTool)) return;
-    }
-    /* Settings holds unsaved edits in drafts. Walking away from the page —
-       another view, a hash change, the back button — discards them and puts
-       the SAVED values back on screen, so an abandoned edit is visibly gone
-       rather than quietly pending or silently kept. */
-    if (currentView === 'settings' && name !== 'settings') discardBrandDrafts();
-    /* Leaving a tool ends that tool's grant — but re-entering the SAME view
-       (a re-render, a repeated click) must not, or the export that follows
-       would be charged as a fresh execution. */
-    if (name !== currentView) releaseGrantsFrom(currentView);
     currentView = name;
     syncViewHash(name);
     $('erp-view').hidden = name !== 'erp';
     $('db-view').hidden = name !== 'db';
-    $('master-data-view').hidden = name !== 'master-data';
     $('utilities-view').hidden = name !== 'utilities';
     $('home-view').hidden = name !== 'home';
     $('tool-view').hidden = name !== 'tool';
@@ -1573,12 +1270,10 @@
     $('history-view').hidden = name !== 'history';
     $('settings-view').hidden = name !== 'settings';
     $('appearance-view').hidden = name !== 'appearance';
-    $('account-view').hidden = name !== 'account';
     $('backup-view').hidden = name !== 'backup';
     $('plans-section').hidden = name !== 'plans';
     // Active-item glowing pill indicators on the sidebar navigation
-    // 'master-data' is reached from the Home card, so it keeps the Home item lit.
-    const navIds = { 'nav-home': ['home', 'utilities', 'master-data'], 'sidebar-erp': ['erp'], 'sidebar-db': ['db'], 'sidebar-settings-nav': ['settings'], 'sidebar-history': ['history'], 'sidebar-appearance': ['appearance'], 'sidebar-account': ['account'], 'sidebar-utilities': ['utilities'], 'sidebar-backup': ['backup'], 'sidebar-plans': ['plans'] };
+    const navIds = { 'nav-home': ['home', 'utilities'], 'sidebar-erp': ['erp'], 'sidebar-db': ['db'], 'sidebar-settings-nav': ['settings'], 'sidebar-history': ['history'], 'sidebar-appearance': ['appearance'], 'sidebar-utilities': ['utilities'], 'sidebar-backup': ['backup'], 'sidebar-plans': ['plans'] };
     for (const nid in navIds) {
       const el = document.getElementById(nid);
       if (el) el.classList.toggle('active', navIds[nid].indexOf(name) !== -1);
@@ -1594,13 +1289,7 @@
       renderKpis();
       renderActivity();
     }
-    // Repaint on entry so the view always reflects the live store, whichever
-    // route reached it (the Home card, a bookmark, or a back/forward step).
-    if (name === 'master-data') renderMasterData();
     if (name === 'backup') renderStorageStatus();
-    // Repaint the account surfaces on entry: the plan, credits and sync rows
-    // must reflect the store as it stands now, not as it stood at boot.
-    if (name === 'account') { renderAuthUi(); renderStorageStatus(); renderCloudStatus(); }
     closeSidebar();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -2937,18 +2626,18 @@
 
   const INV_FIELDS = {
     quotation: [
-      { key: 'client', label: 'Client name', type: 'text', ph: 'e.g. Alex Perera' },
+      { key: 'client', label: 'Client name', type: 'text', ph: 'e.g. R. Perera' },
       { key: 'date', label: 'Date', type: 'date' },
       { key: 'ref', label: 'Quotation ref', type: 'text', ph: 'e.g. QTN/2026/001' }
     ],
     proforma: [
-      { key: 'client', label: 'Client name', type: 'text', ph: 'e.g. Alex Perera' },
+      { key: 'client', label: 'Client name', type: 'text', ph: 'e.g. R. Perera' },
       { key: 'date', label: 'Date', type: 'date' },
       { key: 'ref', label: 'Proforma no', type: 'text', ph: 'e.g. PI/2026/001' },
       { key: 'payment', label: 'Payment terms', type: 'text', ph: 'e.g. 50% advance, balance on delivery' },
-      { key: 'bank', label: 'Bank name', type: 'text', ph: 'e.g. Example Bank' },
+      { key: 'bank', label: 'Bank name', type: 'text', ph: 'e.g. Commercial Bank' },
       { key: 'account', label: 'Account number', type: 'text', ph: 'e.g. 1001234567890' },
-      { key: 'swift', label: 'SWIFT code', type: 'text', ph: 'e.g. EXAMPLKA' },
+      { key: 'swift', label: 'SWIFT code', type: 'text', ph: 'e.g. CCEYLKLX' },
       { key: 'branch', label: 'Branch code', type: 'text', ph: 'e.g. 001' }
     ],
     commercial: [
@@ -2956,16 +2645,16 @@
       { key: 'date', label: 'Date', type: 'date' },
       { key: 'vatreg', label: 'VAT / Tax reg no', type: 'text', ph: 'e.g. VAT123456789' },
       { key: 'consignee', label: 'Consignee details', type: 'text', ph: 'e.g. Acme Holdings, Colombo' },
-      { key: 'client', label: 'Bill to (client)', type: 'text', ph: 'e.g. Alex Perera' },
+      { key: 'client', label: 'Bill to (client)', type: 'text', ph: 'e.g. R. Perera' },
       { key: 'poNo', label: 'PO no', type: 'text', ph: 'e.g. PO-2026-0451' },
       { key: 'project', label: 'Project name', type: 'text', ph: 'e.g. Warehouse fire-alarm upgrade' },
       { key: 'currency', label: 'Currency', type: 'select', options: null } // filled from TOOL_CURRENCIES at render
     ],
     delivery: [
-      { key: 'client', label: 'Deliver to (client)', type: 'text', ph: 'e.g. Alex Perera' },
+      { key: 'client', label: 'Deliver to (client)', type: 'text', ph: 'e.g. R. Perera' },
       { key: 'date', label: 'Delivery date', type: 'date' },
       { key: 'ref', label: 'Delivery note no', type: 'text', ph: 'e.g. DN/2026/001' },
-      { key: 'address', label: 'Delivery address', type: 'text', ph: 'e.g. 456 Sample Lane, Colombo' },
+      { key: 'address', label: 'Delivery address', type: 'text', ph: 'e.g. 42 Galle Road, Colombo' },
       { key: 'poNo', label: 'PO no', type: 'text', ph: 'e.g. PO-2026-0451' }
     ]
   };
@@ -4096,27 +3785,7 @@
     const draft = draftStore[id] || {};
     const tool = draft.tool || h.tool;
     if (act === 'view') {
-      if (tool === 'erp') {
-        /* Reopen the SAVED document, not whatever is in the working draft,
-           and remember its entry id so Save to Library updates this row
-           rather than adding another one. Entries saved before snapshots
-           existed just open the engine with the current draft. */
-        const snap = draft && draft.state;
-        erpState.libraryId = h.id;
-        if (snap && typeof snap === 'object') {
-          erpState = Object.assign(emptyErp(), snap);
-          if (!ERP_MODES[erpState.mode]) erpState.mode = 'quotation';
-          if (!Calc.TOOL_CURRENCIES[erpState.currency]) erpState.currency = 'LKR';
-          erpState.meta = (erpState.meta && typeof erpState.meta === 'object') ? erpState.meta : {};
-          erpState.lines = Array.isArray(erpState.lines) ? erpState.lines : [];
-          erpState.libraryId = h.id;   // Object.assign above cannot be trusted to keep it
-          saveErp();
-          setToolCurrency('erp', erpState.currency);
-          renderErp();
-          schedulePdfPreview(true);
-        }
-        showView('erp');
-      }
+      if (tool === 'erp') { showView('erp'); }
       else if (tool && TOOL_VIEWS[tool]) {
         // Opening a saved draft into a live calculator is a tool launch,
         // so it passes the same gate (a guest must not reach a tool here).
@@ -4358,91 +4027,6 @@
     try { localStorage.setItem(BRAND_KEY, JSON.stringify(brand)); } catch (e) { /* ignore */ }
   }
 
-  /* ── Brand & Bank: in-progress edits are DRAFTS ───────────────────
-     The two Settings sections save ONLY when their own Save button is
-     pressed. Typing writes to `brandDraft` / `bankDraft` — never to `brand`,
-     never to localStorage — so an abandoned edit is discarded rather than
-     silently kept. Nothing downstream (the ERP letterhead, the standalone
-     builders, the cloud sync queue) sees a value until Save merges the draft
-     into `brand` and calls saveBrand(). Closing the tab needs no handler:
-     a draft lives in memory only, so it dies with the page. */
-  const BRAND_SECTION_FIELDS = ['name', 'legalName', 'tag', 'address', 'contact', 'terms',
-    'phone', 'email', 'website', 'spec', 'tin', 'logo'];
-  const BANK_SECTION_FIELDS = ['payTerms', 'beneficiary', 'bankBranch', 'swift', 'branchCode',
-    'accountNo', 'accountCur'];
-  let brandDraft = null;   // null = no unsaved changes
-  let bankDraft = null;
-
-  function draftDiffers(draft, source, fields) {
-    if (!draft) return false;
-    for (let i = 0; i < fields.length; i++) {
-      const k = fields[i];
-      if (!Object.prototype.hasOwnProperty.call(draft, k)) continue;
-      if (String(draft[k] == null ? '' : draft[k]) !== String(source[k] == null ? '' : source[k])) return true;
-    }
-    return false;
-  }
-  function brandDirty() { return draftDiffers(brandDraft, brand, BRAND_SECTION_FIELDS); }
-  function bankDirty() { return draftDiffers(bankDraft, brand, BANK_SECTION_FIELDS); }
-  /* What the fields should display: the saved brand with BOTH drafts laid over
-     it. Merging only the section being saved would let a Save in one section
-     repaint the other from saved data and hide text the user is still typing
-     there — the draft would survive, so the page would look saved while the
-     "unsaved changes" pill stayed on. */
-  function brandView() { return Object.assign({}, brand, brandDraft || {}, bankDraft || {}); }
-  /* Typing back to the saved value clears the draft again, so the status pill
-     tells the truth instead of staying "unsaved" for a no-op change. */
-  function noteBrandEdit(field, value) {
-    brandDraft = brandDraft || {};
-    brandDraft[field] = value;
-    if (!brandDirty()) brandDraft = null;
-    renderBrandStatus();
-  }
-  function noteBankEdit(field, value) {
-    bankDraft = bankDraft || {};
-    bankDraft[field] = value;
-    if (!bankDirty()) bankDraft = null;
-    renderBrandStatus();
-  }
-  /* Commit one section. Returns true when something was actually written. */
-  function commitBrandSection() {
-    if (!brandDirty()) return false;
-    const d = brandDraft;
-    brandDraft = null;
-    for (let i = 0; i < BRAND_SECTION_FIELDS.length; i++) {
-      const k = BRAND_SECTION_FIELDS[i];
-      if (Object.prototype.hasOwnProperty.call(d, k)) brand[k] = d[k];
-    }
-    saveBrand();
-    renderBrand();
-    renderErpModeFields();   // letterhead edits redraw any open ERP document
-    showToast('Brand details saved.');
-    return true;
-  }
-  function commitBankSection() {
-    if (!bankDirty()) return false;
-    const d = bankDraft;
-    bankDraft = null;
-    for (let i = 0; i < BANK_SECTION_FIELDS.length; i++) {
-      const k = BANK_SECTION_FIELDS[i];
-      if (Object.prototype.hasOwnProperty.call(d, k)) brand[k] = d[k];
-    }
-    saveBrand();
-    renderBrand();
-    renderErpModeFields();   // bank / payment-terms flow into an open document
-    showToast('Bank & beneficiary details saved.');
-    return true;
-  }
-  /* Leaving Settings throws the drafts away and puts the saved values back on
-     screen, so an abandoned edit is visibly gone rather than quietly pending. */
-  function discardBrandDrafts() {
-    if (!brandDirty() && !bankDirty()) return;
-    brandDraft = null;
-    bankDraft = null;
-    renderBrand();
-    showToast('Unsaved changes to Settings were discarded.');
-  }
-
   function brandDocTitle() {
     return brand.name || 'YOUR COMPANY';
   }
@@ -4484,72 +4068,40 @@
       .some(function (v) { return v && String(v).trim() !== ''; });
   }
 
-  /* Paints the form from brandView() — the saved brand with any draft on top,
-     so a re-render never wipes what the user is in the middle of typing. */
   function renderBrand() {
-    const v = brandView();
-    $('brand-name').value = v.name;
-    if ($('brand-legal')) $('brand-legal').value = v.legalName;
-    $('brand-tag').value = v.tag;
-    $('brand-address').value = v.address;
-    $('brand-contact').value = v.contact;
-    $('brand-terms').value = v.terms;
-    if ($('brand-phone')) $('brand-phone').value = v.phone;
-    if ($('brand-email')) $('brand-email').value = v.email;
-    if ($('brand-website')) $('brand-website').value = v.website;
-    if ($('brand-spec')) $('brand-spec').value = v.spec;
-    if ($('brand-tin')) $('brand-tin').value = v.tin;
-    if ($('brand-payterms')) $('brand-payterms').value = v.payTerms;
-    if ($('brand-beneficiary')) $('brand-beneficiary').value = v.beneficiary;
-    if ($('brand-bankbranch')) $('brand-bankbranch').value = v.bankBranch;
-    if ($('brand-swift')) $('brand-swift').value = v.swift;
-    if ($('brand-branchcode')) $('brand-branchcode').value = v.branchCode;
-    if ($('brand-accountno')) $('brand-accountno').value = v.accountNo;
-    if ($('brand-accountcur')) $('brand-accountcur').value = v.accountCur;
+    $('brand-name').value = brand.name;
+    if ($('brand-legal')) $('brand-legal').value = brand.legalName;
+    $('brand-tag').value = brand.tag;
+    $('brand-address').value = brand.address;
+    $('brand-contact').value = brand.contact;
+    $('brand-terms').value = brand.terms;
+    if ($('brand-phone')) $('brand-phone').value = brand.phone;
+    if ($('brand-email')) $('brand-email').value = brand.email;
+    if ($('brand-website')) $('brand-website').value = brand.website;
+    if ($('brand-spec')) $('brand-spec').value = brand.spec;
+    if ($('brand-tin')) $('brand-tin').value = brand.tin;
+    if ($('brand-payterms')) $('brand-payterms').value = brand.payTerms;
+    if ($('brand-beneficiary')) $('brand-beneficiary').value = brand.beneficiary;
+    if ($('brand-bankbranch')) $('brand-bankbranch').value = brand.bankBranch;
+    if ($('brand-swift')) $('brand-swift').value = brand.swift;
+    if ($('brand-branchcode')) $('brand-branchcode').value = brand.branchCode;
+    if ($('brand-accountno')) $('brand-accountno').value = brand.accountNo;
+    if ($('brand-accountcur')) $('brand-accountcur').value = brand.accountCur;
     const prev = $('brand-logo-preview');
-    if (v.logo) {
-      prev.innerHTML = '<img src="' + v.logo + '" alt="Company logo">';
+    if (brand.logo) {
+      prev.innerHTML = '<img src="' + brand.logo + '" alt="Company logo">';
       $('brand-logo-remove').hidden = false;
     } else {
       prev.innerHTML = '<span class="brand-logo-placeholder">Logo</span>';
       $('brand-logo-remove').hidden = true;
     }
-    renderBrandStatus();
+    const used = (brand.name ? 1 : 0) + (brand.address ? 1 : 0) + (brand.terms ? 1 : 0) + (brand.logo ? 1 : 0);
+    $('brand-status').textContent = used === 0 ? 'Not set up yet' : (used + ' of 4 set');
   }
 
-  /* Status pills + Save-button state for both sections. The SAVED brand drives
-     the "N of 4 set" count; the draft drives the unsaved warning. */
   function renderBrandStatus() {
-    const el = $('brand-status');
-    if (el) {
-      if (brandDirty()) {
-        el.textContent = 'Unsaved changes';
-        el.className = 'pill pill-out';
-        el.title = 'Not stored yet — press Save brand details to keep these changes.';
-      } else {
-        const used = (brand.name ? 1 : 0) + (brand.address ? 1 : 0) + (brand.terms ? 1 : 0) + (brand.logo ? 1 : 0);
-        el.textContent = used === 0 ? 'Not set up yet' : (used + ' of 4 set');
-        el.className = 'pill pill-muted';
-        el.title = 'Saved on this device and synced to your account.';
-      }
-    }
-    const bel = $('bank-status');
-    if (bel) {
-      if (bankDirty()) {
-        bel.textContent = 'Unsaved changes';
-        bel.className = 'pill pill-out';
-        bel.title = 'Not stored yet — press Save bank details to keep these changes.';
-      } else {
-        const set = BANK_SECTION_FIELDS.filter(function (k) { return String(brand[k] || '').trim() !== ''; }).length;
-        bel.textContent = set === 0 ? 'Not set up yet' : (set + ' of ' + BANK_SECTION_FIELDS.length + ' set');
-        bel.className = 'pill pill-muted';
-        bel.title = 'Saved on this device and synced to your account.';
-      }
-    }
-    const bs = $('brand-save');
-    if (bs) bs.disabled = !brandDirty();
-    const bks = $('bank-save');
-    if (bks) bks.disabled = !bankDirty();
+    const used = (brand.name ? 1 : 0) + (brand.address ? 1 : 0) + (brand.terms ? 1 : 0) + (brand.logo ? 1 : 0);
+    $('brand-status').textContent = used === 0 ? 'Not set up yet' : (used + ' of 4 set');
   }
 
   /* ── Data-Centric Insights Hub (home view) ───────────────── */
@@ -4572,7 +4124,6 @@
     home: '<path d="M3.5 10.5 L12 3.5 l8.5 7"/><path d="M5.5 9.5 v10 h13 v-10"/><path d="M10 19.5 v-5.5 h4 v5.5"/>',
     database: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5 v13 c0 1.66 3.58 3 8 3 s8 -1.34 8 -3 v-13"/><path d="M4 12 c0 1.66 3.58 3 8 3 s8 -1.34 8 -3"/>',
     briefcase: '<rect x="3" y="7.5" width="18" height="13" rx="2"/><path d="M9 7.5 V6 a2 2 0 0 1 2 -2 h2 a2 2 0 0 1 2 2 v1.5"/><path d="M3 12.5 h18"/><path d="M10.5 12.5 v2.5 h3 v-2.5"/>',
-    user: '<circle cx="12" cy="8.2" r="3.7"/><path d="M4.6 20.2 a7.4 7.4 0 0 1 14.8 0"/>',
     history: '<path d="M3.5 12 a8.5 8.5 0 1 1 2.5 6"/><path d="M3.5 12 v-4.5 M3.5 12 h4.5"/><path d="M12 8 v4 l3 2"/>',
     palette: '<path d="M12 3 a9 9 0 1 0 0 18 h1.5 a2 2 0 0 0 0 -4 h-1.5 a1.5 1.5 0 0 1 0 -3 h4.5 a4.5 4.5 0 0 0 0 -11 Z"/><circle cx="7.5" cy="10.5" r="1.1"/><circle cx="12" cy="7.5" r="1.1"/><circle cx="16.5" cy="10.5" r="1.1"/>',
     tools: '<path d="M15.5 8.5 a4.5 4.5 0 0 1 5 -6.2 l-2.8 2.8 0.8 2.4 2.4 0.8 2.8 -2.8 a4.5 4.5 0 0 1 -6.2 5 L6.8 20.2 a2.1 2.1 0 0 1 -3 -3 Z" transform="translate(-1.2 0.8) scale(0.9)"/>',
@@ -4759,7 +4310,7 @@
     const docCount = history.length;
     let procVal = 0;
     for (let i = 0; i < history.length; i++) procVal += kpiTotalNumber(history[i].total);
-    if (erpDocType()) procVal += erpDocTotals().final;
+    if (erpDocType()) procVal += erpTotals().final;
     procVal += state.requests.reduce(function (s, r) { return s + (r.value || 0); }, 0);
     return { activeEst: activeEst, dbCount: dbCount, docCount: docCount, procVal: procVal };
   }
@@ -5014,31 +4565,7 @@
     if (repaired) {
       try { localStorage.setItem(DB_KEY_ITEMS, JSON.stringify(items)); } catch (e) { /* ignore */ }
     }
-    /* Client contacts used to be one free-text field ("Alex Perera · +94 71
-       000 0000") because there was only one place to keep them. Records saved
-       that way — locally or already synced — are split on the way IN, so the
-       name and the number land in their own fields without a migration pass
-       or a rewrite of stored data. */
-    clients = clients.map(function (c) {
-      if (!c || typeof c !== 'object') return c;
-      const split = splitContactPhone(c.contactPerson, c.contactNumber);
-      if (!split.changed) return c;
-      return Object.assign({}, c, { contactPerson: split.name, contactNumber: split.number });
-    });
     return { items: items, clients: clients };
-  }
-
-  /* "Name · +94 71 000 0000" → { name, number }. A value with no phone-shaped
-     token is left exactly as it is, so a plain name never loses a character. */
-  function splitContactPhone(contact, number) {
-    const name = String(contact == null ? '' : contact);
-    const have = String(number == null ? '' : number).trim();
-    if (have) return { name: name, number: have, changed: false };
-    const found = parseContactPair(name).phone;
-    if (!found) return { name: name, number: '', changed: false };
-    const rest = name.replace(found, '').replace(/[\s\u00b7,;|-]+$/, '').trim();
-    const head = rest.replace(/^[\s\u00b7,;|-]+/, '').trim();
-    return { name: head, number: found, changed: true };
   }
 
   /* ── A stored rate has THREE possible states ──────────────────
@@ -5163,8 +4690,7 @@
         itemsEl.innerHTML = homeDbMostRecent(db.items).map(function (pair) {
           const it = pair.rec;
           const info = dbRateInfo(it.rate);
-          return '<button type="button" class="home-db-row" data-db="item" data-id="' + pair.i +
-            '" data-md-key="' + esc(mdKeyFor('item', it)) + '">' +
+          return '<button type="button" class="home-db-row" data-db="item" data-id="' + pair.i + '">' +
             '<span class="home-db-main">' +
               '<span class="home-db-title"><strong>' + esc(it.sku) + '</strong></span>' +
               '<span class="home-db-sub db-mini-name" title="' + esc(it.name || '') + '">' + esc(it.name || '\u2014') + '</span>' +
@@ -5183,8 +4709,7 @@
           const c = pair.rec;
           const site = c.defaultProject ? ' \u00b7 Site: ' + c.defaultProject : '';
           const addr = (c.address || '\u2014') + site;
-          return '<button type="button" class="home-db-row" data-db="client" data-id="' + pair.i +
-            '" data-md-key="' + esc(mdKeyFor('client', c)) + '">' +
+          return '<button type="button" class="home-db-row" data-db="client" data-id="' + pair.i + '">' +
             '<span class="home-db-main">' +
               '<span class="home-db-title"><strong>' + esc(c.clientName || c.name) + '</strong></span>' +
               '<span class="home-db-sub db-mini-addr" title="' + esc(addr) + '">' + esc(addr) + '</span>' +
@@ -5194,299 +4719,6 @@
         }).join('');
       }
     }
-  }
-
-  /* ── Master Database: the browse-only view behind the Home card ──
-     A separate, lighter experience from the Item & Client Database: one
-     filtered list, one read-only detail pane, no forms and no row actions.
-     It reads the same `db` store, so the two screens can never show a
-     different record set — and nothing here can edit or delete a record. */
-  let mdTab = 'items';
-  let mdFilter = '';
-  // Selection identity, NOT a list index: the list is sorted and filtered,
-  // so an index could point at a different record after any change.
-  let mdSel = null;                 // { kind: 'item' | 'client', key: string }
-
-  /** Stable key for a record: SKU for an item, client name for a client. */
-  function mdKeyFor(kind, rec) {
-    const src = kind === 'client' ? (rec && (rec.clientName || rec.name)) : (rec && rec.sku);
-    return String(src || '').trim().toLowerCase();
-  }
-
-  /** Every record for the active tab, in the order that tab is read in
-      (items by SKU, clients most-recently-added first). */
-  function mdRowsForTab() {
-    if (mdTab === 'clients') {
-      return db.clients.map(function (c) {
-        return { kind: 'client', rec: c, key: mdKeyFor('client', c) };
-      }).sort(function (a, b) {
-        const ta = Number(a.rec.addedAt) || 0, tb = Number(b.rec.addedAt) || 0;
-        if (ta !== tb) return tb - ta;
-        return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
-      });
-    }
-    return dbItemsBySku().map(function (pair) {
-      return { kind: 'item', rec: pair.it, key: mdKeyFor('item', pair.it) };
-    });
-  }
-
-  /** Free-text filter across the fields a user would actually search by. */
-  function mdMatches(row) {
-    if (!mdFilter) return true;
-    const rec = row.rec || {};
-    const hay = row.kind === 'client'
-      ? [rec.clientName, rec.name, rec.clientAddress, rec.contactPerson, rec.contactNumber, rec.tinRegNo,
-         rec.placeOfSupply, rec.defaultProject, rec.poNo, rec.currency]
-      : [rec.sku, rec.name, rec.unit];
-    return hay.join(' \u0001 ').toLowerCase().indexOf(mdFilter) !== -1;
-  }
-
-  /** Resolve the current selection back to the live record + its index in
-      the store, so a later "manage" jump cannot target the wrong row. */
-  function mdFindSelection() {
-    if (!mdSel) return null;
-    const list = mdSel.kind === 'client' ? db.clients : db.items;
-    for (let i = 0; i < list.length; i++) {
-      if (mdKeyFor(mdSel.kind, list[i]) === mdSel.key) return { rec: list[i], index: i };
-    }
-    return null;
-  }
-
-  function mdRowHtml(r) {
-    const rec = r.rec || {};
-    const sel = mdSel && mdSel.kind === r.kind && mdSel.key === r.key;
-    const cls = 'home-db-row' + (sel ? ' is-selected' : '');
-    const attrs = ' data-md-kind="' + r.kind + '" data-md-key="' + esc(r.key) + '"' +
-      (sel ? ' aria-current="true"' : '');
-    if (r.kind === 'client') {
-      const site = rec.defaultProject ? ' \u00b7 Site: ' + rec.defaultProject : '';
-      const addr = (rec.clientAddress || '\u2014') + site;
-      return '<button type="button" class="' + cls + '"' + attrs + '>' +
-        '<span class="home-db-main">' +
-          '<span class="home-db-title"><strong>' + esc(rec.clientName || rec.name) + '</strong></span>' +
-          '<span class="home-db-sub db-mini-addr" title="' + esc(addr) + '">' + esc(addr) + '</span>' +
-        '</span>' +
-        '<span class="home-db-meta">' + esc(rec.currency || '') + '</span>' +
-      '</button>';
-    }
-    const info = dbRateInfo(rec.rate);
-    return '<button type="button" class="' + cls + '"' + attrs + '>' +
-      '<span class="home-db-main">' +
-        '<span class="home-db-title"><strong>' + esc(rec.sku) + '</strong></span>' +
-        '<span class="home-db-sub db-mini-name" title="' + esc(rec.name || '') + '">' + esc(rec.name || '\u2014') + '</span>' +
-      '</span>' +
-      '<span class="home-db-meta db-rate-' + info.state + '" title="' + dbRateTitle(info) + '">' + esc(info.text) + '</span>' +
-    '</button>';
-  }
-
-  function renderMasterDataList() {
-    const box = $('md-rows');
-    if (!box) return;
-    const ic = $('md-items-count'), cc = $('md-clients-count');
-    if (ic) ic.textContent = String(db.items.length);
-    if (cc) cc.textContent = String(db.clients.length);
-    const tabs = document.querySelectorAll('.md-tab');
-    for (let i = 0; i < tabs.length; i++) {
-      const on = tabs[i].getAttribute('data-md-tab') === mdTab;
-      tabs[i].classList.toggle('active', on);
-      tabs[i].setAttribute('aria-selected', on ? 'true' : 'false');
-    }
-    const all = mdRowsForTab();
-    const rows = all.filter(mdMatches);
-    if (!rows.length) {
-      const noun = mdTab === 'clients' ? 'clients' : 'items';
-      box.innerHTML = '<p class="md-empty">' + (all.length
-        ? 'Nothing matches \u201c' + esc(mdFilter) + '\u201d. Clear the filter to see all ' + all.length + ' ' + noun + '.'
-        : (mdTab === 'clients'
-            ? 'No clients saved yet. Add one in the Item &amp; Client Database and it will auto-fill the ERP header.'
-            : 'No items saved yet. Add one in the Item &amp; Client Database and it will auto-fill ERP line items.')) + '</p>';
-      return;
-    }
-    box.innerHTML = rows.map(mdRowHtml).join('');
-  }
-
-  function mdWhen(ms) {
-    const d = new Date(Number(ms) || 0);
-    if (!ms || isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  }
-
-  /** One read-only definition row. A blank value is shown as an em dash
-      rather than an empty cell, so "never entered" is unmistakable. */
-  function mdField(label, value, blankText, noteClass) {
-    const blank = (value === null || value === undefined || String(value).trim() === '');
-    const shown = blank ? (blankText || '\u2014') : String(value);
-    const cls = blank ? 'md-blank' : (noteClass || '');
-    return '<div class="md-field"><dt>' + esc(label) + '</dt>' +
-      '<dd' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(shown) + '</dd></div>';
-  }
-
-  function renderMasterDataDetail() {
-    const box = $('md-detail');
-    if (!box) return;
-    const kindPill = $('md-detail-kind');
-    const found = mdFindSelection();
-    if (mdSel && !found) mdSel = null;          // the record was deleted elsewhere
-
-    if (!mdSel || !found) {
-      if (kindPill) kindPill.textContent = 'Nothing selected';
-      box.innerHTML = '<p class="md-empty">Pick ' + (mdTab === 'clients' ? 'a client' : 'an item') +
-        ' from the list to read its full details here. ' +
-        'This view is read-only \u2014 adding, editing and deleting stay in the Item &amp; Client Database.</p>';
-      return;
-    }
-
-    const rec = found.rec;
-    if (kindPill) kindPill.textContent = mdSel.kind === 'client' ? 'Client' : 'Item';
-
-    if (mdSel.kind === 'client') {
-      const name = rec.clientName || rec.name || '';
-      const site = rec.defaultProject ? 'Site: ' + rec.defaultProject : '';
-      box.innerHTML =
-        '<h3 class="md-detail-title">' + esc(name) + '</h3>' +
-        '<p class="md-detail-sub">' + (site || 'Saved client record') + '</p>' +
-        mdField('Contact person', rec.contactPerson) +
-        mdField('Contact number', rec.contactNumber) +
-        mdField('Address', rec.clientAddress) +
-        mdField('Default project', rec.defaultProject) +
-        mdField('TIN / Reg. No', rec.tinRegNo) +
-        mdField('Place of supply', rec.placeOfSupply) +
-        mdField('PO No', rec.poNo) +
-        mdField('Delivery terms', rec.deliveryTerms) +
-        mdField('Ship to', rec.shipTo) +
-        mdField('Default currency', rec.currency) +
-        mdField('Added', mdWhen(rec.addedAt), 'Date not recorded') +
-        mdManageHtml('client');
-      return;
-    }
-
-    const info = dbRateInfo(rec.rate);
-    const rateShown = info.state === 'set' ? Calc.fmtNum(info.value)
-      : (info.state === 'invalid' ? 'Invalid \u2014 re-enter it' : 'Not set');
-    const rateBlank = info.state !== 'set';
-    box.innerHTML =
-      '<h3 class="md-detail-title">' + esc(rec.sku || '') + '</h3>' +
-      '<p class="md-detail-sub">' + esc(rec.name || 'Untitled item') + '</p>' +
-      mdField('Item name', rec.name) +
-      mdField('Unit', rec.unit) +
-      mdField('Default unit rate', rateShown, '', rateBlank ? 'md-blank' : '') +
-      mdField('Rate status', info.state === 'set'
-        ? 'Used when this SKU is picked in the ERP'
-        : dbRateTitle(info), '', 'md-note') +
-      mdField('Added', mdWhen(rec.addedAt), 'Date not recorded') +
-      mdManageHtml('item');
-  }
-
-  /* The one deliberate exit from this view. Row clicks never leave it; this
-     labelled button is the only way across, and it opens the full database
-     with that record loaded into its edit form. */
-  function mdManageHtml(kind) {
-    return '<div class="md-actions">' +
-      '<button type="button" class="btn btn-ghost btn-sm md-manage" data-md-kind="' + kind + '">' +
-        'Manage in Item &amp; Client Database &rarr;</button></div>';
-  }
-
-  function renderMasterData() { renderMasterDataList(); renderMasterDataDetail(); }
-
-  /** Entry point used by the Home card's rows and "View all" link.
-      With no arguments the view opens on the full, uncapped list. */
-  function openMasterData(kind, key) {
-    mdTab = (kind === 'client') ? 'clients' : 'items';
-    mdFilter = '';
-    const search = $('md-search');
-    if (search) search.value = '';
-    mdSel = (kind && key) ? { kind: kind, key: key } : null;
-    showView('master-data');
-    if (mdSel) {
-      const pane = $('md-detail');
-      if (pane && pane.scrollIntoView) pane.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }
-
-  /* ── Saved Project / Client Header records ───────────────────────
-     `erpRecords` is an id → { savedAt, state } map written by the ERP's
-     Save Record button. The Home preview and the full list both read
-     through these helpers, so their order and labels can never disagree. */
-  function recordEntries() {
-    return Object.keys(erpRecords).map(function (id) {
-      return { id: id, rec: erpRecords[id] || {} };
-    }).sort(function (a, b) {
-      const ta = Date.parse((a.rec && a.rec.savedAt) || '') || 0;
-      const tb = Date.parse((b.rec && b.rec.savedAt) || '') || 0;
-      if (ta !== tb) return tb - ta;                 // most recent save first
-      return a.id < b.id ? 1 : (a.id > b.id ? -1 : 0);
-    });
-  }
-  function recordLabel(rec) {
-    const st = (rec && rec.state) || {};
-    return st.client || st.project || 'Untitled record';
-  }
-  function recordDetail(rec) {
-    const st = (rec && rec.state) || {};
-    if (st.client && st.project) return st.project;
-    return st.address || '';
-  }
-  function recordLineCount(rec) {
-    const st = (rec && rec.state) || {};
-    return Array.isArray(st.lines) ? st.lines.length : 0;
-  }
-  function recordSavedWhen(rec) {
-    const d = new Date((rec && rec.savedAt) || '');
-    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  }
-  function recordCountLabel(n) { return n + (n === 1 ? ' record' : ' records'); }
-
-  function renderHomeRecordsPreview() {
-    const list = $('home-records-list');
-    if (!list) return;
-    const all = recordEntries();
-    const count = $('home-records-count');
-    if (count) count.textContent = recordCountLabel(all.length);
-    if (!all.length) {
-      list.innerHTML = '<p class="home-db-empty">No saved records yet. Fill the Project / Client Header in the Master ERP Engine and click <strong>Save Record</strong> \u2014 it will appear here.</p>';
-      return;
-    }
-    list.innerHTML = all.slice(0, HOME_DB_LIMIT).map(function (e) {
-      const detail = recordDetail(e.rec);
-      const label = recordLabel(e.rec);
-      const lines = recordLineCount(e.rec);
-      const title = label + (detail ? ' \u00b7 ' + detail : '');
-      return '<button type="button" class="home-db-row" data-rec="' + esc(e.id) + '" title="Load this record into the Master ERP Engine">' +
-        '<span class="home-db-main">' +
-          '<span class="home-db-title"><strong>' + esc(e.id) + '</strong></span>' +
-          '<span class="home-db-sub db-mini-name" title="' + esc(title) + '">' + esc(title) + '</span>' +
-        '</span>' +
-        '<span class="home-db-meta">' + esc(lines + (lines === 1 ? ' line' : ' lines')) + '</span>' +
-      '</button>';
-    }).join('');
-  }
-
-  function renderDbRecords() {
-    const body = $('db-record-rows');
-    if (!body) return;
-    const all = recordEntries();
-    const count = $('db-records-count');
-    if (count) count.textContent = recordCountLabel(all.length);
-    if (!all.length) {
-      body.innerHTML = '<div class="empty-cell">No records yet. Save one from the Master ERP Engine \u2014 Project / Client Header \u2192 Save Record \u2014 and it will be listed here.</div>';
-      return;
-    }
-    body.innerHTML = all.map(function (e) {
-      const detail = recordDetail(e.rec);
-      const label = recordLabel(e.rec);
-      const lines = recordLineCount(e.rec);
-      return '<div class="db-row db-grid-records" data-id="' + esc(e.id) + '">' +
-        '<span class="db-sku" title="' + esc(e.id) + '"><strong>' + esc(e.id) + '</strong></span>' +
-        '<span class="db-name" title="' + esc(label + (detail ? ' \u00b7 ' + detail : '')) + '">' + esc(label) +
-          (detail ? ' <span class="row-muted">' + esc(detail) + '</span>' : '') + '</span>' +
-        '<span class="db-unit db-rec-lines">' + esc(lines + (lines === 1 ? ' line' : ' lines')) + '</span>' +
-        '<span class="db-addr db-rec-when">' + esc(recordSavedWhen(e.rec)) + '</span>' +
-        '<span class="db-del db-actions">' +
-          '<button type="button" class="btn btn-ghost btn-sm db-record-load" data-id="' + esc(e.id) + '" title="Load into the Master ERP Engine">Load</button>' +
-          '<button type="button" class="qr-del db-record-del" data-id="' + esc(e.id) + '" aria-label="Delete record" title="Delete record">\u2715</button>' +
-        '</span>' +
-      '</div>';
-    }).join('');
   }
 
   function renderDb() {
@@ -5533,10 +4765,6 @@
     // The Home preview reads the same store, so it is refreshed from here and
     // can never drift from the full database view.
     renderHomeDbPreview();
-    // Saved-record listings are refreshed from the same place, so they cannot
-    // drift from the record store either.
-    renderHomeRecordsPreview();
-    renderDbRecords();
     // ERP datalists
     $('erp-sku-list').innerHTML = db.items.map(function (it) {
       return '<option value="' + esc(it.sku) + '"></option>';
@@ -5559,8 +4787,7 @@
 
   const DB_ITEM_FIELDS = ['db-item-sku', 'db-item-name', 'db-item-unit', 'db-item-rate'];
   const DB_CLIENT_FIELDS = ['db-client-name', 'db-client-project', 'db-client-address', 'db-client-contact',
-    'db-client-contactno', 'db-client-tin', 'db-client-posupply', 'db-client-pono', 'db-client-termsdt',
-    'db-client-shipto'];
+    'db-client-tin', 'db-client-posupply', 'db-client-pono', 'db-client-termsdt', 'db-client-shipto', 'db-client-hscode'];
 
   /* Labels the submit button for the mode it is in. Saving is always an
      EXPLICIT act in these forms — nothing here is written to storage on
@@ -5651,12 +4878,12 @@
     set('db-client-project', c.defaultProject);
     set('db-client-address', c.clientAddress || c.address);
     set('db-client-contact', c.contactPerson);
-    set('db-client-contactno', c.contactNumber);
     set('db-client-tin', c.tinRegNo || c.tin);
     set('db-client-posupply', c.placeOfSupply);
     set('db-client-pono', c.poNo);
     set('db-client-termsdt', c.deliveryTerms);
     set('db-client-shipto', c.shipTo);
+    set('db-client-hscode', c.hsCode);
     const cur = $('db-client-currency');
     if (cur && c.currency) { dbEditCurrency = cur.value; cur.value = c.currency; }
     setDbFormMode('client');
@@ -5731,14 +4958,13 @@
       clientName: name,
       defaultProject: defaultProject,
       clientAddress: $('db-client-address').value.trim(),
-      // Name only — the number has its own field now (see contactNumber).
       contactPerson: $('db-client-contact').value.trim(),
-      contactNumber: $('db-client-contactno').value.trim(),
       tinRegNo: $('db-client-tin').value.trim(),
       placeOfSupply: $('db-client-posupply').value.trim(),
       poNo: $('db-client-pono').value.trim(),
       deliveryTerms: $('db-client-termsdt').value.trim(),
       shipTo: $('db-client-shipto').value.trim(),
+      hsCode: $('db-client-hscode').value.trim(),
       // stored as-is; ERP auto-converts to a canonical code when used
       currency: $('db-client-currency').value,
       addedAt: Date.now() // see addDbItem — the KPI trend's only time source here
@@ -5767,29 +4993,15 @@
   /* ── Master ERP Engine (unified document builder) ───────────── */
   const ERP_KEY = 'calcmall_erp_v1';
 
-  /* `doc` is the document TITLE printed on the sheet; `noLabel` is the label
-     for its reference number in the metadata grid; `template` picks which of
-     the three LAYOUTS the document is printed with:
-
-       invoice   — the boxed formal layout (Tax / Commercial Invoice AND
-                   Pro Forma Invoice, which differ only by title)
-       quotation — the letter-style offer
-       delivery  — the receipt / form-style delivery note
-
-     Layout and title are separate on purpose: two modes share one template,
-     and the title still follows the mode, so a Pro Forma can never print
-     "Quotation No" or the quotation's letter layout. */
+  // `doc` is the document TITLE printed on the sheet; `noLabel` is the label
+  // for its reference number in the metadata grid. Both follow the selected
+  // mode, so a Pro Forma can no longer print "Quotation No".
   const ERP_MODES = {
-    quotation:  { label: 'Quotation / Offer',        doc: 'QUOTATION',            noLabel: 'Quotation No',          refPh: 'REF-2026-001', template: 'quotation' },
-    proforma:   { label: 'Pro Forma Invoice',        doc: 'PRO FORMA INVOICE',    noLabel: 'Pro Forma Invoice No',  refPh: 'PI-2026-001',  template: 'invoice' },
-    commercial: { label: 'Tax / Commercial Invoice', doc: 'TAX INVOICE',          noLabel: 'Tax Invoice No',        refPh: 'INV-2026-001', template: 'invoice' },
-    delivery:   { label: 'Delivery Note',            doc: 'DELIVERY NOTE',        noLabel: 'Delivery Note No',      refPh: 'DN-2026-001',  template: 'delivery' }
+    quotation:  { label: 'Quotation / Offer',        doc: 'QUOTATION',            noLabel: 'Quotation No',          refPh: 'REF-2026-001' },
+    proforma:   { label: 'Pro Forma Invoice',        doc: 'PRO FORMA INVOICE',    noLabel: 'Pro Forma Invoice No',  refPh: 'PI-2026-001' },
+    commercial: { label: 'Tax / Commercial Invoice', doc: 'TAX INVOICE',          noLabel: 'Tax Invoice No',        refPh: 'INV-2026-001' },
+    delivery:   { label: 'Delivery Note',            doc: 'DELIVERY NOTE',        noLabel: 'Delivery Note No',      refPh: 'DN-2026-001' }
   };
-
-  /* The template a mode prints with — and the document type the money rules
-     key off. One lookup, so "which layout" and "does this document carry
-     money" can never disagree. */
-  function erpTemplate() { return (ERP_MODES[erpState.mode] || {}).template || 'invoice'; }
 
   // Per-mode extra fields shown under the mode tabs. "meta" holds anything
   // beyond the shared header (bank details, VAT reg no, delivery address…).
@@ -5799,27 +5011,12 @@
      Branch straight from the saved Bank & Beneficiary block — and a value
      typed here still wins. */
   const ERP_MODE_FIELDS = {
-    /* Quotation terms are STRUCTURED (Price basis / Payment / Delivery /
-       Validity) because the letter prints them as colon-separated rows, and
-       its subject and sign-off are document-specific values too.
-       `num: true` marks a field the totals read, so it is numeric-filtered
-       like every other money input rather than free text. */
-    quotation:  [
-      { key: 'subject', label: 'Subject / purpose', ph: 'e.g. Supply & installation of fire detection equipment' },
-      { key: 'salutation', label: 'Salutation', ph: 'e.g. Dear Sir,' },
-      { key: 'priceBasis', label: 'Price basis', ph: 'e.g. C&F / CIF / Ex-works' },
-      { key: 'payment', label: 'Payment', ph: 'e.g. Full payment in advance', brandKey: 'payTerms' },
-      { key: 'delivery', label: 'Delivery', ph: 'e.g. 4-5 weeks from the payment' },
-      { key: 'validity', label: 'Validity', ph: 'e.g. 30 Days' },
-      { key: 'freight', label: 'Estimated freight', ph: 'e.g. 45000', num: true },
-      { key: 'preparedBy', label: 'Prepared by (name)', ph: 'e.g. Alex Perera' },
-      { key: 'preparedTitle', label: 'Prepared by (title)', ph: 'e.g. Engineer' }
-    ],
+    quotation:  [],
     proforma:   [
       { key: 'payment', label: 'Payment terms', ph: 'e.g. 50% advance, balance on delivery', brandKey: 'payTerms' },
-      { key: 'bank', label: 'Bank & branch', ph: 'e.g. Example Bank — Main Street Branch', brandKey: 'bankBranch' },
+      { key: 'bank', label: 'Bank & branch', ph: 'e.g. Commercial Bank — Ekala Branch', brandKey: 'bankBranch' },
       { key: 'account', label: 'Account number', ph: 'e.g. 1001234567890', brandKey: 'accountNo' },
-      { key: 'swift', label: 'SWIFT code', ph: 'e.g. EXAMPLKA', brandKey: 'swift' },
+      { key: 'swift', label: 'SWIFT code', ph: 'e.g. CCEYLKLX', brandKey: 'swift' },
       { key: 'branch', label: 'Branch code', ph: 'e.g. 001', brandKey: 'branchCode' }
     ],
     commercial: [
@@ -5827,11 +5024,8 @@
       { key: 'consignee', label: 'Consignee details', ph: 'e.g. Acme Holdings, Colombo' }
     ],
     delivery: [
-      { key: 'deliverTo', label: 'Deliver to (site / address)', ph: 'e.g. Warehouse 2, Example Industrial Zone' },
-      { key: 'vehicle', label: 'Vehicle / driver (optional)', ph: 'e.g. WP CAB-1234' },
-      { key: 'issuedBy', label: 'Issued by', ph: 'e.g. Alex Perera' },
-      { key: 'nicNo', label: 'NIC No', ph: 'e.g. 199012345678' },
-      { key: 'remarks', label: 'Remarks (printed on the first line)', ph: 'e.g. Checked against PO-2026-0451' }
+      { key: 'deliverTo', label: 'Deliver to (site / address)', ph: 'e.g. Warehouse 2, Ekala' },
+      { key: 'vehicle', label: 'Vehicle / driver (optional)', ph: 'e.g. WP CAB-1234' }
     ]
   };
 
@@ -5845,20 +5039,11 @@
       // one data object, rather than in a preview-side copy.
       supplyDate: '',
       // Consignee / order-detail block (formal invoice layout)
-      contact: '', clientPhone: '', clientTin: '', placeOfSupply: '', poNo: '', deliveryTerms: '', shipTo: '', hsCode: '',
-      /* Recipient block for the letter templates: the client's personal name
-         is `client`; these are the title/position line and the company /
-         institute line that sit beside it. */
-      recipientTitle: '', recipientCompany: '',
+      contact: '', clientTin: '', placeOfSupply: '', poNo: '', deliveryTerms: '', shipTo: '', hsCode: '',
       meta: {},
-      lines: [],           // { id, sku, name, model, unit, qty, rate }
+      lines: [],           // { id, sku, name, unit, qty, rate }
       discount: '', vat: '18',
-      terms: '',
-      /* The Library entry this working document belongs to. Empty means the
-         document has never been saved, so the next Save to Library creates a
-         new entry; once set, saving again UPDATES that same entry instead of
-         stacking a duplicate next to it. */
-      libraryId: ''
+      terms: ''
     };
   }
 
@@ -5930,19 +5115,13 @@
 
   /* Purchaser telephone for the document's metadata grid.
      The client "Contact person" box is a free-text line by design (its own
-     placeholder is "Alex Perera · +94 71 000 0000"), so it may hold a NAME, a
+     placeholder is "R. Perera · +94 77 555 1234"), so it may hold a NAME, a
      number, or both. The template's Telephone No slot is a phone slot, so
      pull the phone token out of that line — mirroring brandPhone(), which
      does exactly this for the supplier side of the same box.
-     Never returns a person's name: with "Alex Perera" typed and no number,
+     Never returns a person's name: with "R. Perera" typed and no number,
      the slot stays empty rather than printing the contact person there. */
-  /* The purchaser's telephone is its OWN value — never the contact person's
-     name. Drafts saved before the split kept the number inside the contact
-     string, so an empty field still falls back to a phone-shaped token there;
-     a plain name yields '' and can never be printed as a number. */
   function purchaserPhone() {
-    const own = String(erpState.clientPhone || '').trim();
-    if (own) return own;
     return parseContactPair(erpState.contact).phone;
   }
 
@@ -5960,9 +5139,7 @@
     $('erp-mode-fields').innerHTML = fields.map(function (f) {
       const id = 'erp-m-' + f.key;
       return '<div class="field"><label for="' + id + '">' + f.label + '</label>' +
-        '<input type="text" id="' + id + '" data-erpmeta="' + f.key + '"' +
-        (f.num ? ' data-numeric="1" inputmode="decimal"' : '') +
-        ' placeholder="' + f.ph + '" autocomplete="off"></div>';
+        '<input type="text" id="' + id + '" data-erpmeta="' + f.key + '" placeholder="' + f.ph + '" autocomplete="off"></div>';
     }).join('');
     for (let i = 0; i < fields.length; i++) {
       const el = document.getElementById('erp-m-' + fields[i].key);
@@ -5980,29 +5157,6 @@
     const showMoney = erpDocType();
     $('erp-rate-head').hidden = !showMoney;
     $('erp-amt-head').hidden = !showMoney;
-    /* Discount and VAT are INVOICE-ONLY: the quotation template has no row
-       for either and the delivery note shows no money at all. Hiding the
-       controls keeps the form from collecting values the chosen template
-       would silently ignore — the earlier "field that never reaches the
-       document" trap. */
-    const taxed = erpState.mode === 'commercial' || erpState.mode === 'proforma';
-    const taxCard = $('erp-tax-card');
-    if (taxCard) taxCard.hidden = !taxed;
-  }
-
-  /* The value a mode-specific field actually carries: the document's OWN
-     override first, otherwise the saved brand value it inherits — exactly
-     the precedence the form shows, so the sheet and the form always agree.
-     `product` is the same mapping without the brand fallback, supplied by the
-     caller so this can be called from the template's own test harness. */
-  function erpMetaValue(key, map, brandMap) {
-    const own = (map || erpState.meta || {})[key];
-    if (own !== undefined && own !== null && String(own).trim() !== '') return String(own);
-    const fields = ERP_MODE_FIELDS[erpState.mode] || [];
-    let spec = null;
-    for (let i = 0; i < fields.length; i++) { if (fields[i].key === key) { spec = fields[i]; break; } }
-    if (spec && spec.brandKey) return String((brandMap || brand)[spec.brandKey] || '');
-    return '';
   }
 
   // A picked SKU whose database record carries NO usable rate (never entered,
@@ -6017,13 +5171,8 @@
   function renderErpRows() {
     const tbody = $('erp-rows');
     const showMoney = erpDocType();
-    // Quotation and Delivery Note both print a Model field; the invoice
-    // layout does not (see the column note in the row template).
-    const showModel = erpState.mode !== 'commercial' && erpState.mode !== 'proforma';
-    const modelHead = $('erp-model-head');
-    if (modelHead) modelHead.hidden = !showModel;
     if (!erpState.lines.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-cell">No items yet. Type or pick an Item Key / SKU and press Add — details auto-fill from your database.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-cell">No items yet. Type or pick an Item Key / SKU and press Add — details auto-fill from your database.</td></tr>';
     } else {
       tbody.innerHTML = erpState.lines.map(function (row, i) {
         const amount = erpLineAmount(row);
@@ -6031,11 +5180,6 @@
           '<td class="q-num">' + (i + 1) + '</td>' +
           '<td><input type="text" class="erp-sku" list="erp-sku-list" value="' + esc(row.sku) + '" placeholder="e.g. PIPE-25" autocomplete="off" aria-label="Item key"></td>' +
           '<td><input type="text" class="erp-name" value="' + esc(row.name) + '" placeholder="Item name &amp; description" autocomplete="off"></td>' +
-          /* Make / Model feeds the quotation's second description line and the
-             delivery note's own "Model No" column. The invoice layout prints
-             neither, so the column is hidden for the two invoice modes — a
-             field that cannot reach the document must not be offered. */
-          '<td' + (showModel ? '' : ' hidden') + '><input type="text" class="erp-model" value="' + esc(row.model || '') + '" placeholder="Model / make" autocomplete="off" aria-label="Model no"></td>' +
           '<td><input type="text" class="erp-unit" value="' + esc(row.unit) + '" placeholder="Nr" autocomplete="off" aria-label="Unit type"></td>' +
           '<td><input type="text" inputmode="decimal" data-numeric="1" class="erp-qty" value="' + esc(String(row.qty)) + '" placeholder="0" aria-label="Quantity"></td>' +
           '<td class="erp-rate-col"><input type="text" inputmode="decimal" data-numeric="1" class="erp-rate' + (needsRate(row) ? ' erp-rate-unset' : '') + '" value="' + esc(String(row.rate)) + '" placeholder="' + (needsRate(row) ? 'rate' : '0') + '" aria-label="Rate"' +
@@ -6048,26 +5192,6 @@
     }
     $('erp-line-count').textContent = erpState.lines.length + (erpState.lines.length === 1 ? ' line' : ' lines');
     updateErpSummary();
-  }
-
-  /* ── Quotation money ──────────────────────────────────────────────────
-     Sub Total → Estimated Freight → Total. NO discount and NO VAT: they are
-     invoice-only concepts and the letter has no row for them, so they must
-     not reach the arithmetic either — otherwise a percentage typed earlier
-     while the invoice mode was selected would quietly change the offer. */
-  function erpQuotationTotals() {
-    const sub = erpState.lines.reduce(function (sum, l) {
-      const a = erpLineAmount(l);
-      return sum + (a === null ? 0 : a);
-    }, 0);
-    const freight = num0(erpMetaValue('freight'));
-    return { sub: sub, freight: freight, final: sub + freight };
-  }
-
-  /* The totals the CURRENT document prints and saves. One entry point, so the
-     summary, the sheet and the Library entry can never disagree. */
-  function erpDocTotals() {
-    return erpState.mode === 'quotation' ? erpQuotationTotals() : erpTotals();
   }
 
   function erpTotals() {
@@ -6094,16 +5218,6 @@
         '<p class="summary-muted">Delivery notes list quantities only — no money columns.</p>';
       return;
     }
-    // Quotation: Sub total → Estimated freight → Total, with no discount or
-    // VAT line, because the letter prints none either.
-    if (erpState.mode === 'quotation') {
-      const q = erpQuotationTotals();
-      wrap.innerHTML =
-        '<div class="boq-sum-line"><span>Sub total</span><strong>' + erpMoney(q.sub) + '</strong></div>' +
-        '<div class="boq-sum-line"><span>Estimated freight</span><strong>+' + erpMoney(q.freight) + '</strong></div>' +
-        '<div class="boq-sum-line boq-final"><span>Quotation total</span><strong>' + erpMoney(q.final) + '</strong></div>';
-      return;
-    }
     const t = erpTotals();
     let html = '<div class="boq-sum-line"><span>Sub total</span><strong>' + erpMoney(t.sub) + '</strong></div>';
     if (t.discPct > 0) html += '<div class="boq-sum-line"><span>Discount (' + Calc.fmtPct(t.discPct) + ')</span><strong>\u2212 ' + erpMoney(t.disc) + '</strong></div>';
@@ -6120,9 +5234,6 @@
     if (val('erp-client') !== undefined) erpState.client = val('erp-client');
     if (val('erp-address') !== undefined) erpState.address = val('erp-address');
     if (val('erp-contact') !== undefined) erpState.contact = val('erp-contact');
-    if (val('erp-clientphone') !== undefined) erpState.clientPhone = val('erp-clientphone');
-    if (val('erp-recipient-title') !== undefined) erpState.recipientTitle = val('erp-recipient-title');
-    if (val('erp-recipient-company') !== undefined) erpState.recipientCompany = val('erp-recipient-company');
     if (val('erp-clienttin') !== undefined) erpState.clientTin = val('erp-clienttin');
     if (val('erp-posupply') !== undefined) erpState.placeOfSupply = val('erp-posupply');
     if (val('erp-pono') !== undefined) erpState.poNo = val('erp-pono');
@@ -6146,7 +5257,6 @@
       const grabNum = function (cls) { const v = grab(cls); return v === null ? null : numericSafeText(v, false); };
       const sku = grab('erp-sku'); if (sku !== null) row.sku = sku;
       const name = grab('erp-name'); if (name !== null) row.name = name;
-      const model = grab('erp-model'); if (model !== null) row.model = model;
       const unit = grab('erp-unit'); if (unit !== null) row.unit = unit;
       const qty = grabNum('erp-qty'); if (qty !== null) row.qty = qty;
       const rate = grab('erp-rate'); if (rate !== null && !rowEl.querySelector('.erp-rate').disabled) row.rate = rate;
@@ -6158,9 +5268,6 @@
     $('erp-client').value = erpState.client;
     $('erp-address').value = erpState.address;
     $('erp-contact').value = erpState.contact;
-    if ($('erp-clientphone')) $('erp-clientphone').value = erpState.clientPhone || '';
-    if ($('erp-recipient-title')) $('erp-recipient-title').value = erpState.recipientTitle || '';
-    if ($('erp-recipient-company')) $('erp-recipient-company').value = erpState.recipientCompany || '';
     $('erp-clienttin').value = erpState.clientTin;
     $('erp-posupply').value = erpState.placeOfSupply;
     $('erp-pono').value = erpState.poNo;
@@ -6212,7 +5319,7 @@
   }
 
   function addErpRow(sku) {
-    const row = { id: uid(), sku: sku || '', name: '', model: '', unit: 'Nr', qty: '', rate: '' };
+    const row = { id: uid(), sku: sku || '', name: '', unit: 'Nr', qty: '', rate: '' };
     if (sku) {
       const it = dbFindItem(sku);
       if (it) {
@@ -6273,12 +5380,12 @@
     ['clientName', 'erp-client'],
     ['clientAddress', 'erp-address'],
     ['contactPerson', 'erp-contact'],
-    ['contactNumber', 'erp-clientphone'],
     ['tinRegNo', 'erp-clienttin'],
     ['placeOfSupply', 'erp-posupply'],
     ['poNo', 'erp-pono'],
     ['deliveryTerms', 'erp-terms-dt'],
-    ['shipTo', 'erp-shipto']
+    ['shipTo', 'erp-shipto'],
+    ['hsCode', 'erp-hscode']
   ];
   // Normalize for matching: lowercase, strip non-alphanumeric.
   function erpClientNormalize(t) {
@@ -6360,15 +5467,13 @@
     erpState.client = client.clientName || client.name;
     erpState.project = client.defaultProject || erpState.project || '';
     erpState.address = client.clientAddress || client.address || '';
-    // "Contact person" is a NAME only; the phone lives in its own field, so
-    // the invoice's "Telephone No" can never print a person's name.
     erpState.contact = client.contactPerson || '';
-    erpState.clientPhone = client.contactNumber || '';
     erpState.clientTin = client.tinRegNo || '';
     erpState.placeOfSupply = client.placeOfSupply || '';
     erpState.poNo = client.poNo || '';
     erpState.deliveryTerms = client.deliveryTerms || '';
     erpState.shipTo = client.shipTo || '';
+    erpState.hsCode = client.hsCode || '';
     /* The client's saved default currency overrides the company/tool default
        for THIS document — that is the whole point of the field, and the
        document is the customer-facing artefact. Say so out loud: a silently
@@ -6412,11 +5517,6 @@
 
   function saveErpRecords() {
     try { localStorage.setItem(ERP_RECORDS_KEY, JSON.stringify(erpRecords)); } catch (e) { /* ignore */ }
-    /* This is the single write choke point for the record store, so the Home
-       card and the full list refresh here — saving or deleting a record is
-       visible immediately, with no second call site to keep in step. */
-    renderHomeRecordsPreview();
-    renderDbRecords();
   }
 
   // Snapshot = everything that defines the active document.
@@ -6456,9 +5556,17 @@
     erpRecords[id] = snapshot;
     saveErpRecords();
     erpRecordMeta(id);
-    /* A saved RECORD is not a Library entry. Save Record maintains the
-       reusable record store only; Save to Library maintains History only.
-       The two are independent on purpose. */
+    pushHistory({
+      type: 'copy', tool: 'erp', toolName: 'ERP record saved',
+      title: id + (erpState.client ? ' — ' + erpState.client : ''),
+      total: erpDocType() ? erpMoney(erpTotals().final) : '',
+      client: erpState.client || '',
+      ref: id,
+      draft: { tool: 'erp' }
+    });
+    renderActivity();
+    renderKpis();
+    updateKPICards();
     window.alert('Record "' + id + '" saved' + (exists ? ' (overwritten)' : '') + '. Load it anytime by typing the same ID and pressing Load Record.');
   }
 
@@ -6486,29 +5594,8 @@
     return true;
   }
 
-  /* Load a saved record by id, from the Home card or the full list. The ERP
-     inputs exist even while the view is hidden, so this works from any page;
-     switching to the engine is the visible result. */
-  function erpLoadRecordById(id) {
-    const key = String(id == null ? '' : id).trim();
-    if (!key || !erpRecords[key]) {
-      showToast('No saved record with id \u201c' + key + '\u201d.', 'error');
-      return false;
-    }
-    const input = $('erp-record-id');
-    if (input) input.value = key;
-    const ok = erpLoadRecord(true);   // silent: the page change is the feedback
-    if (ok) { showView('erp'); showToast('Loaded record \u201c' + key + '\u201d'); }
-    return ok;
-  }
-
-  /* Deletes the id given, or the one in the Record ID field when called with
-     no argument (the ERP's own Delete button). */
-  async function erpDeleteRecord(idArg) {
-    const field = $('erp-record-id');
-    const id = (idArg === undefined || idArg === null || typeof idArg === 'object')
-      ? (field ? field.value.trim() : '')
-      : String(idArg).trim();
+  async function erpDeleteRecord() {
+    const id = $('erp-record-id').value.trim();
     if (!id) { window.alert('Enter the Record ID to delete.'); return; }
     if (!erpRecords[id]) { window.alert('No record saved as "' + id + '".'); return; }
     if (!(await confirmAction({
@@ -6566,15 +5653,15 @@
     }
     const headerRows = [
       ['Field', 'Value'],
-      ['Project Name', 'Example Warehouse fit-out'],
+      ['Project Name', 'Wattala Warehouse Fire-Alarm Upgrade'],
       ['Client Name', 'Acme Holdings (Pvt) Ltd'],
-      ['Address', '456 Sample Lane, Colombo 03'],
-      ['Contact Person', 'Alex Perera · +94 71 000 0000'],
-      ['TIN', 'TIN 000 000 000'],
+      ['Address', '123 Galle Road, Colombo 03'],
+      ['Contact Person', 'R. Perera · +94 77 555 1234'],
+      ['TIN', 'TIN 123 456 789'],
       ['Place of Supply', 'Western Province'],
       ['PO No', 'PO-2026-0451'],
       ['Delivery Terms', 'Delivered to site (DDP)'],
-      ['Ship To', 'Site gate 2, Example Industrial Zone'],
+      ['Ship To', 'Site gate 2, Ekala Industrial Zone'],
       ['HS Code', '8536.69'],
       ['Ref No', 'INV-2026-001'],
       ['Discount', '5'],
@@ -6850,17 +5937,6 @@
 
   function erpDateStr() { return erpFormatDate(erpState.date); }
 
-  /* The date written out in full ("March 5, 2026") for the letter templates,
-     which spell the month instead of the invoice grid's numeric dd/mm/yyyy. */
-  function erpLongDate(iso) {
-    const raw = (iso === undefined) ? erpState.date : iso;
-    const d = raw ? new Date(String(raw) + 'T00:00:00') : new Date();
-    if (isNaN(d.getTime())) return '';
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
-      'August', 'September', 'October', 'November', 'December'];
-    return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
-  }
-
   // (The previous mxLetterhead / mxMetaGrid class-based builders were
   // replaced by the inline-styled generatePrintHTML() document head —
   // see below, just above buildErpDoc.)
@@ -6932,9 +6008,7 @@
   // Shared AOA (array of arrays) snapshot of the active document — drives
   // both the Excel (.xlsx) and CSV exports so the two stay identical.
   function mxSheetAoa() {
-    // The same totals the sheet prints, so an exported spreadsheet can never
-    // show a discount or VAT row the selected template does not have.
-    const t = erpDocTotals();
+    const t = erpTotals();
     const dateStr = erpDateStr();
     const rows = [];
     rows.push([brandDocTitle()]);
@@ -6968,9 +6042,6 @@
     });
     rows.push([]);
     rows.push(['', '', '', '', 'Sub Total', Calc.round2(num0(t.sub))]);
-    if (erpTemplate() === 'quotation') {
-      rows.push(['', '', '', '', 'Estimated Freight', Calc.round2(num0(t.freight))]);
-    }
     if (t.discPct > 0) {
       rows.push(['', '', '', '', 'Discount (' + Calc.fmtPct(t.discPct) + ')', Calc.round2(-num0(t.disc))]);
       rows.push(['', '', '', '', 'Taxable Sub Total', Calc.round2(num0(t.net))]);
@@ -7000,7 +6071,14 @@
     ws['!cols'] = [{ wch: 6 }, { wch: 42 }, { wch: 10 }, { wch: 10 }, { wch: 18 }, { wch: 18 }];
     XLSX.utils.book_append_sheet(wb, ws, 'Document');
     XLSX.writeFile(wb, (ERP_MODES[erpState.mode].doc + ' ' + (erpState.ref || '')).trim() + '.xlsx');
-    erpRefreshLibraryEntry();   // refresh a saved entry; never create one
+    pushHistory({
+      type: 'copy', tool: 'erp', toolName: 'Master ERP Engine — Excel export',
+      title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
+      total: erpDocType() ? erpMoney(erpTotals().final) : '',
+      client: erpState.client || '',
+      ref: erpState.ref || '',
+      draft: { tool: 'erp' }
+    });
   }
 
   // The template prefixes the site with 'www.' — strip any protocol / www.
@@ -7110,50 +6188,23 @@
     return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  /* ── Template dispatch ────────────────────────────────────────────────
-     THREE templates, chosen by the document mode. The dataset is shared —
-     only the layout, the fields and the title differ:
-
-       Tax / Commercial Invoice  → 'invoice'    (the boxed formal layout)
-       Pro Forma Invoice         → 'invoice'    (same layout, its own title)
-       Quotation / Offer         → 'quotation'  (letter style)
-       Delivery Note             → 'delivery'   (receipt / form style)
-
-     An unknown or absent `template` falls back to the invoice layout, so a
-     document saved by an older build still prints. */
-  const MX_UI_FONT = 'Roboto, Arial, Helvetica, sans-serif';
-  const MX_TEMPLATES = {
-    invoice: function (d) { return mxInvoiceHTML(d); },
-    quotation: function (d) { return mxQuotationHTML(d); },
-    delivery: function (d) { return mxDeliveryHTML(d); }
-  };
   function generatePrintHTML(data) {
-    const spec = (data && data.template) || 'invoice';
-    const fn = MX_TEMPLATES[spec] || MX_TEMPLATES.invoice;
-    return fn(data || {});
-  }
-
-  /* ── Template 1 · Tax / Commercial Invoice (and Pro Forma) ────────────
-     The original precision-built invoice template, unchanged: the boxed
-     Supplier / Purchaser grid, TIN fields, VAT, Discount and the formal
-     totals block. Pro Forma uses it verbatim with its own title.
-     The sheet body is `mxInvoiceSheet` (below the shared builders) because
-     the letterhead and page shell it uses have to be defined between them;
-     function declarations hoist, so the call order is irrelevant. */
-  function mxInvoiceHTML(data) { return mxInvoiceSheet(data); }
-
-  /* ── Shared letterhead (all three templates) ────────────────────────
-     A horizontal band of the exact height the master uses, holding the
-     supplier's logo (left) and their own name / address / contact / tagline
-     block on the master's measured baselines. Lifted out of the invoice
-     builder UNCHANGED so the quotation and the delivery note wear exactly
-     the invoice's letterhead — only the wrapper and the `return` are new,
-     so every verified offset still applies. */
-  function mxLetterhead(data) {
+    const FONT = 'Roboto, Arial, Helvetica, sans-serif';
+    const B = MXPT.body;
+    const RULE = MXPT.rule + 'pt solid #000';
+    const C = MXPT.cols;
+    // Everything is caller-supplied. An unconfigured brand prints blank
+    // lines in the right places — never another company's details.
     const supplierName = data.supplierName || '';
     const supplierAddress = data.supplierAddress || '';
     const supplierContact = data.supplierContact || '';
     const tagline = data.tagline || '';
+    const docTitle = data.documentType || 'DOCUMENT';
+    const items = data.items || [];
+
+    /* LETTERHEAD — a horizontal band of the exact height the master uses,
+       holding the supplier's logo (left) and their own name / address /
+       contact / tagline block on the master's measured baselines. */
     const H = MXPT.hdr;
     /* Shared line builder for the lines that follow the stack. */
     const hdrLine = function (marginTop, text, extra) {
@@ -7290,324 +6341,6 @@
       : textHeader;
     const header = '<div style="position:relative;width:' + MXPT.pageW + 'pt;box-sizing:border-box;">' +
       headerBody + banner + '</div>';
-    return header;
-  }
-
-  /* ── Shared page furniture ───────────────────────────────────────────
-     `mxShell` is the page root and `mxContent` the ruled content column;
-     both are byte-identical to what the invoice template already emitted,
-     so reusing them cannot move the invoice by a fraction of a point. */
-  function mxShell(inner) {
-    return '<div style="font-family:' + MX_UI_FONT + ';font-size:' + MXPT.body +
-      'pt;line-height:1.2;color:#000;width:' + MXPT.pageW +
-      'pt;max-width:100%;min-height:' + MXPT.pageH +
-      'pt;box-sizing:border-box;background:#fff;overflow-wrap:anywhere;">' + inner + '</div>';
-  }
-  function mxContent(inner) {
-    return '<div style="width:' + MXPT.contentW + 'pt;margin:' + MXPT.frameGap +
-      'pt auto 0;border:none;box-sizing:border-box;overflow-wrap:anywhere;">' + inner + '</div>';
-  }
-
-  /* `data-edit` is the ONLY thing that makes a value editable on the sheet.
-     There is no other edit affordance in any template: every element without
-     it is locked furniture. See PDF_FIELD_MAP and the preview handlers for
-     what each key writes back to. */
-  function mxEditAttr(key, kind, label) {
-    return ' data-edit="' + key + '" data-edit-kind="' + kind + '" data-edit-label="' + label + '"';
-  }
-  function mx2dp(v) {
-    const n = Number(v);
-    if (!isFinite(n)) return '0.00';
-    return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-
-  /* ── Shared item-table chrome for the two letter templates ───────────
-     Same fill, rule weight, cell padding and font as the invoice table, so
-     a quotation's table reads as the same company's paperwork. */
-  const MX_LETTER_COLS = [34.5, 216.84, 42, 42, 88, 96.5];   // sums to contentW
-  function mxLetterTable(headers, rows, totalRows) {
-    const RULE = MXPT.rule + 'pt solid #000';
-    const cell = function (extra) {
-      return 'border:' + RULE + ';line-height:' + MXPT.cellLh + ';font-size:' + MXPT.body +
-        'pt;vertical-align:top;box-sizing:border-box;overflow-wrap:anywhere;padding:6.2pt 3pt 3pt;' + (extra || '');
-    };
-    const th = function (text, extra) {
-      return '<th style="' + cell('text-align:center;font-weight:700;background:' + MXPT.fill + ';' + (extra || '')) + '">' + text + '</th>';
-    };
-    return '<table style="width:100%;max-width:100%;border-collapse:collapse;table-layout:fixed;border:' + RULE + ';box-sizing:border-box;">' +
-      '<colgroup>' + MX_LETTER_COLS.map(function (w) { return '<col style="width:' + w + 'pt;">'; }).join('') + '</colgroup>' +
-      '<thead><tr>' + headers.map(function (h) { return th(h.text, h.align === 'right' ? 'white-space:nowrap;' : ''); }).join('') + '</tr></thead>' +
-      '<tbody>' + rows.join('') + (totalRows || []).join('') + '</tbody></table>';
-  }
-  const MX_LETTER_TOTAL_TD = 'border:' + MXPT.rule + 'pt solid #000;line-height:' + MXPT.cellLh +
-    ';font-size:' + MXPT.body + 'pt;vertical-align:top;box-sizing:border-box;padding:4pt 3pt 3.6pt;';
-  /* label spans the first four columns; the summary figure sits in the last. */
-  function mxLetterTotal(label, value, opts) {
-    const o = opts || {};
-    const td = MX_LETTER_TOTAL_TD;
-    return '<tr>' +
-      '<td colspan="4" style="' + td + 'text-align:right;' + (o.muted ? '' : 'font-weight:700;') + '">' + label + '</td>' +
-      '<td style="' + td + '"></td>' +
-      '<td style="' + td + 'text-align:right;' + (o.bold ? 'font-weight:700;' : '') + '"' +
-        (o.edit ? mxEditAttr(o.edit, 'number', label + ' amount') : '') + '>' + value + '</td>' +
-    '</tr>';
-  }
-
-  /* A label + value with a dotted rule under it — the delivery note and the
-     quotation's blank fill-in slots are drawn this way, never as boxes.
-     Values arrive PRE-ESCAPED from the caller (the same contract the invoice
-     template works to), so nothing is escaped here: doing it again would
-     print "&amp;" where the user typed "&". */
-  function mxDotted(label, value, opts) {
-    const o = opts || {};
-    const val = (value === null || value === undefined) ? '' : String(value);
-    return '<div style="display:flex;align-items:flex-end;gap:6pt;margin-bottom:' + (o.gap === undefined ? 6.5 : o.gap) +
-      'pt;min-height:' + (MXPT.body + 4) + 'pt;">' +
-      (o.wide ? '' : '<span style="flex:0 0 auto;font-weight:700;font-size:' + MXPT.body + 'pt;">' + label + '</span>') +
-      '<span style="flex:1 1 auto;min-width:0;border-bottom:0.6pt dotted #555;padding:0 3pt 0.8pt;font-size:' + MXPT.body +
-        'pt;line-height:' + MXPT.cellLh + ';white-space:pre-wrap;word-wrap:break-word;word-break:break-word;overflow-wrap:anywhere;"' +
-        (o.edit ? mxEditAttr(o.edit, o.kind || 'text', o.label || label) : '') + '>' +
-        (val === '' ? '&nbsp;' : val) + '</span></div>';
-  }
-
-  /* ══ Template 2 · Quotation / Offer (letter style) ═══════════════════
-     A formal letter, NOT a boxed invoice: written date, recipient address
-     block, salutation, underlined subject, a priced item table with
-     Sub Total → Estimated Freight → Total, the four quotation terms, the
-     assurance line and the preparer's sign-off.
-     Deliberately absent: VAT, Discount and every TIN field — invoice-only
-     concepts with no row in this document. */
-  function mxQuotationHTML(data) {
-    const S = {
-      name: data.supplierName || '',
-      address: data.supplierAddress || '',
-      contact: data.supplierContact || ''
-    };
-    const B = MXPT.body;
-    const items = data.items || [];
-    const lh = MXPT.cellLh;
-
-    /* NOTE ON ESCAPING: every scalar in `data` arrives ALREADY escaped (the
-       caller's contract, identical to the invoice template's), so nothing
-       below escapes a scalar again — only item fields, which the caller
-       passes raw. */
-    /* Date (top-left, written out in full) and Our Ref (right-aligned).
-       A quotation's reference is "Our Ref" — the invoice's boxed
-       "Quotation No" label belongs to a different document. */
-    const headRow = '<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16pt;font-size:' + B +
-      'pt;line-height:' + lh + ';margin-bottom:16pt;">' +
-      '<span style="font-weight:700;">Date :&#8201;</span>' +
-      '<span style="flex:0 1 auto;text-align:left;min-width:0;"' + mxEditAttr('date', 'date', 'Date') + '>' +
-        (data.longDate || data.invoiceDate || '') + '</span>' +
-      '<span style="flex:1 1 auto;"></span>' +
-      '<span style="flex:0 0 auto;font-weight:700;">Our Ref :&#8201;</span>' +
-      '<span style="flex:0 1 auto;text-align:right;min-width:0;"' + mxEditAttr('docNo', 'text', 'Our ref') + '>' +
-        (data.docNo || '') + '</span>' +
-    '</div>';
-
-    /* Recipient address block, laid out like a letter: name, then
-       title / position, then company / institute, then the address lines.
-       Each line is its own element so it wraps on its own and the block
-       simply grows downwards. */
-    const recipientLine = function (value, editKey, label, style) {
-      if (!value && !editKey) return '';
-      return '<div style="font-size:' + B + 'pt;line-height:1.45;' + (style || '') + '"' +
-        (editKey ? mxEditAttr(editKey, 'text', label) : '') + '>' +
-        (value ? value : '&nbsp;') + '</div>';
-    };
-    const recipient = '<div style="margin-bottom:14pt;min-height:36pt;">' +
-      recipientLine(data.clientName, 'client', "Recipient's name", 'font-weight:700;') +
-      recipientLine(data.recipientTitle, 'recipientTitle', 'Recipient title / position') +
-      recipientLine(data.recipientCompany, 'recipientCompany', 'Recipient company / institute') +
-      recipientLine(data.clientAddress, 'clientAddress', 'Recipient address', 'white-space:pre-wrap;') +
-    '</div>';
-
-    const salutation = '<div style="font-size:' + B + 'pt;line-height:1.45;margin-bottom:12pt;"' +
-      mxEditAttr('salutation', 'text', 'Salutation') + '>' + (data.salutation || 'Dear Sir,') + '</div>';
-
-    /* Subject: centered, bold, underlined. Not just the word "Quotation" —
-       the PURPOSE of the offer, editable on the sheet and in the form. */
-    const subject = '<div style="text-align:center;font-weight:700;text-decoration:underline;font-size:' + (B + 0.6) +
-      'pt;line-height:1.4;margin:0 0 14pt;text-underline-offset:2.4pt;"' +
-      mxEditAttr('subject', 'text', 'Subject') + '>' + (data.subject || '') + '</div>';
-
-    const descText = function (it) {
-      const lines = [it.name || it.description || ''];
-      if (it.model) lines.push('Make / Model: ' + it.model);
-      return lines.join('\n');
-    };
-    const cellBase = 'border:' + MXPT.rule + 'pt solid #000;line-height:' + lh + ';font-size:' + B +
-      'pt;vertical-align:top;box-sizing:border-box;overflow-wrap:anywhere;padding:5.5pt 3pt 3pt;';
-    const rows = items.map(function (it, i) {
-      const n = i + 1;
-      return '<tr>' +
-        /* The Item column is the row NUMBER — locked furniture like the
-           invoice's "No" column, never something to type into. */
-        '<td style="' + cellBase + 'text-align:center;">' + n + '</td>' +
-        '<td style="' + cellBase + 'text-align:left;white-space:pre-wrap;word-wrap:break-word;word-break:break-word;"' +
-          mxEditAttr('item:' + i + ':desc', 'text', 'Item ' + n + ' description') + '>' + esc(descText(it)) + '</td>' +
-        '<td style="' + cellBase + 'text-align:center;"' + mxEditAttr('item:' + i + ':unit', 'text', 'Item ' + n + ' unit') + '>' + esc(it.unit || '') + '</td>' +
-        '<td style="' + cellBase + 'text-align:center;"' + mxEditAttr('item:' + i + ':qty', 'number', 'Item ' + n + ' quantity') + '>' +
-          (it.qty === '' || it.qty === null || it.qty === undefined ? '0' : it.qty) + '</td>' +
-        '<td style="' + cellBase + 'text-align:right;"' + mxEditAttr('item:' + i + ':rate', 'number', 'Item ' + n + ' rate') + '>' + mx2dp(it.rate) + '</td>' +
-        '<td style="' + cellBase + 'text-align:right;">' + mx2dp(it.amount) + '</td>' +
-      '</tr>';
-    });
-    const totalRows = [
-      mxLetterTotal('Sub Total', mx2dp(data.subTotal), { bold: true }),
-      mxLetterTotal('Estimated Freight', mx2dp(data.freight), { edit: 'freight', muted: true }),
-      mxLetterTotal('Total', mx2dp(data.grandTotal), { bold: true })
-    ];
-    const table = mxLetterTable([
-      { text: 'Item' }, { text: 'Description of Item' }, { text: 'Unit' },
-      { text: 'Qty' }, { text: 'Rate (' + (data.currencyCode || 'LKR') + ')', align: 'right' },
-      { text: 'Amount (' + (data.currencyCode || 'LKR') + ')', align: 'right' }
-    ], rows, totalRows);
-
-    /* Terms & Conditions — left-aligned, colon-separated. An empty value
-       falls back to a dotted blank so the section keeps its shape and can
-       still be completed by hand. */
-    const termRow = function (label, value, editKey) {
-      const has = value !== null && value !== undefined && String(value).trim() !== '';
-      return '<div style="display:flex;gap:6pt;font-size:' + B + 'pt;line-height:1.5;margin-bottom:3.4pt;">' +
-        '<span style="flex:0 0 96pt;font-weight:700;">' + label + '&#8201;:</span>' +
-        '<span style="flex:1 1 auto;min-width:0;' + (has ? '' : 'border-bottom:0.6pt dotted #777;min-height:12pt;') + '"' +
-          (editKey ? mxEditAttr(editKey, 'text', label) : '') + '>' +
-          (has ? value : '&nbsp;') + '</span></div>';
-    };
-    const termsBlock = '<div style="margin-top:16pt;">' +
-      '<div style="font-weight:700;font-size:' + B + 'pt;text-decoration:underline;margin-bottom:5pt;">Terms &amp; Conditions</div>' +
-      termRow('Price', data.priceBasis, 'priceBasis') +
-      termRow('Payment', data.payment, 'payment') +
-      termRow('Delivery', data.deliveryTerm, 'delivery') +
-      termRow('Validity', data.validity, 'validity') +
-      (data.terms ? '<div style="font-size:' + B + 'pt;line-height:1.5;white-space:pre-wrap;margin-top:5pt;">' + data.terms + '</div>' : '') +
-    '</div>';
-
-    const assurance = '<div style="font-style:italic;font-size:' + B + 'pt;line-height:1.5;margin-top:18pt;">' +
-      'We assure you with our very best services at all times.</div>';
-
-    /* Sign-off: "Thanking you," then the preparer. Blank when unset, on a
-       dotted rule, so the letter can still be signed by hand. */
-    const signOff = '<div style="margin-top:22pt;">' +
-      '<div style="font-size:' + B + 'pt;line-height:1.5;">Thanking you,</div>' +
-      '<div style="height:20pt;"></div>' +
-      '<div style="font-weight:700;font-size:' + B + 'pt;line-height:1.5;min-height:13pt;width:230pt;border-bottom:0.6pt dotted #555;"' +
-        mxEditAttr('preparedBy', 'text', 'Prepared by') + '>' + (data.preparedBy || '') + '</div>' +
-      '<div style="font-size:' + B + 'pt;line-height:1.5;min-height:13pt;width:230pt;"' +
-        mxEditAttr('preparedTitle', 'text', 'Preparer title') + '>' + (data.preparedTitle || '') + '</div>' +
-      '<div style="font-size:' + B + 'pt;line-height:1.5;margin-top:1pt;">' +
-        (S.name || '') + '</div>' +
-    '</div>';
-
-    return mxShell(mxLetterhead(data) + mxContent(
-      headRow + recipient + salutation + subject + table + termsBlock + assurance + signOff));
-  }
-
-  /* ══ Template 3 · Delivery Note (receipt / form style) ═══════════════
-     A goods-received form: dotted-line details, a quantities-only table
-     (NO rate and NO amount column — a delivery note carries no pricing),
-     an "Issued By" line, blank remarks lines and a receiving-party
-     signature block for a physical sign-off. */
-  function mxDeliveryHTML(data) {
-    const B = MXPT.body;
-    const lh = MXPT.cellLh;
-    const items = data.items || [];
-
-    /* As in the quotation: `data` scalars are pre-escaped by the caller, so
-       only item fields (passed raw) are escaped in this template. */
-    const title = '<div style="text-align:right;font-size:' + (B + 2.4) +
-      'pt;font-weight:700;letter-spacing:1.2pt;margin-bottom:14pt;">' + (data.documentType || 'DELIVERY NOTE') + '</div>';
-
-    const sectionLabel = function (text) {
-      return '<div style="font-weight:700;font-size:' + B + 'pt;text-decoration:underline;margin-bottom:7pt;">' + text + '</div>';
-    };
-    /* Delivery Details — Institute / Address / Contact / Project on the left,
-       Date and Our Ref on the right, every value on a dotted rule. */
-    const leftCol = '<div style="flex:1 1 58%;min-width:0;">' +
-      mxDotted('Institute :', data.clientName, { edit: 'client', label: 'Institute' }) +
-      mxDotted('Address :', data.clientAddress, { edit: 'clientAddress', label: 'Address' }) +
-      mxDotted('Contact :', data.clientPhone || data.contact, { edit: 'clientPhone', label: 'Contact' }) +
-      mxDotted('Project :', data.projectName, { edit: 'projectName', label: 'Project' }) +
-      '</div>';
-    const rightCol = '<div style="flex:1 1 38%;min-width:0;">' +
-      mxDotted('Date :', data.invoiceDate, { edit: 'date', kind: 'date', label: 'Date' }) +
-      mxDotted('Our Ref :', data.docNo, { edit: 'docNo', label: 'Our ref' }) +
-      '</div>';
-    const details = '<div style="display:flex;gap:18pt;align-items:flex-start;">' + leftCol + rightCol + '</div>';
-
-    const cellBase = 'border:' + MXPT.rule + 'pt solid #000;line-height:' + lh + ';font-size:' + B +
-      'pt;vertical-align:top;box-sizing:border-box;overflow-wrap:anywhere;padding:5.5pt 3pt 3pt;';
-    const rows = items.map(function (it, i) {
-      const n = i + 1;
-      return '<tr>' +
-        '<td style="' + cellBase + 'text-align:center;">' + n + '</td>' +
-        '<td style="' + cellBase + 'text-align:left;white-space:pre-wrap;word-wrap:break-word;word-break:break-word;"' +
-          mxEditAttr('item:' + i + ':desc', 'text', 'Item ' + n + ' description') + '>' + esc(it.name || it.description || '') + '</td>' +
-        '<td style="' + cellBase + 'text-align:center;"' + mxEditAttr('item:' + i + ':model', 'text', 'Item ' + n + ' model no') + '>' + esc(it.model || '') + '</td>' +
-        '<td style="' + cellBase + 'text-align:center;"' + mxEditAttr('item:' + i + ':unit', 'text', 'Item ' + n + ' unit') + '>' + esc(it.unit || '') + '</td>' +
-        '<td style="' + cellBase + 'text-align:center;"' + mxEditAttr('item:' + i + ':qty', 'number', 'Item ' + n + ' quantity') + '>' +
-          (it.qty === '' || it.qty === null || it.qty === undefined ? '0' : it.qty) + '</td>' +
-      '</tr>';
-    });
-    /* Five columns, so the shared six-column widths are overridden here. */
-    const table = mxLetterTable([
-      { text: 'Item No' }, { text: 'Description of Item' }, { text: 'Model No' },
-      { text: 'Unit' }, { text: 'Qty' }
-    ], rows, []).replace('<colgroup>' + MX_LETTER_COLS.map(function (w) { return '<col style="width:' + w + 'pt;">'; }).join('') + '</colgroup>',
-      '<colgroup><col style="width:52pt;"><col style="width:250.84pt;"><col style="width:97pt;"><col style="width:50pt;"><col style="width:70pt;"></colgroup>');
-
-    const issuedBy = '<div style="margin-top:18pt;">' + sectionLabel('Issued By :') +
-      '<div style="min-height:13pt;width:250pt;border-bottom:0.6pt dotted #555;font-size:' + B +
-        'pt;line-height:1.5;padding:0 3pt 1pt;"' + mxEditAttr('issuedBy', 'text', 'Issued by') + '>' +
-        (data.issuedBy || '') + '</div></div>';
-
-    /* Remarks: the entered note (if any) then blank dotted lines to write on. */
-    const remarkLines = [0, 1].map(function (i) {
-      const v = (i === 0 && data.remarks) ? data.remarks : '';
-      return '<div style="min-height:14pt;border-bottom:0.6pt dotted #555;font-size:' + B +
-        'pt;line-height:1.5;padding:0 3pt 1pt;margin-bottom:2pt;"' +
-        (i === 0 ? mxEditAttr('remarks', 'text', 'Remarks') : '') + '>' + v + '</div>';
-    }).join('');
-    const remarks = '<div style="margin-top:16pt;">' + sectionLabel('Remarks') + remarkLines + '</div>';
-
-    const confirm = '<div style="font-style:italic;font-size:' + B + 'pt;line-height:1.5;margin-top:16pt;">' +
-      'We herewith confirm the receipt of above items are in good condition and complied with the specifications in the offer.</div>';
-
-    /* Signature block — Name / Signature / NIC No / Date, for the receiving
-       party to complete on paper. NIC No is editable (it is a value); the
-       other three are meant to be filled in by hand. */
-    const sigRow = function (label, value, editKey, kind) {
-      return mxDotted(label + ' :', value, { edit: editKey, kind: kind, label: label, gap: 9 });
-    };
-    const signature = '<div style="margin-top:22pt;width:300pt;">' +
-      sigRow('Name', '', '') +
-      sigRow('Signature', '', '') +
-      sigRow('NIC No', data.nicNo, 'nicNo') +
-      sigRow('Date', '', '') +
-    '</div>';
-
-    return mxShell(mxLetterhead(data) + mxContent(
-      title + details + '<div style="height:16pt;"></div>' + table + issuedBy + remarks + confirm + signature));
-  }
-
-  /* ── The invoice sheet body (title → footer) ─────────────────────────
-     Everything below the letterhead. It re-resolves the few values it needs
-     from `data` so it stands on its own between the shared builders. */
-  function mxInvoiceSheet(data) {
-    const FONT = MX_UI_FONT;
-    const B = MXPT.body;
-    const RULE = MXPT.rule + 'pt solid #000';
-    const C = MXPT.cols;
-    // Everything is caller-supplied. An unconfigured brand prints blank
-    // lines in the right places — never another company's details.
-    const supplierName = data.supplierName || '';
-    const supplierAddress = data.supplierAddress || '';
-    const supplierContact = data.supplierContact || '';
-    const tagline = data.tagline || '';
-    const docTitle = data.documentType || 'DOCUMENT';
-    const items = data.items || [];
-    const header = mxLetterhead(data);
 
     // TITLE — centered, 23.5pt bold, NO borders (the master has none)
     const title = '<div style="height:' + MXPT.titleBandH + 'pt;display:flex;align-items:flex-end;justify-content:center;padding-bottom:' +
@@ -7680,7 +6413,7 @@
       // Purchaser telephone is `data.clientPhone` and nothing else — there is
       // deliberately no fallback to a contact PERSON, so a name can never be
       // printed in the phone slot. Editing it rewrites only the phone token
-      // inside the client's separate Contact number field.
+      // inside the client's contact line (see pdfSetPurchaserPhone).
       row('Telephone No', data.clientPhone || '', MXPT.labelWR, { edit: 'clientPhone' }) +
       row('Place of Supply', data.placeOfSupply || 'N/R', MXPT.labelWR, { edit: 'placeOfSupply' });
     /* One column of the metadata grid: band, gutter, then the bordered box.
@@ -7837,18 +6570,7 @@
     docNo:         { state: 'ref',           input: 'erp-ref' },
     date:          { state: 'date',          input: 'erp-date' },
     supplyDate:    { state: 'supplyDate',    input: null },
-    clientPhone:   { state: 'clientPhone',   input: 'erp-clientphone' },
-    // Letter templates: the recipient address block's own two lines.
-    recipientTitle:   { state: 'recipientTitle',   input: 'erp-recipient-title' },
-    recipientCompany: { state: 'recipientCompany', input: 'erp-recipient-company' }
-  };
-
-  /* Every editable field that is neither a line item nor in PDF_FIELD_MAP —
-     i.e. the document's mode-specific values. Each one is committed into
-     `erpState.meta`, the single home for a per-document override. */
-  const META_EDIT_KEYS = {
-    subject: 1, salutation: 1, priceBasis: 1, payment: 1, delivery: 1, validity: 1,
-    preparedBy: 1, preparedTitle: 1, issuedBy: 1, nicNo: 1, remarks: 1
+    clientPhone:   { state: null,            input: 'erp-contact' }
   };
 
   /* Tag the editable fields the renderer marked, and nothing else. Dates get
@@ -8001,6 +6723,14 @@
   /* The purchaser's telephone slot is a phone parsed out of the client's
      free-text contact line, so editing it rewrites just that token and
      leaves any contact person beside it intact. */
+  function pdfSetPurchaserPhone(next) {
+    const cur = String(erpState.contact || '');
+    const found = parseContactPair(cur).phone;
+    if (found && cur.indexOf(found) !== -1) erpState.contact = cur.replace(found, next).trim();
+    else if (next) erpState.contact = cur.trim() ? cur.trim() + ' \u00b7 ' + next : next;
+    pdfSetInput('erp-contact', erpState.contact || '');
+  }
+
   /* A usable number, `''` for an empty field, or null when the text cannot
      be a number at all. "1." and ".5" are accepted so a half-typed number
      is never thrown away mid-keystroke. */
@@ -8040,16 +6770,7 @@
         if (field === 'qty' && Number(n) < 0) return 'revert';
         row[field] = n;
       } else if (field === 'desc') {
-        /* The quotation prints the description as name + an optional
-           "Make / Model:" line, so a round-tripped edit of that cell keeps
-           both lines: the first is the name, the rest belongs to the model. */
-        const txt = String(raw).replace(/\s+$/, '');
-        const parts = txt.split('\n');
-        row.name = parts[0].replace(/\s+$/, '');
-        const rest = parts.slice(1).join('\n').trim();
-        if (rest) row.model = rest.replace(/^\s*(make\s*\/?\s*model|make|model)\s*:\s*/i, '').replace(/\s+$/, '');
-      } else if (field === 'model') {
-        row.model = String(raw).replace(/^\s*(make\s*\/?\s*model|make|model)\s*:\s*/i, '').replace(/\s+$/, '');
+        row.name = raw.replace(/\s+$/, '');
       } else if (field === 'unit') {
         row.unit = raw.replace(/\s+/g, ' ').trim();
       } else {
@@ -8070,41 +6791,18 @@
       saveErp();
       return 'ok';
     }
-    /* Mode-specific text fields — the quotation's subject, salutation and
-       four terms, the preparer, and the delivery note's Issued by / NIC No /
-       remarks. They live in the document's own `meta` override: the SAME
-       slot the form's mode inputs write to, so the sheet and the form share
-       one value and neither can drift. */
-    if (META_EDIT_KEYS[key]) {
-      erpState.meta = erpState.meta || {};
-      erpState.meta[key] = String(raw === null || raw === undefined ? '' : raw).replace(/\s+$/, '');
-      pdfSetInput('erp-m-' + key, erpState.meta[key]);
-      saveErp();
-      return 'ok';
-    }
-    /* Estimated freight is a NUMBER that joins the quotation's total, so it
-       is validated like every other money field, never stored as text. */
-    if (key === 'freight') {
-      const n = pdfNumeric(raw);
-      if (n === null) return 'revert';
-      erpState.meta = erpState.meta || {};
-      erpState.meta.freight = String(n === '' ? 0 : n);
-      pdfSetInput('erp-m-freight', erpState.meta.freight);
-      updateErpSummary();
-      saveErp();
-      return 'ok';
-    }
     const spec = PDF_FIELD_MAP[key];
     if (!spec) return 'revert';
-    /* Every mapped field, the telephone included, commits the same way: one
-       value into one state slot. (It used to splice the number into the
-       contact string, because the contact string was the only home it had.) */
-    const value = key === 'date' || key === 'supplyDate' ? raw.trim() : raw.replace(/\s+/g, ' ').trim();
-    if (key === 'date' || key === 'supplyDate') {
-      if (value !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'revert';
+    if (key === 'clientPhone') {
+      pdfSetPurchaserPhone(raw.replace(/\s+/g, ' ').trim());
+    } else {
+      const value = key === 'date' || key === 'supplyDate' ? raw.trim() : raw.replace(/\s+/g, ' ').trim();
+      if (key === 'date' || key === 'supplyDate') {
+        if (value !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'revert';
+      }
+      erpState[spec.state] = value;
+      pdfSetInput(spec.input, value);
     }
-    erpState[spec.state] = value;
-    pdfSetInput(spec.input, value);
     saveErp();
     return 'ok';
   }
@@ -8169,23 +6867,14 @@
 
   function buildErpDoc() {
     const mode = ERP_MODES[erpState.mode];
-    // erpDocTotals() is erpTotals() for the invoice modes and the
-    // Sub-total + Freight figure for a quotation, so the sheet, the summary
-    // and the Library entry all read one number.
-    const t = erpDocTotals();
+    const t = erpTotals();
     const dateStr = erpDateStr();
 
-    /* Rows in the exact shape the templates' mappers expect. `description` is
-       what the invoice table prints, `name`/`model` split the same line for
-       the letter templates (name + an optional "Make / Model" line), and the
-       delivery note takes the name as its description with `model` in its own
-       Model No column. */
+    // Rows in the exact shape the template's mapper expects.
     const items = erpState.lines.map(function (l) {
       const amt = erpLineAmount(l);
       return {
         description: l.name || l.sku || '',
-        name: l.name || '',
-        model: l.model || '',
         unit: l.unit || '',
         qty: l.qty,
         rate: l.rate === '' ? 0 : Number(l.rate),
@@ -8221,35 +6910,9 @@
           supplierContact: esc(supplierContact),
           supplierPhone: esc(brandPhone() || ''),
           tagline: esc(brand.spec || brand.tag || ''),
-          // Which of the three LAYOUTS this document prints with. The title
-          // still follows the mode, so Pro Forma and Tax Invoice share the
-          // invoice layout while keeping their own headings.
-          template: mode.template || 'invoice',
           documentType: esc(mode.doc),
           docNoLabel: esc(mode.noLabel || 'Doc No'),
           invoiceDate: esc(dateStr),
-          // Full written date for the letter templates ("March 5, 2026").
-          longDate: esc(erpLongDate()),
-          // Recipient block (letters): name = client, plus title and company.
-          recipientTitle: esc(erpState.recipientTitle || ''),
-          recipientCompany: esc(erpState.recipientCompany || ''),
-          // Quotation letter: subject, salutation, the four terms and the
-          // preparer. All resolved through erpMetaValue so a document override
-          // wins and the inherited brand value is the fallback — the same
-          // precedence the form displays. Delivery note: Issued by / NIC /
-          // remarks.
-          salutation: esc(erpMetaValue('salutation') || 'Dear Sir,'),
-          subject: esc(erpMetaValue('subject')),
-          priceBasis: esc(erpMetaValue('priceBasis')),
-          payment: esc(erpMetaValue('payment')),
-          deliveryTerm: esc(erpMetaValue('delivery')),
-          validity: esc(erpMetaValue('validity')),
-          preparedBy: esc(erpMetaValue('preparedBy')),
-          preparedTitle: esc(erpMetaValue('preparedTitle')),
-          issuedBy: esc(erpMetaValue('issuedBy')),
-          nicNo: esc(erpMetaValue('nicNo')),
-          remarks: esc(erpMetaValue('remarks')),
-          terms: esc(erpState.terms || ''),
           // Falls back to the invoice date until the sheet sets its own, so
           // the slot is never empty.
           supplyDate: esc(erpState.supplyDate ? erpFormatDate(erpState.supplyDate) : dateStr),
@@ -8264,15 +6927,11 @@
           poNo: esc(erpState.poNo || ''),
           projectName: esc(erpState.project || ''),
           items: items,
-          // Invoice keys. For a quotation the discount / VAT figures are
-          // absent by design and no template row reads them; `subTotal` and
-          // `grandTotal` mean the same thing in both layouts.
           subTotal: t.sub,
-          discount: t.disc || 0,
-          netTotal: t.net || 0,
-          vatPct: t.vatPct || 0,
-          vat: t.vat || 0,
-          freight: t.freight || 0,
+          discount: t.disc,
+          netTotal: t.net,
+          vatPct: t.vatPct,
+          vat: t.vat,
           grandTotal: t.final,
           currencyCode: erpState.currency,
           amountInWords: esc(inWords)
@@ -8301,117 +6960,26 @@
     const payload = document.createElement('div');
     payload.innerHTML = pdfPreviewPayload();
     exportViaPrintWindow(payload, ERP_MODES[erpState.mode].doc + ' ' + (erpState.ref || ''));
-    erpRefreshLibraryEntry();
-  }
-
-  /* ── Library commit (the ONLY thing that writes a document entry) ─────
-     Two layers, deliberately separate:
-
-       working draft  → the key `calcmall_erp_v1`, rewritten by every input
-                        event (saveErp). Never touches History.
-       Library entry  → created/updated ONLY by erpSaveToLibrary(), i.e. by
-                        an explicit click on Save to Library.
-
-     Exports refresh an existing entry's figures but never create one, and
-     a saved reusable RECORD (Save Record) is not a Library entry at all. */
-  function erpLibraryPayload() {
-    const t = erpDocTotals();
-    return {
-      type: 'pdf', tool: 'erp',
-      toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
+    const t = erpTotals();
+    pushHistory({
+      type: 'pdf', tool: 'erp', toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
       title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
       total: erpDocType() ? erpMoney(t.final) : '',
       client: erpState.client || '',
-      ref: erpState.ref || ''
-    };
+      ref: erpState.ref || '',
+      draft: { tool: 'erp' }
+    });
   }
 
-  /* The full document, so "View / Load draft" really restores it later.
-     Entries saved before this existed simply carry no snapshot. */
-  function erpLibrarySnapshot() {
-    try { return JSON.parse(JSON.stringify(erpState)); } catch (e) { return null; }
-  }
-
-  function erpWriteDrafts() {
-    try { localStorage.setItem(HISTORY_DRAFTS_KEY, JSON.stringify(draftStore)); } catch (e) { /* ignore */ }
-  }
-
-  // Keep drafts only for entries that still exist (mirrors pushHistory).
-  function pruneDrafts() {
-    const live = {};
-    for (let i = 0; i < history.length; i++) {
-      if (draftStore[history[i].id]) live[history[i].id] = draftStore[history[i].id];
-    }
-    draftStore = live;
-  }
-
-  function erpSaveToLibrary() {
-    const err = $('erp-error');
-    if (!erpState.lines.length) {
-      if (err) { err.textContent = 'Add at least one item before saving the document to the Library.'; err.hidden = false; }
-      return;
-    }
-    if (err) err.hidden = true;
-    const payload = erpLibraryPayload();
-    const snapshot = erpLibrarySnapshot();
-    const existing = erpState.libraryId
-      ? history.find(function (h) { return h.id === erpState.libraryId; })
-      : null;
-
-    if (existing) {
-      // Same document, saved again → update in place, never a second row.
-      existing.type = payload.type;
-      existing.tool = payload.tool;
-      existing.toolName = payload.toolName;
-      existing.title = payload.title;
-      existing.total = payload.total;
-      existing.client = payload.client;
-      existing.ref = payload.ref;
-      existing.at = Date.now();
-      if (snapshot) draftStore[existing.id] = { tool: 'erp', state: snapshot };
-      saveErp();
-      saveHistory();
-      erpWriteDrafts();
-      showToast('Library entry updated — \u201c' + payload.title + '\u201d');
-    } else {
-      erpState.libraryId = uid();
-      const entry = Object.assign({ id: erpState.libraryId, at: Date.now() }, payload);
-      history.unshift(entry);
-      if (history.length > 60) history = history.slice(0, 60);
-      if (snapshot) draftStore[entry.id] = { tool: 'erp', state: snapshot };
-      pruneDrafts();
-      saveErp();          // remembers which entry this document belongs to
-      saveHistory();
-      erpWriteDrafts();
-      showToast('Saved to Library — \u201c' + payload.title + '\u201d');
-    }
-    renderHistory();
-    renderActivity();
-    renderKpis();
-    updateKPICards();
-    renderStorageStatus();
-  }
-
-  /* Exporting is not saving: if the document is already in the Library its
-     figures and snapshot are refreshed (so re-downloading stays accurate),
-     but no entry is ever created here. */
-  function erpRefreshLibraryEntry() {
-    if (!erpState.libraryId) return false;
-    const h = history.find(function (x) { return x.id === erpState.libraryId; });
-    if (!h) return false;
-    const payload = erpLibraryPayload();
-    h.toolName = payload.toolName;
-    h.title = payload.title;
-    h.total = payload.total;
-    h.client = payload.client;
-    h.ref = payload.ref;
-    const snapshot = erpLibrarySnapshot();
-    if (snapshot) draftStore[h.id] = { tool: 'erp', state: snapshot };
-    saveErp();
-    saveHistory();
-    erpWriteDrafts();
-    renderHistory();
-    return true;
+  function saveErpDraft() {
+    pushHistory({
+      type: 'copy', tool: 'erp', toolName: 'Master ERP Engine — ' + ERP_MODES[erpState.mode].label,
+      title: erpState.client || erpState.project || ERP_MODES[erpState.mode].label,
+      total: erpDocType() ? erpMoney(erpTotals().final) : '',
+      client: erpState.client || '',
+      ref: erpState.ref || '',
+      draft: { tool: 'erp' }
+    });
   }
 
   async function resetErp() {
@@ -8471,9 +7039,6 @@
       localStorage.removeItem(DB_KEY);
       localStorage.removeItem(BRAND_KEY);
       localStorage.removeItem(ERP_RECORDS_KEY);
-      // The free-use meter is an entitlement, and this is its only reset path
-      // beyond a browser wipe. The paid plan is deliberately NOT cleared.
-      localStorage.removeItem(FREE_USAGE_KEY);
     } catch (e) { /* ignore */ }
     erpRecords = {};
     renderAll();
@@ -8515,30 +7080,6 @@
     for (let i = 0; i < nodes.length; i++) nodes[i].textContent = label;
     const sum = $('backup-summary');
     if (sum) sum.textContent = 'Currently using ' + size + ' across ' + keys + ' stored ' + (keys === 1 ? 'entry' : 'entries') + '.';
-  }
-  /* Plan + free-use meter, surfaced on the Home System-health card so the
-     entitlement is visible without opening the account panel. */
-  function renderPlanHealth() {
-    const el = $('hl-plan');
-    if (!el) return;
-    const fill = el.parentNode ? el.parentNode.querySelector('.health-fill') : null;
-    let text = '', title = '', pct = 0;
-    if (!isLoggedIn()) {
-      text = 'Guest'; title = 'Sign in to use any tool.'; pct = 4;
-    } else if (isPremium()) {
-      text = 'Unlimited Credits';
-      title = isAdmin() ? 'Developer account \u2014 every tool, unmetered.' : 'Premium \u2014 unlimited tool, PDF and database use.';
-      pct = 100;
-    } else {
-      const total = meteredToolIds().length;
-      const left = freeToolsLeft();
-      text = left + ' of ' + total + ' free';
-      title = 'Free tier: one free execution per tool \u2014 ' + (total - left) + ' of ' + total + ' used.';
-      pct = Math.round(((total - left) / Math.max(1, total)) * 100);
-    }
-    el.textContent = text;
-    el.title = title;
-    if (fill) fill.style.width = pct + '%';
   }
   function downloadBackup() {
     const data = {};
@@ -8620,9 +7161,7 @@
         if (!card) return;
         const id = card.getAttribute('data-tool');
         selectTool(id);
-        // Opening the tool IS the execution: showView runs the gate with the
-        // tool's own id, so each card spends (and is limited by) its own use.
-        showView(toolViewFor(id));
+        if (consumeToolCredit()) showView(toolViewFor(id));
       });
     }
 
@@ -8642,69 +7181,22 @@
     $('sidebar-appearance').addEventListener('click', function () {
       showView('appearance');
     });
-    // Account Settings — reachable from the sidebar link and from the compact
-    // footer chip. Login / Sign-up / Log-out moved onto that page but kept
-    // their ids, so their handlers (bound by id in initAuthUi) are unchanged.
-    $('sidebar-account').addEventListener('click', function () {
-      showView('account');
-    });
-    const accountChip = $('account-chip');
-    if (accountChip) accountChip.addEventListener('click', function () { showView('account'); });
-    const acctNameSave = $('acct-name-save');
-    if (acctNameSave) acctNameSave.addEventListener('click', saveDisplayName);
-    const acctNameInput = $('acct-name');
-    if (acctNameInput) acctNameInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); saveDisplayName(); }
-    });
-    const avatarInput = $('acct-avatar-input');
-    if (avatarInput) avatarInput.addEventListener('change', function () {
-      const f = this.files && this.files[0];
-      this.value = '';
-      if (f) useAvatarFile(f);
-    });
-    const avatarRemove = $('acct-avatar-remove');
-    if (avatarRemove) avatarRemove.addEventListener('click', async function () {
-      if (!getAvatar()) return;
-      if (!(await confirmAction({
-        title: 'Remove profile picture?',
-        message: 'Your initials will be shown instead. Your display name is not affected.',
-        confirmLabel: 'Remove'
-      }))) return;
-      setAvatar('');
-      showToast('Profile picture removed.');
-    });
-    const acctChangePlan = $('acct-change-plan');
-    if (acctChangePlan) acctChangePlan.addEventListener('click', function () { showView('plans'); });
     $('sidebar-backup').addEventListener('click', function () {
       showView('backup');
     });
     $('sidebar-plans').addEventListener('click', function () {
       showView('plans');
     });
-    /* Premium Plans. No payment provider is wired up in this build, so
-       subscribing sets the entitlement locally — that flag is exactly what
-       the gate reads. A real checkout should call setPlan('premium') from
-       its success callback and leave everything else alone. */
+    // Premium Plans: no payment provider is wired up in this build, so the
+    // buttons only confirm the selection (and remember the last choice).
     for (const cta of document.querySelectorAll('.plan-cta')) {
       cta.addEventListener('click', function () {
         const plan = this.getAttribute('data-plan') || 'Premium';
         const price = this.getAttribute('data-price') || '';
         try { localStorage.setItem('nexora_plan_interest', plan + ' \u2014 ' + price); } catch (e) { /* ignore */ }
-        setPlan('premium');
-        showToast(plan + ' activated (' + price + ') \u2014 unlimited tool use. Checkout is not connected yet.');
+        showToast(plan + ' selected (' + price + '). Checkout is not connected yet.');
       });
     }
-    const planFreeCta = $('plan-free-cta');
-    if (planFreeCta) planFreeCta.addEventListener('click', async function () {
-      if (getPlan() !== 'premium') { showToast('This account is already on the free plan.'); return; }
-      if (!(await confirmAction({
-        title: 'Return to the free plan?',
-        message: 'Unlimited use ends and every tool goes back to its single free execution.',
-        confirmLabel: 'Return to Free'
-      }))) return;
-      setPlan('free');
-      showToast('Free plan restored \u2014 one free execution per tool.');
-    });
     // Data Backup & Restore actions
     const backupDownload = $('backup-download');
     if (backupDownload) backupDownload.addEventListener('click', downloadBackup);
@@ -8835,12 +7327,9 @@
 
     // Footer: legal notice modals (open-tool button removed with the footer TOOLS column)
     const footerOpenTool = $('footer-open-tool');
-    // showView gates tool views itself, so these launch links are no longer
-    // wrapped in gateClick — wrapping them would charge a second, nameless
-    // use before the tool's own gate ran.
-    if (footerOpenTool) footerOpenTool.addEventListener('click', function () {
+    if (footerOpenTool) footerOpenTool.addEventListener('click', gateClick(function () {
       showView('tool');
-    });
+    }));
     const LEGAL_COPY = {
       terms: {
         title: 'Terms of Use',
@@ -8975,10 +7464,10 @@
     });
 
     // Quantity & Rate calculator (tool #02)
-    const fq = $('footer-open-qr'); if (fq) fq.addEventListener('click', function () {
+    const fq = $('footer-open-qr'); if (fq) fq.addEventListener('click', gateClick(function () {
       selectTool('qr');
       showView('qr');
-    });
+    }));
     $('qr-add-row').addEventListener('click', addQrRow);
     $('qr-clear').addEventListener('click', clearQr);
     const qrBody = $('qr-rows');
@@ -9020,10 +7509,10 @@
     });
 
     // Engineering Quotation & BOQ Generator (tool #03)
-    const fb = $('footer-open-boq'); if (fb) fb.addEventListener('click', function () {
+    const fb = $('footer-open-boq'); if (fb) fb.addEventListener('click', gateClick(function () {
       selectTool('boq');
       showView('boq');
-    });
+    }));
     $('boq-add-row').addEventListener('click', addBoqRow);
     $('boq-clear').addEventListener('click', clearBoq);
     $('boq-reset').addEventListener('click', resetBoq);
@@ -9093,10 +7582,10 @@
     $('qr-pdf').addEventListener('click', gateClick(qrExportPdf));
 
     // Margin & Markup Pricing Calculator (tool #04)
-    const fp = $('footer-open-pr'); if (fp) fp.addEventListener('click', function () {
+    const fp = $('footer-open-pr'); if (fp) fp.addEventListener('click', gateClick(function () {
       selectTool('pricing');
       showView('pricing');
-    });
+    }));
     ['pr-cost', 'pr-overhead', 'pr-target'].forEach(function (id) {
       $(id).addEventListener('input', function () {
         prState[id.replace('pr-', '')] = this.value;
@@ -9118,10 +7607,10 @@
     $('pr-reset').addEventListener('click', resetPricing);
 
     // Import Duty & Landed Cost Calculator (tool #06)
-    const fd = $('footer-open-duty'); if (fd) fd.addEventListener('click', function () {
+    const fd = $('footer-open-duty'); if (fd) fd.addEventListener('click', gateClick(function () {
       selectTool('duty');
       showView('duty');
-    });
+    }));
     const dutyInputs = ['dt-cif', 'dt-units', 'dt-duty', 'dt-pal', 'dt-cess', 'dt-sscl', 'dt-vat'];
     for (let i = 0; i < dutyInputs.length; i++) {
       $(dutyInputs[i]).addEventListener('input', function () {
@@ -9139,10 +7628,10 @@
     });
 
     // Variation & Change Order Generator (tool #07)
-    const fv = $('footer-open-var'); if (fv) fv.addEventListener('click', function () {
+    const fv = $('footer-open-var'); if (fv) fv.addEventListener('click', gateClick(function () {
       selectTool('variation');
       showView('variation');
-    });
+    }));
     const varInputs = ['vr-project', 'vr-original', 'vr-added', 'vr-days', 'vr-desc'];
     for (let i = 0; i < varInputs.length; i++) {
       $(varInputs[i]).addEventListener('input', function () {
@@ -9160,10 +7649,10 @@
     });
 
     // Freelance Rate & Overhead Breakeven (tool #08)
-    const fk = $('footer-open-bk'); if (fk) fk.addEventListener('click', function () {
+    const fk = $('footer-open-bk'); if (fk) fk.addEventListener('click', gateClick(function () {
       selectTool('breakeven');
       showView('breakeven');
-    });
+    }));
     const bkInputs = ['bk-net', 'bk-overhead', 'bk-days', 'bk-admin', 'bk-dayhours', 'bk-tax'];
     for (let i = 0; i < bkInputs.length; i++) {
       $(bkInputs[i]).addEventListener('input', function () {
@@ -9181,10 +7670,10 @@
     });
 
     // Cross-Border FX & Fee Adjuster (tool #09)
-    const ff = $('footer-open-fx'); if (ff) ff.addEventListener('click', function () {
+    const ff = $('footer-open-fx'); if (ff) ff.addEventListener('click', gateClick(function () {
       selectTool('fx');
       showView('fx');
-    });
+    }));
     ['fx-target', 'fx-pct', 'fx-fixed', 'fx-markup'].forEach(function (id) {
       $(id).addEventListener('input', function () {
         fxState[id.replace('fx-', '')] = this.value;
@@ -9212,10 +7701,10 @@
     });
 
     // Academic GPA & Target Grade Planner (tool #10)
-    const fg = $('footer-open-gp'); if (fg) fg.addEventListener('click', function () {
+    const fg = $('footer-open-gp'); if (fg) fg.addEventListener('click', gateClick(function () {
       selectTool('gpa');
       showView('gpa');
-    });
+    }));
     const gpInputs = [['gp-current', 'current'], ['gp-done', 'done'], ['gp-target', 'target'], ['gp-remaining', 'remaining'], ['gp-course-cur', 'courseCur'], ['gp-course-target', 'courseTarget'], ['gp-course-weight', 'courseWeight']];
     for (let i = 0; i < gpInputs.length; i++) {
       (function (pair) {
@@ -9235,10 +7724,10 @@
     });
 
     // Retainer & SLA Pricing Estimator (tool #11)
-    const fr = $('footer-open-rt'); if (fr) fr.addEventListener('click', function () {
+    const fr = $('footer-open-rt'); if (fr) fr.addEventListener('click', gateClick(function () {
       selectTool('retainer');
       showView('retainer');
-    });
+    }));
     const rtInputs = ['rt-client', 'rt-hours', 'rt-hourly', 'rt-overhead', 'rt-margin', 'rt-sla'];
     for (let i = 0; i < rtInputs.length; i++) {
       (function (id) {
@@ -9253,10 +7742,10 @@
     $('rt-reset').addEventListener('click', resetRetainer);
 
     // Project Delay & Damages Impact (tool #12)
-    const fl = $('footer-open-dl'); if (fl) fl.addEventListener('click', function () {
+    const fl = $('footer-open-dl'); if (fl) fl.addEventListener('click', gateClick(function () {
       selectTool('delay');
       showView('delay');
-    });
+    }));
     const dlInputs = [['dl-project', 'project'], ['dl-contract', 'contract'], ['dl-penalty', 'penaltyPct'], ['dl-cap', 'capPct'], ['dl-days', 'days'], ['dl-overhead', 'overhead']];
     for (let i = 0; i < dlInputs.length; i++) {
       (function (pair) {
@@ -9292,10 +7781,10 @@
     });
 
     // Smart Invoice & Document Builder (tool #05)
-    const fi = $('footer-open-inv'); if (fi) fi.addEventListener('click', function () {
+    const fi = $('footer-open-inv'); if (fi) fi.addEventListener('click', gateClick(function () {
       selectTool('invoice');
       showView('invoice');
-    });
+    }));
     $('inv-doctype').addEventListener('change', function () {
       invState.docType = this.value;
       saveInv();
@@ -9483,11 +7972,7 @@
     }
 
     // ── Master ERP Engine ──────────────────────────────────────
-    // [input id, erpState key] — every ERP header box writes straight into
-    // the one state object. The two letter-only fields (recipient title and
-    // company) are part of the same map, so they save and reload with the
-    // rest of the document rather than living beside it.
-    const erpHeaderPairs = [['erp-project', 'project'], ['erp-client', 'client'], ['erp-address', 'address'], ['erp-ref', 'ref'], ['erp-contact', 'contact'], ['erp-clientphone', 'clientPhone'], ['erp-recipient-title', 'recipientTitle'], ['erp-recipient-company', 'recipientCompany'], ['erp-clienttin', 'clientTin'], ['erp-posupply', 'placeOfSupply'], ['erp-pono', 'poNo'], ['erp-terms-dt', 'deliveryTerms'], ['erp-shipto', 'shipTo'], ['erp-hscode', 'hsCode']];
+    const erpHeaderPairs = [['erp-project', 'project'], ['erp-client', 'client'], ['erp-address', 'address'], ['erp-ref', 'ref'], ['erp-contact', 'contact'], ['erp-clienttin', 'clientTin'], ['erp-posupply', 'placeOfSupply'], ['erp-pono', 'poNo'], ['erp-terms-dt', 'deliveryTerms'], ['erp-shipto', 'shipTo'], ['erp-hscode', 'hsCode']];
     for (let i = 0; i < erpHeaderPairs.length; i++) {
       (function (pair) {
         $(pair[0]).addEventListener('input', function () {
@@ -9708,16 +8193,8 @@
     $('erp-mode-fields').addEventListener('input', function (e) {
       const input = e.target.closest('[data-erpmeta]');
       if (!input) return;
-      const key = input.getAttribute('data-erpmeta');
-      // A numeric mode field (Estimated freight) is filtered like every other
-      // money input, so a stray space can never reach the quotation total.
-      erpState.meta[key] = input.getAttribute('data-numeric') === '1'
-        ? numericSafeText(input.value, false)
-        : input.value;
+      erpState.meta[input.getAttribute('data-erpmeta')] = input.value;
       saveErp();
-      // Estimated freight is the one mode field the totals read, so the
-      // summary and the sheet follow it live.
-      if (key === 'freight') { updateErpSummary(); schedulePdfPreview(); }
     });
     $('erp-add-row').addEventListener('click', function () { addErpRow(''); });
     const erpBody = $('erp-rows');
@@ -9737,7 +8214,6 @@
       else if (input.classList.contains('erp-unit')) row.unit = input.value;
       else if (input.classList.contains('erp-qty')) row.qty = numericSafeText(input.value, false);
       else if (input.classList.contains('erp-rate')) row.rate = numericSafeText(input.value, false);
-      else if (input.classList.contains('erp-model')) row.model = input.value;
       const amount = erpLineAmount(row);
       rowEl.querySelector('.qr-amount').textContent = erpDocType() ? (amount === null ? '\u2014' : erpMoney(amount)) : '\u2014';
       updateErpSummary();
@@ -9791,13 +8267,13 @@
     });
     $('erp-pdf').addEventListener('click', gateClick(exportErpPdf));
     $('erp-export-xlsx').addEventListener('click', gateClick(exportErpExcel));
-    $('erp-save').addEventListener('click', erpSaveToLibrary);
+    $('erp-save').addEventListener('click', saveErpDraft);
     $('erp-reset').addEventListener('click', resetErp);
 
     // ── ERP Record store (Primary Key save / load / delete) ────
     $('erp-record-load').addEventListener('click', function () { erpLoadRecord(false); });
     $('erp-record-save').addEventListener('click', erpSaveRecord);
-    $('erp-record-delete').addEventListener('click', function () { erpDeleteRecord(); });
+    $('erp-record-delete').addEventListener('click', erpDeleteRecord);
     // Enter in the ID field loads (change-triggered convenience)
     $('erp-record-id').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); erpLoadRecord(false); }
@@ -10056,62 +8532,40 @@
     });
 
     // ── Brand & Theme Settings ─────────────────────────────────
-    /* Section 1 — letterhead. Typing writes to a DRAFT; only "Save brand
-       details" merges it into `brand` and persists (see noteBrandEdit). */
-    const brandPairs = [['brand-name', 'name'], ['brand-legal', 'legalName'], ['brand-tag', 'tag'], ['brand-address', 'address'], ['brand-contact', 'contact'], ['brand-terms', 'terms'], ['brand-phone', 'phone'], ['brand-email', 'email'], ['brand-website', 'website'], ['brand-spec', 'spec'], ['brand-tin', 'tin']];
+    const brandPairs = [['brand-name', 'name'], ['brand-legal', 'legalName'], ['brand-tag', 'tag'], ['brand-address', 'address'], ['brand-contact', 'contact'], ['brand-terms', 'terms'], ['brand-phone', 'phone'], ['brand-email', 'email'], ['brand-website', 'website'], ['brand-spec', 'spec'], ['brand-tin', 'tin'], ['brand-payterms', 'payTerms'], ['brand-beneficiary', 'beneficiary'], ['brand-bankbranch', 'bankBranch'], ['brand-swift', 'swift'], ['brand-branchcode', 'branchCode'], ['brand-accountno', 'accountNo'], ['brand-accountcur', 'accountCur']];
     for (let i = 0; i < brandPairs.length; i++) {
       (function (pair) {
-        const el = $(pair[0]);
-        if (el) el.addEventListener('input', function () { noteBrandEdit(pair[1], this.value); });
+        $(pair[0]).addEventListener('input', function () {
+          brand[pair[1]] = this.value;
+          saveBrand();
+          renderBrandStatus();
+          /* Bank / beneficiary / payment-terms edits flow straight into any
+             ERP mode field that has not been overridden on the document. */
+          renderErpModeFields();
+        });
       })(brandPairs[i]);
     }
-    /* Section 2 — bank & beneficiary: its own draft, its own Save button. */
-    const bankPairs = [['brand-payterms', 'payTerms'], ['brand-beneficiary', 'beneficiary'], ['brand-bankbranch', 'bankBranch'], ['brand-swift', 'swift'], ['brand-branchcode', 'branchCode'], ['brand-accountno', 'accountNo'], ['brand-accountcur', 'accountCur']];
-    for (let i = 0; i < bankPairs.length; i++) {
-      (function (pair) {
-        const el = $(pair[0]);
-        if (el) el.addEventListener('input', function () { noteBankEdit(pair[1], this.value); });
-      })(bankPairs[i]);
-    }
-    const brandSaveBtn = $('brand-save');
-    if (brandSaveBtn) brandSaveBtn.addEventListener('click', function () { commitBrandSection(); });
-    const bankSaveBtn = $('bank-save');
-    if (bankSaveBtn) bankSaveBtn.addEventListener('click', function () { commitBankSection(); });
-    // The logo joins the same draft as the rest of the letterhead.
     $('brand-logo-input').addEventListener('change', function () {
       const file = this.files && this.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = function () {
-        noteBrandEdit('logo', String(reader.result));
+        brand.logo = String(reader.result);
+        saveBrand();
         renderBrand();
       };
       reader.readAsDataURL(file);
     });
     $('brand-logo-remove').addEventListener('click', function () {
-      noteBrandEdit('logo', '');
+      brand.logo = '';
+      saveBrand();
       renderBrand();
     });
-    // Section 1 reset — the whole brand card (letterhead + logo + terms + bank).
     $('brand-reset').addEventListener('click', async function () {
       if (!(await confirmAction({ title: 'Reset brand data?', message: 'This clears the letterhead details, logo, bank & beneficiary block and default terms.', confirmLabel: 'Reset brand', danger: true }))) return;
       brand = emptyBrand();
-      brandDraft = null;
-      bankDraft = null;
       saveBrand();
       renderBrand();
-      renderErpModeFields();
-    });
-    // Section 2 reset — bank & beneficiary ONLY; the letterhead is untouched.
-    const bankResetBtn = $('bank-reset');
-    if (bankResetBtn) bankResetBtn.addEventListener('click', async function () {
-      if (!(await confirmAction({ title: 'Reset bank details?', message: 'This clears the payment terms, beneficiary, bank, SWIFT, branch, account and currency fields only. Your letterhead details are left as they are.', confirmLabel: 'Reset bank details', danger: true }))) return;
-      for (let i = 0; i < BANK_SECTION_FIELDS.length; i++) brand[BANK_SECTION_FIELDS[i]] = '';
-      bankDraft = null;
-      saveBrand();
-      renderBrand();
-      renderErpModeFields();
-      showToast('Bank & beneficiary details cleared.');
     });
 
     // ── All Utilities grid (+ footer ERP link if present) ──────
@@ -10121,145 +8575,21 @@
     // ── Insights Hub: activity clear ───────────────────────────
     // ── Home: master-database preview (compact, bounded) ──────
     const homeViewAll = $('home-db-viewall');
-    // "View all" now opens the Master Database view's complete list, not the
-    // management page — the card and its destination are one experience.
-    if (homeViewAll) homeViewAll.addEventListener('click', function () { openMasterData(); });
+    if (homeViewAll) homeViewAll.addEventListener('click', function () { showView('db'); });
     [$('home-db-items'), $('home-db-clients')].forEach(function (list) {
       if (!list) return;
       list.addEventListener('click', function (e) {
         const row = e.target.closest ? e.target.closest('.home-db-row') : null;
         if (!row) return;
-        // Read the record here in the Master Database view — a separate,
-        // read-only browse experience, NOT the Item & Client Database.
-        const kind = row.getAttribute('data-db') === 'client' ? 'client' : 'item';
-        openMasterData(kind, row.getAttribute('data-md-key'));
+        const idx = Number(row.getAttribute('data-id'));
+        // Land on the full database with that record already open for
+        // editing — the preview is a shortcut, not a second editor.
+        if (row.getAttribute('data-db') === 'client') { showView('db'); startEditDbClient(idx); }
+        else { showView('db'); startEditDbItem(idx); }
       });
-    });
-    // ── Master Database view (browse only) ─────────────────────
-    const mdBack = $('md-back');
-    if (mdBack) mdBack.addEventListener('click', function () { showView('home'); });
-    const mdSearch = $('md-search');
-    if (mdSearch) mdSearch.addEventListener('input', function () {
-      mdFilter = String(this.value || '').trim().toLowerCase();
-      renderMasterDataList();
-    });
-    const mdTabs = document.querySelectorAll('.md-tab');
-    for (let i = 0; i < mdTabs.length; i++) {
-      mdTabs[i].addEventListener('click', function () {
-        mdTab = this.getAttribute('data-md-tab') === 'clients' ? 'clients' : 'items';
-        mdSel = null;                 // a different list is a different record set
-        renderMasterData();
-      });
-    }
-    const mdRowsBox = $('md-rows');
-    if (mdRowsBox) mdRowsBox.addEventListener('click', function (e) {
-      const row = e.target.closest ? e.target.closest('.home-db-row') : null;
-      if (!row) return;
-      mdSel = { kind: row.getAttribute('data-md-kind'), key: row.getAttribute('data-md-key') };
-      renderMasterData();
-    });
-    const mdDetailBox = $('md-detail');
-    if (mdDetailBox) mdDetailBox.addEventListener('click', function (e) {
-      const btn = e.target.closest ? e.target.closest('.md-manage') : null;
-      if (!btn) return;
-      const found = mdFindSelection();
-      showView('db');
-      if (!found) return;
-      // Opens the same record in that page's edit form, so the exit is a
-      // deliberate, labelled jump rather than a row click.
-      if (btn.getAttribute('data-md-kind') === 'client') startEditDbClient(found.index);
-      else startEditDbItem(found.index);
-    });
-    // ── Home: saved project/client records preview ─────────────
-    const recViewAll = $('home-records-viewall');
-    if (recViewAll) recViewAll.addEventListener('click', function () {
-      showView('db');
-      const card = $('db-records-title');
-      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-    const recList = $('home-records-list');
-    if (recList) recList.addEventListener('click', function (e) {
-      const row = e.target.closest ? e.target.closest('.home-db-row') : null;
-      if (!row) return;
-      erpLoadRecordById(row.getAttribute('data-rec'));
-    });
-    const recBody = $('db-record-rows');
-    if (recBody) recBody.addEventListener('click', function (e) {
-      const load = e.target.closest ? e.target.closest('.db-record-load') : null;
-      if (load) { erpLoadRecordById(load.getAttribute('data-id')); return; }
-      const del = e.target.closest ? e.target.closest('.db-record-del') : null;
-      if (del) erpDeleteRecord(del.getAttribute('data-id'));
     });
     const actClear = $('activity-clear');
     if (actClear) actClear.addEventListener('click', clearActivity);
-  }
-
-  /* ── Cloud sync (Supabase) ──────────────────────────────────────────
-     The sidebar line and the System Health row are the only visible surface;
-     the real work lives in cloud.js. Status arrives as a 'nexora-cloud'
-     window event, so nothing here polls. */
-  const CLOUD_LABELS = {
-    unavailable: 'Cloud: unavailable',
-    'signed-out': 'Cloud: sign in to sync',
-    syncing: 'Cloud: syncing\u2026',
-    synced: 'Cloud: synced',
-    offline: 'Cloud: offline \u2014 queued',
-    setup: 'Cloud: setup needed',
-    error: 'Cloud: sync error'
-  };
-  function cloudShortLabel(s) {
-    if (s.status === 'synced') return 'Synced';
-    if (s.status === 'signed-out') return 'Local only';
-    if (s.status === 'offline') return 'Offline';
-    if (s.status === 'syncing') return 'Syncing';
-    if (s.status === 'setup') return 'Setup';
-    if (s.status === 'error') return 'Error';
-    return '\u2014';
-  }
-  function renderCloudStatus() {
-    const c = cloud();
-    const s = c ? c.status() : { status: 'unavailable', message: '', pendingKeys: 0, lastSyncAt: 0 };
-    let label = CLOUD_LABELS[s.status] || 'Cloud: \u2014';
-    if (s.pendingKeys > 0 && s.status !== 'syncing') label += ' (' + s.pendingKeys + ' pending)';
-    const when = s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
-    const tip = s.message || (when ? 'Last synced ' + when : label);
-    const nodes = document.querySelectorAll('.js-cloud-status');
-    for (let i = 0; i < nodes.length; i++) {
-      nodes[i].textContent = label;
-      nodes[i].setAttribute('title', tip);
-    }
-    const hl = $('hl-cloud');
-    if (hl) {
-      hl.textContent = cloudShortLabel(s);
-      hl.title = tip;
-      const fill = hl.parentNode ? hl.parentNode.querySelector('.health-fill') : null;
-      if (fill) {
-        const pct = s.status === 'synced' ? 100 : (s.status === 'syncing' ? 60 : (s.status === 'offline' ? 25 : (s.status === 'signed-out' ? 8 : 4)));
-        fill.style.width = pct + '%';
-      }
-    }
-  }
-  /* Boot hook: hand the storage layer its key rule, then verify the session
-     and reconcile the local cache with the account. Deliberately last in the
-     boot sequence — the app is already rendered from cache by now, so a slow
-     or unreachable network costs the user nothing. */
-  function initCloudSync() {
-    const c = cloud();
-    if (!c) { renderCloudStatus(); return; }
-    try { c.configure({ email: SESSION_EMAIL, keyFor: userKey }); } catch (e) { /* ignore */ }
-    renderCloudStatus();
-    try { c.onChange(function () { renderCloudStatus(); }); } catch (e) { /* ignore */ }
-    window.addEventListener('nexora-cloud', renderCloudStatus);
-    c.bootstrap().then(function (res) {
-      if (res && res.reload) { window.location.reload(); return; }
-      renderCloudStatus();
-      renderAuthUi();
-      if (res && res.error && res.error.kind === 'setup') {
-        showToast('Cloud tables are missing \u2014 run supabase/schema.sql.', 'error');
-      } else if (res && res.error && res.error.kind === 'offline') {
-        showToast('Offline \u2014 using this device\u2019s copy. Changes sync when you reconnect.');
-      }
-    }).catch(function () { renderCloudStatus(); });
   }
 
   /* ── Init ─────────────────────────────────────────────────────── */
@@ -10273,7 +8603,6 @@
     hydrateIcons();
     wireEvents();
     renderStorageStatus();
-    initCloudSync();
   } catch (e) { try { console.error('Nexora Engine boot:', e); } catch (e2) { /* ignore */ } }
   updateUnitLabels();
   renderToolCards(); // Other Utilities: the card grid is the page
@@ -10281,12 +8610,7 @@
     renderActivity();
     updateKPICards();
     wireKPILive();
-    /* The fragment wins on a reload. A tool view the account may not open
-       (guest, or a free tool whose one execution is spent) falls back to
-       Home rather than painting a page the gate refuses — the modal and the
-       Premium Plans redirect have already said why. */
-    showView(viewFromHash() || DEFAULT_VIEW);
-    if (!currentView) showView(DEFAULT_VIEW, { gate: false });
+    showView(viewFromHash() || DEFAULT_VIEW); // the fragment wins; Home otherwise
     renderAll();
   renderQr();
   renderBoq();
