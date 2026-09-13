@@ -3422,3 +3422,50 @@ a short page and also pins at gap 0. The CSSOM was inspected directly to confirm
 the print rule really is later than the sticky rule (index 698 vs 19) — not just
 that both exist. No JS or markup changed for this; `preview.html` was rebuilt
 (1,019,686 bytes).
+
+## Smart Invoice tool — step 4 was rendering in the top-right corner (2026-09-13)
+
+**Symptom:** in Other Utilities → Invoice (Smart Invoice & Document Builder) the
+four numbered sections did not read in order. Steps 1–3 stacked down the left
+column, but "4 Totals & Export" appeared at the top-right *beside step 1*,
+because it was the only thing in the second column.
+
+**Cause — the two-column layout was being used for the wrong thing.**
+`#invoice-view` had `.dash-layout` > `.col-left` (steps 1, 2, 3) + `.col-right`
+(step 4). That is a legitimate pattern in this app, but the right column exists
+for an **unnumbered** companion panel: the Master ERP Engine uses it for its
+"Live summary" card while steps 4–5 stay in the left column, so its numbering
+still reads straight down. The Invoice tool put a *numbered* step over there.
+
+**Fix:** moved the "4 Totals & Export" `<section>` out of `.col-right` into
+`.col-left`, immediately after "3 Line Items", and deleted the now-empty
+`.col-right` element. Markup only — no JS and no CSS changed, because nothing
+references `col-left` / `col-right` (verified: no hits in `js/*.js` or
+`css/style.css`), and every control id (`inv-save`, `inv-pdf`, `inv-reset`, …)
+is untouched, so the existing bindings still work.
+
+**Why the empty column had to go rather than just be emptied:** `.col` is
+`flex: 1 1 0`, so a leftover empty `.col` still claims ~50% of the row and would
+have squeezed the remaining single column back to half width.
+
+**Verified** (preview viewport is only 645px wide, where the
+`@media (max-width: 980px)` rule stacks `.dash-layout` into a column anyway and
+hides the bug — so the wide branch was reproduced deliberately): that media rule
+only sets `flex-direction`, so forcing `display:flex; flex-direction:row` on a
+clone hosted in a 1440px-wide element **is** the desktop layout.
+
+| check | result |
+|---|---|
+| `.dash-layout` children in `#invoice-view` | **1** — `col col-left` |
+| `.col-right` elements in `#invoice-view` | **0** |
+| desktop column width at a 1440px host | **1440** (full row, not 720 = half) |
+| desktop section tops | 0 → 423 → 887 → **1179** (strictly increasing) |
+| sections sharing a left edge | all 4 (nothing sits beside anything) |
+| desktop visual reading order | **1 Document → 2 Your Business (Letterhead) → 3 Line Items → 4 Totals & Export** |
+| other views | all 11 two-column layouts unchanged, ERP's unnumbered "Live summary" still in its right column; no empty `.col` anywhere |
+
+A screenshot could not be captured for this one — the preview webview stopped
+compositing (`produced no frames`) after the layout probing above, which is an
+environment state, not a page fault; the geometry numbers are the evidence.
+Note also that this is a 645px pane, so a wide-window look in a real browser is
+still worth one glance. `preview.html` rebuilt (1,020,934 bytes).

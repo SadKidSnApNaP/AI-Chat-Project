@@ -7061,10 +7061,16 @@ body.light-theme .tool-launch {
               <span class="tool-free">Tip: press Enter on the last row to add the next one.</span>
             </div>
           </section>
-        </div>
 
-        <div class="col col-right">
-          <!-- Totals + export -->
+          <!-- Totals + export. This is the LAST NUMBERED STEP, so it lives in
+               the same column as steps 1-3. It used to sit in a second .col,
+               which rendered it in the top-right corner beside step 1 and
+               broke the 1 -> 2 -> 3 -> 4 reading order. The two-column layout
+               stays where it belongs: the Master ERP Engine, whose right
+               column holds an UNNUMBERED "Live summary" panel.
+               NOTE: an empty .col is not harmless - .col is `flex: 1 1 0`, so
+               leaving an empty second column element here would have kept a
+               phantom 50% column and squeezed everything back to half width. -->
           <section class="card" aria-labelledby="inv-tot-title">
             <div class="card-head">
               <h2 id="inv-tot-title"><span class="step" aria-hidden="true">4</span> Totals &amp; Export</h2>
