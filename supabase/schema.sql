@@ -17,6 +17,10 @@
 --    genuine zero price". The app shows those two states differently.
 --  * `documents.data` holds the full saved document payload (the draft the
 --    app needs to reload or re-download that entry).
+--  * `account_state` (section 6, added in A4) is the ONE row per user that is
+--    mostly NOT client-writable: the browser may read the whole row and write
+--    only `usage`. The plan tier is set by the owner or by a server-side call
+--    (Stripe webhook), never by the browser — see the notes in that section.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ── updated_at maintenance ────────────────────────────────────────────────
@@ -229,13 +233,113 @@ grant select, insert, update, delete on public.brand_settings, public.items,
       public.clients, public.documents, public.appearance_settings to authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- 6. ACCOUNT STATE — plan tier + per-tool usage (A4)                          --
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Why this table exists: both values used to live ONLY in localStorage, which
+-- made quota a per-DEVICE fact. Another browser, or one "clear site data",
+-- handed out a fresh free allowance; and a Premium badge on one machine was
+-- invisible to the next. Worse, the plan tier was client-writable, so the gate
+-- was advisory at best.
+--
+-- Two things are deliberate here:
+--
+--  * `usage` is a jsonb map of toolId -> count, and it is merged with MAX, never
+--    last-writer-wins. Two devices cannot lower each other's count, and a user
+--    who clears storage cannot reset their allowance by pushing an empty map.
+--  * `plan` is READ-ONLY to the browser. RLS governs which ROWS a client may
+--    touch, not which COLUMNS, so `grant update (usage)` below restricts writes
+--    to the counter, and the trigger below refuses any plan change arriving
+--    through the public API. Without that, anyone could open the console with
+--    the publishable key and set their own tier to premium.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- The role from the request's JWT: 'authenticated' for a signed-in browser
+-- session, 'service_role' for server-side calls, '' in the SQL editor. Used to
+-- tell "an end user is writing" apart from "the owner is administering".
+create or replace function public.jwt_role()
+returns text
+language sql
+stable
+as $$
+  select coalesce(
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb) ->> 'role',
+    ''
+  );
+$$;
+
+create table if not exists public.account_state (
+  user_id    uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  plan       text not null default 'free',        -- 'free' | 'premium' | 'developer'
+  usage      jsonb not null default '{}'::jsonb,  -- { toolId: count } — merged with MAX
+  updated_at timestamptz not null default now()
+);
+
+-- Guard the tier against the public API. Runs for every write, from any client.
+create or replace function public.protect_account_plan()
+returns trigger
+language plpgsql
+as $$
+begin
+  if public.jwt_role() = 'authenticated' then
+    if tg_op = 'INSERT' then
+      new.plan := 'free';          -- a browser session only ever creates a free row
+    else
+      new.plan := old.plan;        -- and may never change its own tier
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_protect_account_plan on public.account_state;
+create trigger trg_protect_account_plan
+  before insert or update on public.account_state
+  for each row execute function public.protect_account_plan();
+
+drop trigger if exists trg_touch_updated_at on public.account_state;
+create trigger trg_touch_updated_at before update on public.account_state
+  for each row execute function public.touch_updated_at();
+
+alter table public.account_state enable row level security;
+
+drop policy if exists account_state_select on public.account_state;
+drop policy if exists account_state_insert on public.account_state;
+drop policy if exists account_state_update on public.account_state;
+drop policy if exists account_state_delete on public.account_state;
+create policy account_state_select on public.account_state
+  for select to authenticated using (auth.uid() = user_id);
+create policy account_state_insert on public.account_state
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy account_state_update on public.account_state
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy account_state_delete on public.account_state
+  for delete to authenticated using (auth.uid() = user_id);
+
+-- Column-level privileges: the browser may read the row and write ONLY `usage`.
+-- `plan` is therefore not merely policy-protected but un-updatable by the role.
+revoke all on public.account_state from anon;
+revoke update on public.account_state from authenticated;
+grant select, insert, delete on public.account_state to authenticated;
+-- `updated_at` is included so the BEFORE trigger's assignment can never be the
+-- thing that fails an upsert; the trigger overwrites it regardless, so this
+-- grants the client nothing it can actually use. NOTE: `plan` is absent — that
+-- is the guard, not an oversight.
+grant update (usage, updated_at) on public.account_state to authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Self-check — run the query below after the script to confirm RLS is on.
--- Every one of the five rows must read `true`.
+-- EVERY row must read `true`, one row per table.
 -- ═══════════════════════════════════════════════════════════════════════════
 -- select tablename, rowsecurity as rls_enabled,
 --        (select count(*) from pg_policies p
 --          where p.schemaname = 'public' and p.tablename = t.tablename) as policies
 --   from pg_tables t
 --  where schemaname = 'public'
---    and tablename in ('brand_settings','items','clients','documents','appearance_settings')
+--    and tablename in ('brand_settings','items','clients','documents','appearance_settings','account_state')
 --  order by tablename;
+--
+-- Then confirm the column guard is real — this must FAIL for a browser session
+-- (as the owner in the SQL editor it will succeed, which is how you grant
+-- yourself or a colleague 'premium'/'developer'):
+-- select has_column_privilege('authenticated','public.account_state','plan','UPDATE')   as plan_writable,
+--        has_column_privilege('authenticated','public.account_state','usage','UPDATE')  as usage_writable;

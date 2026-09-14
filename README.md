@@ -186,9 +186,14 @@ js/platform.js              # platform/export switchboard (browser · Electron �
 js/app.js                   # state, rendering, events, history, PDF exports
 js/cloud.js                 # the only file that talks to Supabase
 vendor/                     # vendored libraries + fonts + backdrop (A2, see below)
+manifest.webmanifest        # PWA manifest: name, icons, theme, standalone (A3)
+sw.js                       # service worker: offline app shell, cache-only fallback (A3)
+icons/                      # generated PWA icons 192/512/maskable/180 (A3)
 test/calculations.test.html # no-dependency browser assertion runner
 build-preview.ps1           # regenerates preview.html from the sources
 build-test.ps1              # regenerates the self-contained test page copy
+build-icons.ps1             # regenerates icons/ from the app's own brand mark (A3)
+check-shell.ps1             # fails if index.html references drift from sw.js SHELL (A3)
 README.md
 MEMORY.md
 ```
@@ -264,6 +269,42 @@ its local cache without one, and queues changes for the next successful sync.
 
 `vendor/` is ~3.7 MB and is meant to be committed — the deploy is a git push, so
 those files must be in the tree for the live site to work.
+
+### Installable app shell (A3)
+
+`manifest.webmanifest` + `sw.js` + `icons/` make the app **installable**
+(Windows/Android "Install app", iOS "Add to Home Screen") and let it boot with
+the network down. The icons are generated from the sidebar's own brand mark by
+`build-icons.ps1`, because a manifest cannot point at an inline SVG.
+
+The worker's policy is **network-first, cache only as a fallback**. When the
+network answers, the browser gets exactly what it gets today — the live file,
+every time — so an online user can never be stranded on a stale bundle (verified
+by changing a file and reloading). With the network dead it serves the cached
+shell instead: the app has been verified to boot fully offline (HTML, CSS and JS
+all from cache) in a real browser with the static server stopped.
+
+What it will cache is decided by an **allowlist, not a denylist**: only URLs
+named in `SHELL` (plus the `/vendor/fonts/` prefix, for the woff2 subsets that
+load on demand) are ever cached or served from cache. Everything else —
+cross-origin Supabase traffic, the CDN fallbacks, `/api/*`, non-GET requests,
+and any same-origin URL not explicitly vouched for — is left entirely to the
+browser and never stored. That last clause is the security-relevant one: a cache
+is shared per-origin and survives logout, so "cache everything except /api/"
+would silently start storing and replaying user-specific same-origin responses
+the moment one appears. Vouching per URL means it cannot happen by accident. The
+cost, stated plainly: only what is listed works offline.
+
+`sw.js` is versioned by one constant, and `SHELL` is a hand-maintained list — so
+`check-shell.ps1` keeps the two honest. **Run it before every deploy**: it fails
+loudly if `index.html` or `css/style.css` references a same-origin asset that
+`SHELL` does not cover, or if `SHELL` names a file that no longer exists (both
+break OFFLINE boot only, which is the kind of fault that goes unnoticed), and it
+prints a shell fingerprint so a change is visible. **Bump `VERSION` whenever a
+file in `SHELL` changes** — that installs a new worker, precaches into a new
+cache, and deletes the previous one, so a deploy replaces the offline bundle
+atomically. Append `?nosw=1` to the URL to skip registration (useful for a clean
+baseline in a fresh browser profile; it does not unregister an existing worker).
 
 ## Test
 

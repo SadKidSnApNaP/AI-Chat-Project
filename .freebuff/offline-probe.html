@@ -1,0 +1,105 @@
+<!doctype html>
+<!-- A3 verification probe (test artifact — lives in .freebuff/, never deployed).
+     Why this exists: the preview tooling is bound to the static server's
+     liveness, so killing the server to test the offline path also blinds the
+     observation tools. This page is its own observer: it records a snapshot on
+     EVERY load into localStorage (which survives the server restart), then
+     re-arms itself for the next load. So the offline boot gets recorded while
+     it happens and can be read afterwards, once the server is back.
+
+     The decisive field is `nav.transferSize === 0` on the TOP-LEVEL document:
+     that means this page itself was served by the service worker, i.e. the
+     static server was not there to answer. `iframe.*` then shows whether the
+     real app (index.html + css + js) booted from cache in that same moment.
+
+     Open with ?reset=1 to clear the log and start a fresh run. -->
+<meta charset="utf-8">
+<title>A3 offline probe</title>
+<style>
+  body { background:#0b0d17; color:#dfe4ff; font:13px/1.5 ui-monospace,Consolas,monospace; padding:16px }
+  h1 { font-size:15px; margin:0 0 10px }
+  iframe { width:100%; height:420px; border:1px solid #333; background:#111 }
+  pre { white-space:pre-wrap; word-break:break-word }
+</style>
+<h1>A3 offline probe — snapshots accumulate in localStorage</h1>
+<pre id="out">loading…</pre>
+<iframe id="app" src="/index.html"></iframe>
+<script>
+(function () {
+  var KEY = '__a3_offline_probe_log';
+  var COUNT = '__a3_offline_probe_count';
+  var MAX_RELOADS = 12;
+  var RELOAD_AFTER_MS = 4000;
+
+  var params = new URLSearchParams(location.search);
+  if (params.get('reset') === '1') {
+    localStorage.removeItem(KEY);
+    localStorage.removeItem(COUNT);
+    // Strip the flag from the URL: location.reload() preserves the query, so
+    // leaving ?reset=1 in place would wipe the log on every offline reload —
+    // exactly the snapshots the run exists to capture.
+    history.replaceState(null, '', location.pathname);
+  }
+
+  var frame = document.getElementById('app');
+
+  function snapshot() {
+    var nav = (performance.getEntriesByType('navigation')[0]) || {};
+    var snap = {
+      at: Date.now(),
+      atIso: new Date().toISOString(),
+      // top-level doc served by the worker (server down) => 0
+      navFromCache: nav.transferSize === 0,
+      navTransfer: nav.transferSize,
+      onlineFlag: navigator.onLine,
+      controlled: !!navigator.serviceWorker.controller,
+      iframe: null
+    };
+    try {
+      var w = frame.contentWindow;
+      var d = frame.contentDocument;
+      var res = w.performance.getEntriesByType('resource');
+      snap.iframe = {
+        href: d.location.href,
+        title: d.title,
+        views: d.querySelectorAll('.view').length,          // 22 in the full document
+        navSections: d.querySelectorAll('.nav-section').length,
+        toolCards: d.querySelectorAll('.tool-card').length,
+        // The app's JS actually executed (not just HTML/CSS delivered):
+        appJsRan: typeof w.Calc === 'object' && typeof w.Calc.fmtNum === 'function',
+        cloudLoaded: typeof w.NexoraCloud === 'object',
+        platformLoaded: typeof w.NexoraPlatform === 'object',
+        swControlled: !!(w.navigator.serviceWorker && w.navigator.serviceWorker.controller),
+        resources: res.length,
+        fromCache: res.filter(function (e) { return e.transferSize === 0 && e.decodedBodySize > 0; }).length,
+        fromWire: res.filter(function (e) { return e.transferSize > 0; }).length
+      };
+    } catch (e) {
+      snap.iframe = { error: String(e) };
+    }
+    return snap;
+  }
+
+  function record() {
+    var snap = snapshot();
+    var log = [];
+    try { log = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { log = []; }
+    log.push(snap);
+    localStorage.setItem(KEY, JSON.stringify(log));
+    document.getElementById('out').textContent =
+      'recorded ' + log.length + ' snapshot(s); latest: ' + JSON.stringify(snap, null, 2);
+
+    var n = parseInt(localStorage.getItem(COUNT) || '0', 10);
+    if (n < MAX_RELOADS) {
+      localStorage.setItem(COUNT, String(n + 1));
+      setTimeout(function () { location.reload(); }, RELOAD_AFTER_MS);
+    } else {
+      document.getElementById('out').textContent += '\n\nmax reloads reached — probe idle.';
+    }
+  }
+
+  if (frame.contentDocument && frame.contentDocument.readyState === 'complete') record();
+  frame.addEventListener('load', record, { once: true });
+  setTimeout(record, 6000); // fallback if the frame's load event is missed
+})();
+</script>

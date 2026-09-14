@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# A3: the PWA icons are generated binaries. `text=auto` already sniffs them
+# correctly, but these are the app's install-time artwork (and a mangled PNG
+# would only surface on a user's home screen), so pin them explicitly.
+*.png binary

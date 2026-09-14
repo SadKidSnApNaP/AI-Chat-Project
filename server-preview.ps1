@@ -9,6 +9,10 @@ $mime = @{
   '.js'   = 'text/javascript; charset=utf-8'
   '.css'  = 'text/css; charset=utf-8'
   '.json' = 'application/json; charset=utf-8'
+  # A3: the PWA manifest. Without this the dev server served it as
+  # application/octet-stream, and a wrong manifest type is exactly the kind of
+  # thing that silently costs you "Install app" on some browsers.
+  '.webmanifest' = 'application/manifest+json; charset=utf-8'
   '.svg'  = 'image/svg+xml'
   '.pdf'  = 'application/pdf'
   '.png'  = 'image/png'

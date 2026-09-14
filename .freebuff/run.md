@@ -4155,3 +4155,217 @@ displayed as `0`). The test predates that change. Left untouched on purpose —
 editing a test to make it pass needs the owner's sign-off, and it is outside
 A2's scope. **Correcting the A1 note: it claimed "90 / 0 passed"; the banner said
 that, and the banner is wrong.**
+
+*FIXED in the A2 cleanup pass (owner-approved): the counter now reads the real
+`test(...)` calls, and test #37 expects `\u2014`. Suite reports **PASS — 91/91**,
+and the failure path was confirmed separately (an injected failing assertion
+produces `FAIL — 91/92 (1 failed)` and lists the row).*
+
+---
+
+## A3 — installable app shell: manifest, icons, service worker — 2026-09-14
+
+Files added: `manifest.webmanifest`, `sw.js`, `icons/` (4 PNGs), `build-icons.ps1`.
+`index.html` gained head metadata (manifest link, theme-color, apple touch icon,
+favicon) and a small guarded registration script before `</body>`. Nothing else
+changed: no app logic, no template, no data shape. `build-preview.ps1` needed no
+edit because the new references are not `js/` or `css/` (its sanity check only
+asserts those two).
+
+### Policy: network-first, cache only as a fallback
+
+This is the decision that makes A3 safe for a live site. When the network
+answers, the response is the live file, every time — the worker is a proxy with
+an offline fallback, not a cache in front of the app. Consequences:
+
+- an online user can never be pinned to a stale bundle (verified, below);
+- the live site's behaviour is unchanged, which was the standing ground rule.
+
+The `fetch` handler deliberately returns without calling `respondWith` for:
+non-GET requests, any cross-origin URL (Supabase auth + REST, the CDN fallbacks),
+and anything under `/api/`. So the RLS-protected cloud data can never be served
+from a cache, and `api/send-code.js` is always live. Offline boot is therefore
+limited to the app shell, which is exactly the intent.
+
+`install` adds the `SHELL` list **one entry at a time** rather than `cache.addAll`
+(atomic: a single 404 would abort the whole install and leave no worker at all).
+`activate` deletes any previous `nexora-shell-*` cache and claims clients.
+
+### The icons were generated from the app's own mark
+
+The app had no icon asset of any kind — only an inline SVG, which a manifest
+cannot reference. `build-icons.ps1` draws the sidebar's mark (page + folded
+corner + tick, in its own 24x24 coordinates, stroke-width 2, round caps) onto
+the glass gradient at 192, 512, maskable-512 (glyph inside the 80% safe zone)
+and apple 180. Sizes were verified by reading each PNG's IHDR: 192/512/512/180.
+
+**PowerShell gotcha that cost a cycle:** `@( ,@(x,y), ... )` does NOT give an
+array of point pairs — PowerShell flattens it into a mix of scalars and arrays,
+and the `[float]` cast then dies with "cannot convert Object[] to Single". Flat
+coordinate arrays are the fix. Related: keep these `.ps1` files **ASCII-only**;
+PowerShell 5.1 reads them as ANSI without a BOM, so an em-dash is a parse error.
+
+### Proving offline boot in a real browser (and why the preview could not do it)
+
+A caution for future sessions: **the preview webview does not let the service
+worker control subframes.** An iframe pointed at the app comes back blank when
+the server is down (`controller: false` inside the frame), even though the
+top-level document is controlled and served from cache. So an iframe-based
+"offline test" proves nothing. The app must be the TOP-LEVEL document.
+
+Second constraint: the preview tooling is bound to the static server's liveness,
+so killing that server also blinds the tools — the exact moment you need to
+watch. Hence `.freebuff/offline-chrome-test.ps1`, which uses a throwaway Chrome
+profile (separate from the user's browser and from the preview) and needs no
+network switch:
+
+```
+# 1. online: let the worker install + precache into a fresh profile
+powershell -NoProfile -ExecutionPolicy Bypass -File .freebuff/offline-chrome-test.ps1 -Phase prime
+# 2. stop the static server, then dump the DOM with the server down
+powershell -NoProfile -ExecutionPolicy Bypass -File .freebuff/offline-chrome-test.ps1 -Phase dump
+```
+
+The dump phase warns if anything is still listening on 8437 (so a "pass" can
+never be a false positive) and reports boot markers. Result with **no listener
+on 8437**: 230,203-byte DOM, 4 nav sections, 12 tool cards, and all **81
+`[data-icon]` spans hydrated with SVG** — the last one matters most, because the
+hydration is done by `js/app.js`, so it proves the JS executed, not just that
+HTML arrived.
+
+**Start-Process quoting:** it joins its argument list with spaces without
+quoting, so `--user-data-dir` must carry its own embedded quotes when the path
+contains a space. Getting this wrong starts Chrome with a different profile and
+silently created a stray `F:\AI-Chat` folder outside the project (reported to the
+owner for removal).
+
+### Staleness check (the other half of network-first)
+
+Served a page whose content was then changed on disk, and reloaded: the new
+content came back, not the cached copy. So "online" always means "the live
+file". `MARKER_ONE` → `MARKER_TWO` both observed in order.
+
+### Other verification
+
+- Cache contents: 17 shell entries all present before any runtime use, every one
+  `200`/`basic`, **zero cross-origin entries**; runtime-added font subsets only.
+- `?nosw=1` skips registration (guarded on protocol too, so `file://` is
+  unaffected — matching the README's "double-click index.html" promise).
+- `test/calculations.test.html`: **PASS — 91/91** with the worker controlling the
+  page. Console on a clean guest load: **empty**.
+- The A1/A2 parity harness still runs with the worker active (its `[nodl]` log
+  lines show the same two print payloads and a backup JSON). Print payloads are
+  now 14,794 B / 14,917 B — a constant **-50 bytes** versus the A1 baseline, which
+  is A2's font-URL swap inside `compilePrintHtml` (A2 proved that delta by
+  substituting the old href back and reproducing the A1 hash). `app.js` is
+  untouched by A3, so A3 cannot have moved it. Note the harness's own
+  `__a1collect()` returns empty printouts even though the exports ran; the
+  `[nodl]` console lines are the reliable readout.
+
+### Dev-server note
+
+`server-preview.ps1`'s MIME map lacked `.webmanifest`, so the manifest was served
+as `application/octet-stream`. Added `application/manifest+json`; a wrong manifest
+type is the kind of thing that silently costs you "Install app" on some browsers.
+
+### Known limits, stated plainly
+
+- Installability was verified by construction (valid manifest, real icons of the
+  declared sizes, active worker with a fetch handler, secure context) — not by
+  clicking "Install" in a browser UI.
+- Offline means the **shell**: the app boots and every calculator/template works.
+  Signing in and cloud sync still need a connection (A4–A7 territory).
+- `VERSION` is manual. A shell-file change without a bump still works online
+  (network-first), but the offline copy updates only at the next activate.
+
+### A3 follow-up, raised by the owner before A4: caching was a DENYLIST
+
+The first cut of `sw.js` excluded non-GET, cross-origin and `/api/*`, then cached
+*every other* same-origin response. That contradicts the documented policy ("only
+the app shell") and was caught by measuring the live cache rather than trusting
+the comment:
+
+| | count |
+|---|---|
+| declared in `SHELL` | 17 |
+| actually cached (v1) | 26 unique paths |
+
+The nine extras included `/test/calculations.test.html`, `/.freebuff/offline-probe.html`,
+two `_a1-parity-*.html` harness pages and `/sw.js` — none of which belong in an
+offline bundle, and two of which no longer existed on disk.
+
+**Why it was worth fixing before A4 rather than after.** Nothing was exploitable
+then: all user data is cross-origin (Supabase) or in localStorage. But the guard
+was a path exclusion, not a policy. The moment A4–A7 (or Stage E's landing site)
+introduce anything same-origin serving user-specific content, it would be written
+to a cache that is **shared per-origin and survives logout**, and replayed after
+any network failure. That is a shared-device leak arriving as a side effect of
+cloud work rather than as a decision.
+
+**Fix:** cache by ALLOWLIST. `isCacheable()` accepts exactly `SHELL`'s paths plus
+`RUNTIME_PREFIXES` (`/vendor/fonts/`, needed because `fonts.css` pulls the woff2
+subsets lazily). Everything else returns from the fetch handler **without calling
+`respondWith` at all** — no interception, no `cache.put`, no cache read. Trade-off
+accepted: a URL outside the list is not available offline (that is the intent).
+`VERSION` bumped to **v2** so the polluted cache is deleted on activate.
+
+### `check-shell.ps1` — the drift guard
+
+`SHELL` is hand-maintained and `VERSION` is manual, so `sw.js` can silently drift
+from reality. Network-first hides that: everything works online while offline boot
+breaks. The script fails loudly on either fault and prints a shell fingerprint:
+
+| injected fault | result |
+|---|---|
+| `./js/platform.js` removed from `SHELL` (still referenced by index.html) | `DRIFT DETECTED: index.html -> js/platform.js` |
+| `SHELL` names `./js/does-not-exist.js` | `DRIFT DETECTED: SHELL lists a file that does not exist` |
+| clean tree | `OK` + fingerprint `EBAFD8A667D8` (4,220,044 bytes across 17 files) |
+
+Two gotchas it needed: the A2 CDN fallback loader builds `'<script src="' +
+FALLBACKS[i][1] + '">'` inside an inline script, and a naive `src|href` regex
+reads that concatenation as a real path — so refs containing script punctuation
+are skipped. And in PowerShell, a double-quoted regex containing escaped quotes
+gets eaten: use a single-quoted string with a doubled `''`.
+
+### Re-verified after the fix (v2 allowlist policy)
+
+| check | result |
+|---|---|
+| live cache contents | **18 shell entries only**; old `nexora-shell-v1` deleted on activate |
+| fetch `/test/calculations.test.html`, `/.freebuff/offline-probe.html`, `/sw.js` | all `200`, **zero** new cache entries — no leak |
+| fetch a font under the prefix | cached on demand (and `cache.put` is fire-and-forget, so re-read the cache a moment later or you will "fail" your own test) |
+| offline boot, real Chrome, server stopped | **230,203-byte DOM, 4 nav sections, 12 tool cards, 81/81 icons hydrated by app.js** — identical to the v1 numbers |
+
+### A4 started — plan/usage move to the database (schema written, awaiting a run)
+
+A4's first step is `supabase/schema.sql` section 6: a new `public.account_state`
+table (`plan`, `usage jsonb`, `updated_at`), plus RLS and grants. The two design
+points that are NOT obvious, and would be bugs if left to the client:
+
+1. **`plan` must not be client-writable.** RLS grants access to ROWS, not
+   columns, so `auth.uid() = user_id` would happily let a signed-in user UPDATE
+   their own `plan` to `premium` straight from the browser console using the
+   published anon key. Two independent guards: `grant update (usage)` limits the
+   `authenticated` role to the counter column, and a `protect_account_plan()`
+   trigger refuses any tier change arriving via the public API. Tier changes are
+   made in the SQL editor (role `''`) or by a service-role call — which is also
+   how a Stripe webhook will set it, and how `jayawardhanaworks@gmail.com` gets
+   developer status.
+2. **`usage` must merge with MAX, not last-writer-wins.** Otherwise a second
+   device, or a cleared profile, lowers the counter — reintroducing the exact
+   per-device quota hole A4 exists to close.
+
+The SQL has been reviewed by inspection only: there is no Postgres on this
+machine, so it is unrun until the owner executes it in Supabase. Wiring (cloud
+push/pull + offline cache in `js/cloud.js`/`js/app.js`) follows once the table
+exists, and the merge is a pure function, so it can be unit-tested locally.
+
+### Trade-off left in place, deliberately: precache is a second download
+
+The shell is **4.2 MB** and `install` fetches it with `cache: 'reload'`, which
+bypasses the HTTP cache on purpose — the shell filenames are not content-hashed,
+so without `reload` a version bump could store the *old* bytes and leave the
+offline bundle stale despite a correct VERSION. The cost is that a returning
+visitor downloads the shell twice (page + offline copy) once per version. Trimming
+this would mean precaching only boot-critical files and letting `vendor/` fill in
+on first use — a deliberate future call, not an oversight.
