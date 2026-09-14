@@ -5,9 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Nexora Engine — business intelligence and ERP: track scope creep, calculate what an extra client request really costs, and send a professional change request.">
   <title>Nexora Engine | Business Intelligence &amp; ERP</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <!-- A2: fonts are SERVED LOCALLY (vendor/fonts/fonts.css + 25 woff2 subsets).
+       Keeping the exact same woff2 files matters more than it looks: the print
+       templates wait for these faces before painting, and the master document
+       metrics shift if a fallback face is substituted. The two preconnects went
+       with the CDN — with nothing left to preconnect to, they were dead weight.
+       Must stay a LINKED stylesheet (not inlined): its font URLs are relative
+       to its own folder, so inlining it would break every woff2 path. -->
+  <link rel="stylesheet" href="vendor/fonts/fonts.css">
   <style>
 /* Nexora Engine — Business Intelligence & ERP — style.css
  * Minimalist black-and-white glass theme: monochrome abstract background
@@ -122,9 +127,15 @@ body::before {
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  /* A2: the abstract backdrop is VENDORED (vendor/background.jpg, 1920x1459).
+     It used to be fetched from images.unsplash.com, which was the last external
+     request the app made on load — so the app could not be genuinely offline
+     with it in place, and every launch leaked a third-party request. The path
+     is relative to this stylesheet, which also resolves correctly in
+     preview.html where this file is inlined at the document root. */
   background-image:
     radial-gradient(circle at center, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.9) 100%),
-    url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80');
+    url('../vendor/background.jpg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
@@ -2569,7 +2580,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 [data-theme="light"] body::before {
   background-image:
     radial-gradient(circle at center, rgba(255, 255, 255, 0.55) 0%, rgba(244, 244, 245, 0.92) 100%),
-    url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80');
+    url('../vendor/background.jpg');
   opacity: 0.9;
 }
 [data-theme="light"] .card { background: rgba(255, 255, 255, 0.78); border-color: rgba(0, 0, 0, 0.08); }
@@ -7377,16 +7388,49 @@ body.light-theme .tool-launch {
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- ══ A2: VENDORED LIBRARIES ════════════════════════════════════════════
+       Every library is served from vendor/ so the app boots and works with NO
+       network at all — the precondition for an offline desktop app. The CDN is
+       now only a FALLBACK: if a vendored file is missing or truncated (stale
+       checkout, a corrupt download, a deploy that skipped vendor/), the loader
+       below pulls that one library from the original URL so the app degrades to
+       its previous behaviour instead of breaking every import and export.
+
+       document.write is deliberate. A fallback injected by onerror or createElement
+       is asynchronous and would land AFTER app.js has already run, which is too
+       late — these globals must exist before the app evaluates. Writing while the
+       parser is still on this block is synchronous and keeps that ordering. -->
+  <script src="vendor/html2pdf.bundle.min.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
   <!-- Excel WRITING. SheetJS above can read styles but drops them when it
        writes, so every .xlsx this app produces (the import template and the
        document exports) is built with ExcelJS: real bold/shaded header rows,
        cell borders, merged letterhead and info blocks, frozen panes and live
        formulas. SheetJS stays for IMPORT, because it also reads legacy .xls. -->
-  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="vendor/exceljs.min.js"></script>
   <!-- Supabase (auth + cloud storage). Cloud layer first, then the app. -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="vendor/supabase.js"></script>
+  <script>
+  /* A2 fallback loader — see the note above. Runs synchronously, immediately
+     after the vendor tags, so any gap is filled before cloud.js/app.js run. */
+  (function () {
+    var FALLBACKS = [
+      [function () { return window.html2pdf; },  'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'],
+      [function () { return window.XLSX; },      'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'],
+      [function () { return window.ExcelJS; },   'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js'],
+      [function () { return window.supabase; },  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js']
+    ];
+    for (var i = 0; i < FALLBACKS.length; i++) {
+      var present = false;
+      try { present = !!FALLBACKS[i][0](); } catch (e) { present = false; }
+      if (present) continue;
+      try {
+        console.warn('[vendor] local bundle missing, falling back to CDN:', FALLBACKS[i][1]);
+        document.write('<script src="' + FALLBACKS[i][1] + '"><\/script>');
+      } catch (e) { /* nothing else we can do; the feature degrades on its own */ }
+    }
+  })();
+  </script>
   <script>
 /* Nexora Engine — cloud layer (Supabase)
  * ─────────────────────────────────────────────────────────────────────────
@@ -9068,6 +9112,148 @@ body.light-theme .tool-launch {
   }
 })(typeof window !== 'undefined' ? window : this);
   </script>
+  <script>
+/* Nexora Engine — platform switchboard
+ * ─────────────────────────────────────────────────────────────────────────
+ * The app is ONE codebase that runs in a browser, in an Electron window and
+ * inside an Android WebView. Only two things genuinely differ per platform:
+ *
+ *   1. producing a PDF     — the browser prints via a hidden iframe; a desktop
+ *                            shell builds a real file with printToPDF; an
+ *                            Android WebView cannot print() at all.
+ *   2. writing a file      — the browser downloads an <a download>; a desktop
+ *                            shell wants a native save dialog.
+ *
+ * This file is the single place that difference lives. It holds NO business
+ * logic, no calculations and no document templates: it only decides WHO does
+ * those two jobs.
+ *
+ * WHY IT IS SAFE TO ADD
+ *   In a plain browser no backend is ever registered, so every method below
+ *   returns false and the caller's original code runs exactly as it did
+ *   before. The app.js call sites are a single guard each, placed AFTER the
+ *   existing test-suppression check so `?nodl=1` keeps producing no dialog and
+ *   no file on every platform.
+ *
+ * HOW A SHELL INSTALLS ITSELF
+ *   The shell registers a backend with the two optional methods:
+ *
+ *     window.NexoraPlatform.register({
+ *       printPdf: function (html, title) { ... },   // → any value; returning
+ *       saveFile: function (blob, filename) { ... } //   is enough to claim it
+ *     });
+ *
+ *   Electron sets `window.nexoraNative` from its preload script; Capacitor is
+ *   detected through its own global. Neither is required — a missing backend
+ *   is simply the browser path.
+ * ───────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  /* ── Which shell are we in? ────────────────────────────────────────────
+     Detection is evidence-based and only ever affects reporting: the actual
+     routing decision is "is a backend registered?", so a wrong answer here
+     can never change behaviour — it can only mislabel the status readout.
+
+     Deliberately NOT sniffing the user-agent for "Electron". A great many
+     host apps are Electron-based without being OUR shell — an IDE, a chat
+     client, the preview pane this was developed in — and all of them carry
+     Electron in the UA. Sniffing them would report "electron" for an ordinary
+     browser session, so the check waits for the shell to identify itself
+     (`window.nexoraNative`, set by the shell's preload) or for Capacitor to
+     confirm it is native. `uaHint` keeps the raw signal available for
+     diagnostics without letting it drive the answer. */
+  function hasElectronUA() {
+    try { return /Electron/i.test(navigator.userAgent || ''); } catch (e) { return false; }
+  }
+
+  function detect() {
+    try {
+      if (window.nexoraNative && window.nexoraNative.platform) return String(window.nexoraNative.platform);
+      if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) return 'android';
+      if (hasBackend()) return 'native';
+    } catch (e) { /* fall through to web */ }
+    return 'web';
+  }
+
+  /* ── The test seam, mirrored ───────────────────────────────────────────
+     Same rule as the app's own guard (loading with `?nodl=1`, or setting
+     `window.__NEXORA_NO_DOWNLOAD = true`). Exposed so a shell can honour it
+     too — without this a "no writes" test run would still pop a native save
+     dialog, which is exactly the kind of side effect the flag exists to stop. */
+  function isSuppressed() {
+    try {
+      if (window.__NEXORA_NO_DOWNLOAD === true) return true;
+      return /(^|[?&])nodl=1(&|$)/.test(String(window.location.search || ''));
+    } catch (e) { return false; }
+  }
+
+  let backend = null;
+
+  function hasBackend() {
+    return !!(backend && (typeof backend.printPdf === 'function' || typeof backend.saveFile === 'function'));
+  }
+
+  const api = {
+    /* A live property, not a snapshot: a shell registers AFTER this file runs,
+       so a value captured at load time would report "web" forever. */
+    get kind() { return detect(); },
+
+    /* Diagnostics only — never used to decide anything. */
+    uaHint: hasElectronUA() ? 'electron' : 'other',
+
+    /* Called by a shell once, as early as it can. Passing nothing clears it. */
+    register: function (b) {
+      backend = (b && typeof b === 'object') ? b : null;
+      return hasBackend();
+    },
+
+    hasBackend: hasBackend,
+
+    isSuppressed: isSuppressed,
+
+    /* ── Print a compiled document ───────────────────────────────────────
+       `html` is the complete standalone print document the app already
+       compiled (embedded stylesheet, no CDN, no offscreen capture), so a
+       shell can render it verbatim and get the same layout as the browser.
+       Returns TRUE only when the shell claims the job, which is what tells
+       app.js to skip its own iframe print and avoid producing the document
+       twice. A backend that throws synchronously is treated as "did not take
+       it" so the browser path still runs. */
+    print: function (html, title) {
+      if (!backend || typeof backend.printPdf !== 'function') return false;
+      try {
+        backend.printPdf(String(html || ''), String(title || ''));
+        return true;
+      } catch (e) {
+        warn('printPdf backend failed', e);
+        return false;
+      }
+    },
+
+    /* ── Write a file ────────────────────────────────────────────────────
+       Same contract: true ⇒ the shell wrote it, so the anchor-download path
+       is skipped. The blob is passed through untouched, so a shell writes
+       exactly the bytes the app produced. */
+    saveFile: function (blob, filename) {
+      if (!backend || typeof backend.saveFile !== 'function') return false;
+      try {
+        backend.saveFile(blob, String(filename || 'nexora-file'));
+        return true;
+      } catch (e) {
+        warn('saveFile backend failed', e);
+        return false;
+      }
+    }
+  };
+
+  function warn(what, e) {
+    try { console.warn('[platform] ' + what + ':', (e && e.message) || e); } catch (err) { /* ignore */ }
+  }
+
+  window.NexoraPlatform = api;
+})();
+  </script><!-- A1: platform/export switchboard (browser · Electron · Android) -->
   <script>
 /* Nexora Engine — Business Intelligence & ERP — app.js
  * State (localStorage), rendering, events, message generator,
@@ -11897,13 +12083,32 @@ body.light-theme .tool-launch {
   // caller BEFORE calling this (builders read state/inputs at build time);
   // nothing here may be null/undefined — esc() and the builders' `|| '\u2014'`
   // / `|| '0.00'` fallbacks guarantee printable text.
+  /* A2: the print document used to pull Roboto from Google Fonts, so a
+     generated PDF silently depended on the network — offline the frame fell
+     back to Arial/Helvetica and every metric in the master template shifted,
+     which is the one thing the print pipeline is most sensitive to. It now
+     points at the SAME Roboto, served from the vendored copy, so producing a
+     PDF needs no network at all.
+
+     Resolved to an ABSOLUTE url on purpose: the compiled document is written
+     into an about:blank frame, and a relative path there depends on the
+     frame's base URL rather than on where this script was loaded from. An
+     absolute URL removes the ambiguity for http(s) and file:// alike.
+     Returning '' (no base URL available) simply omits the link — which is the
+     old offline behaviour, not a new failure. */
+  function printFontHref() {
+    try { return new URL('vendor/fonts/fonts.css', document.baseURI).href; }
+    catch (e) { return ''; }
+  }
+
   function compilePrintHtml(bodyHtml, title) {
+    const fontHref = printFontHref();
     return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       '<title>' + esc(title || 'Nexora Engine document') + '</title>' +
-      /* the master template is set in Roboto — load it for the frame too
-         (offline the stack falls back to Arial/Helvetica) */
-      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap">' +
+      /* the master template is set in Roboto — load it for the frame too,
+         from the vendored stylesheet (see printFontHref) */
+      (fontHref ? '<link rel="stylesheet" href="' + esc(fontHref) + '">' : '') +
       '<style>' + PRINT_DOC_CSS + '</style></head><body>' +
       '<div class="doc-page">' + (bodyHtml || '<p>Nothing to print.</p>') + '</div>' +
       '</body></html>';
@@ -11975,6 +12180,13 @@ body.light-theme .tool-launch {
         console.info('[nodl] print suppressed (no dialog, no file):', title, compiledHTML.length + ' bytes', rec.at);
         return;
       }
+      /* A1 platform switchboard. A packaged shell (Electron, Android) takes the
+         compiled document and produces a real PDF file; in a browser no
+         backend is registered, `print()` returns false and the line below runs
+         exactly as it always has. Placed AFTER the suppression check on
+         purpose, so `?nodl=1` stays silent on every platform — and after the
+         audit record, so the payload is still measured when a shell takes it. */
+      if (window.NexoraPlatform && window.NexoraPlatform.print(compiledHTML, title)) return;
       try { win.focus(); win.print(); } catch (e) { /* user can Ctrl+P */ }
     };
     /* Fonts must be in before the first paint request, or the master
@@ -17101,6 +17313,11 @@ body.light-theme .tool-launch {
       console.info('[nodl] download suppressed (no file written):', filename, blob.size + ' bytes');
       return rec;
     }
+    /* A1 platform switchboard. A packaged shell writes the file through a
+       native save dialog; in a browser no backend is registered, `saveFile()`
+       returns false and the anchor download below runs exactly as before.
+       After the suppression check, so `?nodl=1` still writes nothing anywhere. */
+    if (window.NexoraPlatform && window.NexoraPlatform.saveFile(blob, filename)) return null;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

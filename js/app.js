@@ -2826,13 +2826,32 @@
   // caller BEFORE calling this (builders read state/inputs at build time);
   // nothing here may be null/undefined — esc() and the builders' `|| '\u2014'`
   // / `|| '0.00'` fallbacks guarantee printable text.
+  /* A2: the print document used to pull Roboto from Google Fonts, so a
+     generated PDF silently depended on the network — offline the frame fell
+     back to Arial/Helvetica and every metric in the master template shifted,
+     which is the one thing the print pipeline is most sensitive to. It now
+     points at the SAME Roboto, served from the vendored copy, so producing a
+     PDF needs no network at all.
+
+     Resolved to an ABSOLUTE url on purpose: the compiled document is written
+     into an about:blank frame, and a relative path there depends on the
+     frame's base URL rather than on where this script was loaded from. An
+     absolute URL removes the ambiguity for http(s) and file:// alike.
+     Returning '' (no base URL available) simply omits the link — which is the
+     old offline behaviour, not a new failure. */
+  function printFontHref() {
+    try { return new URL('vendor/fonts/fonts.css', document.baseURI).href; }
+    catch (e) { return ''; }
+  }
+
   function compilePrintHtml(bodyHtml, title) {
+    const fontHref = printFontHref();
     return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       '<title>' + esc(title || 'Nexora Engine document') + '</title>' +
-      /* the master template is set in Roboto — load it for the frame too
-         (offline the stack falls back to Arial/Helvetica) */
-      '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap">' +
+      /* the master template is set in Roboto — load it for the frame too,
+         from the vendored stylesheet (see printFontHref) */
+      (fontHref ? '<link rel="stylesheet" href="' + esc(fontHref) + '">' : '') +
       '<style>' + PRINT_DOC_CSS + '</style></head><body>' +
       '<div class="doc-page">' + (bodyHtml || '<p>Nothing to print.</p>') + '</div>' +
       '</body></html>';
@@ -2904,6 +2923,13 @@
         console.info('[nodl] print suppressed (no dialog, no file):', title, compiledHTML.length + ' bytes', rec.at);
         return;
       }
+      /* A1 platform switchboard. A packaged shell (Electron, Android) takes the
+         compiled document and produces a real PDF file; in a browser no
+         backend is registered, `print()` returns false and the line below runs
+         exactly as it always has. Placed AFTER the suppression check on
+         purpose, so `?nodl=1` stays silent on every platform — and after the
+         audit record, so the payload is still measured when a shell takes it. */
+      if (window.NexoraPlatform && window.NexoraPlatform.print(compiledHTML, title)) return;
       try { win.focus(); win.print(); } catch (e) { /* user can Ctrl+P */ }
     };
     /* Fonts must be in before the first paint request, or the master
@@ -8030,6 +8056,11 @@
       console.info('[nodl] download suppressed (no file written):', filename, blob.size + ' bytes');
       return rec;
     }
+    /* A1 platform switchboard. A packaged shell writes the file through a
+       native save dialog; in a browser no backend is registered, `saveFile()`
+       returns false and the anchor download below runs exactly as before.
+       After the suppression check, so `?nodl=1` still writes nothing anywhere. */
+    if (window.NexoraPlatform && window.NexoraPlatform.saveFile(blob, filename)) return null;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

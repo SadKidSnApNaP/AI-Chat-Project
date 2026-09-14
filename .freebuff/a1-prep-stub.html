@@ -1,0 +1,71 @@
+<!-- A1 PARITY: deterministic boot state (TEST HARNESS ONLY, not shipped).
+     Injected immediately BEFORE js/app.js, right after the signed-in stub, so
+     the app's in-memory state is derived from THIS storage rather than from
+     whatever the previous run left behind.
+
+     Why it is needed: the two runs (before and after the A1 change) are two
+     separate page loads, so anything the first run writes — history entries,
+     the activity feed, usage counters — would otherwise reach the second run
+     and make its "before/after" byte comparison meaningless. Wiping to a known
+     state first, then seeding one fixed brand kit (which every PDF letterhead
+     reads), makes the exports reproducible.
+
+     The harness session key is deliberately preserved. -->
+<script>
+(function () {
+  var SESSION = /^sb-.*-auth-token$/;
+  /* `u:` covers the app's PER-USER namespaced keys, which is where most of the
+     real data lives (history, drafts, usage, plan). Leaving them out was a
+     determinism hole: history written by the "before" run survived into the
+     "after" run and changed the backup's byte length for reasons that had
+     nothing to do with the change under test. The session key does not start
+     with `u:`, so the harness login is still preserved. */
+  var APP_KEY = /^(cm-|calcmall_|nexora_|u:)/;
+  var stale = [];
+  Object.keys(localStorage).forEach(function (k) {
+    if (SESSION.test(k) || !APP_KEY.test(k)) return;
+    stale.push(k);
+  });
+  stale.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } });
+
+  /* One fixed brand kit — the letterhead every PDF builds from. */
+  try {
+    localStorage.setItem('calcmall_brand_v1', JSON.stringify({
+      name: 'Acme Engineering Pvt Ltd',
+      legalName: 'Acme Engineering (Pvt) Ltd',
+      tag: 'Building services & electrical contracting',
+      address: '123 Example Road, Colombo 05',
+      contact: '+94 11 000 0000',
+      phone: '+94 11 000 0000',
+      email: 'hello@example.lk',
+      website: 'www.example.lk',
+      spec: 'Specialists in fire detection & suppression systems',
+      tin: '123456789',
+      terms: 'Payment 30 days from invoice.',
+      logo: '',
+      payTerms: 'Full payment in advance',
+      beneficiary: 'Acme Engineering Pvt Ltd',
+      bankBranch: 'Example Bank - Colombo 05',
+      swift: 'EXAMPLKL',
+      branchCode: '005',
+      accountNo: '000123456789',
+      accountCur: 'LKR'
+    }));
+    /* Premium: isPremium() true, so no gate can interfere with the exports.
+
+       Seeded under BOTH names on purpose. The app reads plan/usage through
+       its per-user storage shim, so the value it actually consults lives at
+       `u:<email>:<key>` — a RAW `nexora_plan` is invisible to it. Getting this
+       wrong does not fail loudly: the account silently stays on the free
+       tier, the first export spends its single free use, and every later
+       export is refused by the gate with no output at all. The raw copy is
+       kept because some paths still read it directly. */
+    var email = 'alex.perera@example.lk';
+    localStorage.setItem('nexora_plan', 'premium');
+    localStorage.setItem('u:' + email + ':nexora_plan', 'premium');
+    localStorage.setItem('u:' + email + ':nexora_user_role', 'user');
+  } catch (e) { /* ignore */ }
+
+  window.__a1prepared = { wiped: stale.length };
+})();
+</script>

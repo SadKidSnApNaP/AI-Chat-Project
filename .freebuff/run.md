@@ -3939,3 +3939,219 @@ neither was metered before; flagging rather than silently changing them.
 
 `preview.html` rebuilt (1,041,203 bytes). Change is in `js/app.js`, so it needs
 a redeploy to reach Vercel.
+
+## A1 — platform/export switchboard (`js/platform.js`) — 2026-09-14
+
+First stage of the desktop/mobile conversion. The app was ONE codebase that
+would need to run in a browser, an Electron window and an Android WebView, and
+exactly two things genuinely differ per platform: **producing a PDF** and
+**writing a file**. Both already had a single choke point, so the change is a
+switchboard rather than a refactor.
+
+NEW FILE `js/platform.js` — holds no business logic, no maths, no templates; it
+only decides WHO does those two jobs. Loaded between `calculations.js` and
+`app.js` (and inlined by `build-preview.ps1`, which now requires its tag).
+
+the two call sites, each ONE line and both placed AFTER the existing
+test-suppression check so `?nodl=1` still produces no dialog and no file on
+every platform:
+
+| file:line | guard |
+|---|---|
+| `js/app.js` `openPrintWindow` → `doPrint` | `if (window.NexoraPlatform && window.NexoraPlatform.print(compiledHTML, title)) return;` |
+| `js/app.js` `nexoraSaveFile` | `if (window.NexoraPlatform && window.NexoraPlatform.saveFile(blob, filename)) return null;` |
+
+The print guard sits after the print-audit record, so the payload is still
+measured even when a shell takes it. A shell installs itself with
+`NexoraPlatform.register({ printPdf, saveFile })`; a backend that throws
+synchronously is treated as "did not take it" so the browser path still runs.
+
+**In a browser it is a no-op by construction** — no backend is ever registered,
+so both guards return false and the original statements run unchanged. Proven
+by diff (12 insertions, 0 deletions in `app.js`) and by measurement.
+
+### Parity measurement (no file ever written)
+
+Harness: `.freebuff/make-a1-parity.ps1` (+ `a1-prep-stub.html`, `a1-driver.js`)
+generates a test page from `index.html` and is REUSED for A2–A7. Two things it
+had to get right, both learned the hard way:
+
+1. **The plan seed must be namespaced.** The app reads plan/usage through its
+   per-user shim, so a raw `nexora_plan` is invisible to it. Getting this wrong
+   fails SILENTLY: the account stays on the free tier, the first export spends
+   its single free use, and every later export is refused with no output at
+   all. Seed `u:<email>:nexora_plan` (the chip then reads "Premium — unlimited").
+2. **Dirty drafts cancel navigation.** A tool with unsaved input arms a
+   `beforeunload` handler, and the browser then CANCELS the next full page load
+   — which is why a uniquely-named test page silently failed to load. The
+   harness clears drafts through each tool's own Reset/Clear (a commit point)
+   via `__a1reset()`.
+
+Also: the preview layer IGNORES a navigation that differs only in its query
+string, so each run must generate a uniquely-named page.
+
+| sink | export | before | after |
+|---|---|---|---|
+| print (`openPrintWindow`) | Qty & Rate PDF | 14,844 B / `9430d7de` | 14,844 B / `9430d7de` |
+| print (`openPrintWindow`) | Variation PDF | 14,967 B / `2f9d0f16` | 14,967 B / `2f9d0f16` |
+| save (`nexoraSaveFile`) | Backup JSON | 3,093 B | 3,093 B |
+
+Byte-identical, payload counts included. Reported live: `kind: 'web'`,
+`hasBackend: false`, `isSuppressed: true`. `test/calculations.test.html`:
+**90 / 0 passed** (the suite has grown past the 86 in the README).
+
+**Detection note:** `kind` is evidence-based and does NOT sniff the user-agent
+for "Electron". The Freebuff preview pane is itself an Electron webview, so a
+UA sniff reported `electron` for an ordinary browser session — it now waits for
+the shell to identify itself (`window.nexoraNative`) or for Capacitor to
+confirm native, and keeps the raw signal in `uaHint` for diagnostics only.
+
+### Unrelated, but reproduced while measuring
+
+The deferred-print flush fired TWICE for one click, twice in a row, and the
+built-in audit detector logged it with timestamps as designed:
+
+```
+[print-audit] two print payloads for "Quantity & Rate sheet" landed close
+  together — previous at 2026-09-14T11:54:27.631Z (14844 bytes), now at
+  2026-09-14T11:54:27.631Z (14844 bytes), 1ms apart.
+```
+
+Identical timestamp to the millisecond and identical bytes ⇒ ONE flush
+producing two payloads, not two clicks. It reached the hidden-frame seam
+(`openPrintWindow`) and not the new platform guard. The browser's real
+printing is unchanged by A1, so this is a pre-existing observation, recorded
+and still unconfirmed rather than fixed.
+
+`preview.html` rebuilt (1,049,175 bytes). Changes are in `index.html`,
+`js/app.js`, `js/platform.js` and `build-preview.ps1` ⇒ needs a redeploy.
+
+## A2 — everything is vendored; the app now really is offline — 2026-09-14
+
+NEW `vendor/` (~3.7 MB, meant to be committed — the deploy is a git push):
+
+| file | size |
+|---|---|
+| `xlsx.full.min.js` (SheetJS 0.18.5, import) | 881,727 B |
+| `html2pdf.bundle.min.js` 0.10.1 | 905,956 B |
+| `exceljs.min.js` 4.4.0 (all .xlsx writing) | 947,702 B |
+| `supabase.js` (@supabase/supabase-js v2 UMD) | 218,318 B |
+| `fonts/fonts.css` + **25** woff2 subsets (Inter + Roboto) | 612 KB |
+| `background.jpg` (1920x1459) | 152,977 B |
+
+`index.html`: the four CDN `<script>` tags became `vendor/...`; the Google Fonts
+`<link>` + its two `preconnect`s became one local `vendor/fonts/fonts.css`;
+the four original CDN URLs survive **only** inside a small synchronous fallback
+loader.
+
+**The fallback uses `document.write` deliberately.** A fallback injected by
+`onerror` or `createElement` is asynchronous and would land AFTER app.js has
+evaluated, which is too late — these globals must exist first. `document.write`
+while the parser is on that block is synchronous and preserves the order.
+Caveat, seen in Chrome's own console: it warns that a cross-site
+parser-blocking `document.write` script "may be blocked … in this or a future
+page load due to poor network connectivity". That risk applies ONLY to the
+fallback path; the primary path is a local file with no such caveat.
+
+### The dependency nobody had noticed
+
+The first measurement still showed ONE external request: the glass backdrop was
+being fetched from `images.unsplash.com` (`css/style.css`, two rules — the dark
+and light themes). It is decorative, so it failed silently and the app "looked"
+offline while making a third-party request on every single load. Downloaded and
+vendored; both rules now point at `../vendor/background.jpg`. The path is
+relative to the stylesheet, which also resolves correctly in the inlined
+`preview.html`.
+
+`build-preview.ps1`: vendor tags are intentionally NOT inlined (that would add
+~3 MB to `preview.html` and break nothing — the check it enforces only covers
+`src="js/` and `href="css/`). `font/fonts.css` must stay a LINKED stylesheet in
+any future bundling: its woff2 URLs are relative to its own folder, so inlining
+it into a `<style>` block would break every font path.
+
+### The second dependency: the compiled PDF pulled Roboto from Google
+
+Found by grepping for remaining external URLs rather than by looking at the page.
+`compilePrintHtml()` — the function that builds EVERY print document — embedded a
+`<link>` to `fonts.googleapis.com`, and its own comment admitted the
+consequence: *"offline the stack falls back to Arial/Helvetica"*. A generated PDF
+is this app's core output and the print pipeline is the most font-sensitive part
+of it (its own comment elsewhere: fonts must be in before the first paint or
+"every metric shifts"), so an offline PDF silently re-laying out was the exact
+failure A2 exists to prevent.
+
+It now links the VENDORED stylesheet — the same Roboto faces — resolved to an
+ABSOLUTE url via `new URL('vendor/fonts/fonts.css', document.baseURI)`. Absolute
+because the compiled document is written into an `about:blank` frame, where a
+relative path depends on the frame's base URL rather than on the script's
+location; if that resolution ever fails the link is omitted, which is the old
+offline behaviour rather than a new breakage.
+
+Proof that ONLY the font source changed (the strongest check available, since the
+payload bytes necessarily move): substituting the old Google href back into the
+new payload reproduces the A1 baseline exactly.
+
+| | bytes | hash |
+|---|---|---|
+| new payload | 14,794 | `a31fe740` |
+| new payload with the OLD href substituted back | **14,844** | **`9430d7de`** ← the A1 baseline |
+
+So the template output is byte-identical; the diff is one stylesheet URL. Also
+measured: the print frame makes **zero** external requests, its two Roboto woff2
+files resolve to LOCAL, and `frame.contentWindow.document.fonts.check('1em Roboto')`
+is `true`.
+
+### Verified
+
+| check | result |
+|---|---|
+| external requests on a clean load of `index.html` | **0** (14 resources, every one local, all HTTP 200) |
+| console on a clean load | **empty** |
+| globals from vendor | `XLSX 0.18.5`, `ExcelJS`, `html2pdf`, `supabase.createClient` |
+| cloud layer against the vendored SDK | `NexoraCloud.status()` → `synced` |
+| SheetJS functional | write→read round trip, sheet + row data intact |
+| ExcelJS functional | ERP import template produced (`Nexora-Engine-ERP-import-template.xlsx`, 8,663 B) |
+| vendored backdrop | computed `::before` background resolves to `background.jpg` |
+| fallback path | two vendor files deliberately broken: both 404'd, both re-fetched from the CDN, both globals present, warning logged |
+| console on a clean load, after the sourcemap strip | **empty** (was two failed `.map` requests) |
+| **print parity vs A1** | Qty & Rate **14,844 B / `9430d7de`**, Variation **14,967 B / `2f9d0f16`** — byte-identical |
+| **save parity vs A1** | backup JSON **3,093 B** — byte-identical |
+
+Note: xlsx byte length wobbles by ~2 bytes run to run (8,663 / 8,664 / 8,665) —
+ExcelJS stamps a build date into the zip's `docProps`. Not a regression; just
+don't diff xlsx by size.
+
+### One intentional edit to a vendored file
+
+`exceljs.min.js` and `html2pdf.bundle.min.js` each end with a
+`//# sourceMappingURL=<name>.map` comment. Vendoring made the browser actually
+fetch those `.map` files (on the CDN they existed; here they don't), which
+produced two failed requests and two console errors on **every** load. The
+comment is the final line of both files, so it was deleted — the only functional
+change is "stop pointing at a file we do not ship"; the libraries are otherwise
+byte-identical to upstream and both were re-verified afterwards. Flagged because
+it is a deliberate deviation from the published artifact.
+
+### Test-suite reporting is broken (found here, NOT fixed here)
+
+`test/calculations.test.html` prints `"90 / 0 tests passed"` and sets
+`document.title = "FAIL — 90/0"`. Both are artefacts of dead scaffolding: the
+file declares `var tests = []` + an `add()` helper + a `for` loop over
+`tests.length`, but the suite actually runs as a long sequence of direct
+`test(...)` calls, so `total` is ALWAYS 0 and `allPass` is ALWAYS false. The
+headline can therefore never report a failure count.
+
+Consequence: the real state is **90 PASS / 1 FAIL**, and the failing row is only
+visible by scrolling the table:
+
+```
+37  fmtNum: NaN -> "0" (no crash)   expected 0   got —   FAIL
+```
+
+That expectation is STALE, not a regression: `Calc.fmtNum` returns `\u2014` for
+non-finite input on purpose (an earlier request asked to distinguish "invalid /
+unparseable" from "genuinely zero" so a broken database rate is not silently
+displayed as `0`). The test predates that change. Left untouched on purpose —
+editing a test to make it pass needs the owner's sign-off, and it is outside
+A2's scope. **Correcting the A1 note: it claimed "90 / 0 passed"; the banner said
+that, and the banner is wrong.**

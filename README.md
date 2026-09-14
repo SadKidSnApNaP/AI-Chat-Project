@@ -182,8 +182,10 @@ copy.
 index.html                  # sidebar (ERP · Database · History · Brand · Utilities) + 12 tool views
 css/style.css               # mobile-first styling, no frameworks
 js/calculations.js          # pure math + formatting (window.Calc)
+js/platform.js              # platform/export switchboard (browser · Electron · Android)
 js/app.js                   # state, rendering, events, history, PDF exports
-js/calculations.js          # see above; module-exportable for tests
+js/cloud.js                 # the only file that talks to Supabase
+vendor/                     # vendored libraries + fonts + backdrop (A2, see below)
 test/calculations.test.html # no-dependency browser assertion runner
 build-preview.ps1           # regenerates preview.html from the sources
 build-test.ps1              # regenerates the self-contained test page copy
@@ -244,9 +246,24 @@ The default view (🏢 in the sidebar) is a **unified document builder**:
 
 ## Run (free, no build step)
 
-Double-click `index.html` to open it in a browser. It also works offline and
-from `file://`. No server, no install, no accounts, no tracking — all data
-lives in `localStorage`.
+Double-click `index.html` to open it in a browser. No server and no install
+needed — every asset is local, so it also works from `file://`.
+
+### Vendored assets (A2) — and what "offline" actually means now
+
+`vendor/` holds the four libraries (`html2pdf`, SheetJS `xlsx`, `exceljs`,
+`supabase-js`), the Inter/Roboto woff2 subsets, and the backdrop image. Nothing
+is fetched from a CDN on load: a clean start pulls **14 resources, all local,
+zero external requests**. The four CDN URLs remain in `index.html` only as a
+fallback, used when a vendored file is missing or truncated.
+
+*Offline* therefore means: the app starts, every calculator runs, every PDF and
+Excel export works, and the databases are readable — all with no network.
+Signing in and cloud sync obviously need a connection; the app stays usable from
+its local cache without one, and queues changes for the next successful sync.
+
+`vendor/` is ~3.7 MB and is meant to be committed — the deploy is a git push, so
+those files must be in the tree for the live site to work.
 
 ## Test
 

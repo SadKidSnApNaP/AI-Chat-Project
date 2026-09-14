@@ -111,9 +111,15 @@ body::before {
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  /* A2: the abstract backdrop is VENDORED (vendor/background.jpg, 1920x1459).
+     It used to be fetched from images.unsplash.com, which was the last external
+     request the app made on load — so the app could not be genuinely offline
+     with it in place, and every launch leaked a third-party request. The path
+     is relative to this stylesheet, which also resolves correctly in
+     preview.html where this file is inlined at the document root. */
   background-image:
     radial-gradient(circle at center, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.9) 100%),
-    url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80');
+    url('../vendor/background.jpg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
@@ -2558,7 +2564,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 [data-theme="light"] body::before {
   background-image:
     radial-gradient(circle at center, rgba(255, 255, 255, 0.55) 0%, rgba(244, 244, 245, 0.92) 100%),
-    url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80');
+    url('../vendor/background.jpg');
   opacity: 0.9;
 }
 [data-theme="light"] .card { background: rgba(255, 255, 255, 0.78); border-color: rgba(0, 0, 0, 0.08); }

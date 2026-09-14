@@ -392,6 +392,7 @@
         return Calc.amountInWords('abc');
       });
 
+      test("DELIBERATE FAIL CHECK", "WRONG", function () { return "RIGHT"; });
       var total = rowNum;                 // how many actually ran
       var allPass = failCount === 0 && total > 0;
       summary.textContent = passCount + ' / ' + total + ' tests passed' +
