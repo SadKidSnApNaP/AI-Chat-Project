@@ -1,0 +1,198 @@
+<!-- A4 TEST HARNESS ONLY (not shipped). Injected immediately before js/app.js
+     by .freebuff/make-a4-account.ps1.
+
+     Why: account_state push/pull cannot be exercised from a browser without a
+     real account (the publishable key is useless on its own — RLS is what
+     authorises the row), and a real round trip would also be non-deterministic.
+     So this seeds a syntactically valid session and answers the REST calls
+     supabase-js actually makes, through the app's REAL code path: the real
+     cloud.js, the real client, real request bodies. Only the wire is faked.
+
+     Everything the app sends to account_state is appended to a sessionStorage
+     log, because the app reloads itself once when a pull changes its cache —
+     an in-memory log would be lost exactly when it matters.
+
+     The scenario comes from window.__a4, written by the generator.
+     Keep this file pure ASCII (index.html is read as UTF-8, but the .ps1 that
+     builds the page is not, and a stray non-ASCII byte here breaks the build). -->
+<script>
+(function () {
+  var CFG = window.__a4 || {};
+  var KEY = 'sb-oknfjbwfvhctpohusnfk-auth-token';
+  var EMAIL = 'alex.perera@example.lk';
+  var USER_ID = '00000000-0000-4000-8000-0000000000a4';
+  var NOW = Math.floor(Date.now() / 1000);
+  var USER = {
+    id: USER_ID, aud: 'authenticated', role: 'authenticated', email: EMAIL,
+    created_at: '2026-02-14T09:24:11.000Z',
+    user_metadata: { full_name: 'Alex Perera', email_verified: true },
+    app_metadata: { provider: 'email', providers: ['email'] }, identities: []
+  };
+  window.__testUser = USER;
+
+  /* First load OF THIS PAGE only. Two traps this avoids:
+       * the app reloads itself once when a pull changes its cache, so a
+         re-seed on that second load would erase the very values under test
+         (and re-arm the reload, forever);
+       * scenarios are separate FILES opened in the same tab, so a plain
+         tab-scoped flag would let scenario B inherit scenario A's cache and
+         silently test a mixture of both. Keying on the pathname gives every
+         generated page its own first load, while a reload of that page keeps
+         whatever the app itself wrote. */
+  var PAGE = 'a4:' + location.pathname;
+  var FIRST = true;
+  try {
+    FIRST = sessionStorage.getItem(PAGE) !== '1';
+    sessionStorage.setItem(PAGE, '1');
+  } catch (e) { FIRST = true; }
+
+  var wiped = 0, seeded = 0;
+  if (FIRST) {
+    /* A deterministic start: everything the app owns, gone. The session key
+       (sb-*) and the harness's own bookkeeping are deliberately kept. */
+    var APP_KEY = /^(cm-|calcmall_|nexora_|u:)/;
+    var stale = [];
+    Object.keys(window.localStorage).forEach(function (k) {
+      if (/^sb-.*-auth-token$/.test(k) || !APP_KEY.test(k)) return;
+      stale.push(k);
+    });
+    stale.forEach(function (k) { try { window.localStorage.removeItem(k); wiped++; } catch (e) { /* ignore */ } });
+    // Let this page take the app's own boot path, including the single reload
+    // a changed pull triggers. Without this the reload guard from an earlier
+    // scenario would suppress it and the app would never re-boot on its own.
+    try { sessionStorage.removeItem('nexora_cloud_pull_guard'); } catch (e) { /* ignore */ }
+    window.localStorage.setItem(KEY, JSON.stringify({
+      access_token: 'test.header.payload', refresh_token: 'test-refresh',
+      token_type: 'bearer', expires_in: 3600, expires_at: NOW + 3600, user: USER
+    }));
+    // The local cache the scenario wants to start from (empty = a browser
+    // whose site data was just cleared, which is the case that mattered).
+    var seed = CFG.local || {};
+    Object.keys(seed).forEach(function (k) {
+      try { window.localStorage.setItem('u:' + EMAIL + ':' + k, seed[k]); seeded++; } catch (e) { /* ignore */ }
+    });
+  }
+
+  /* The log lives in sessionStorage because the app reloads itself once; it is
+     keyed by scenario, so navigating from one scenario page to the next in the
+     same tab starts a clean log instead of inheriting the previous one. */
+  var SCEN = (CFG.scenario || '') + ' @ ' + location.pathname;
+  var LOG = [];
+  try {
+    var saved = JSON.parse(sessionStorage.getItem('__a4log') || 'null');
+    if (saved && saved.scenario === SCEN) LOG = saved.entries || [];
+  } catch (e) { LOG = []; }
+  function log(entry) {
+    LOG.push(entry);
+    try { sessionStorage.setItem('__a4log', JSON.stringify({ scenario: SCEN, entries: LOG })); } catch (e) { /* ignore */ }
+  }
+
+  /* The account row. CFG.row === null means "no row exists yet", which is the
+     path that must INSERT with usage only (the plan column is not writable). */
+  var ROW = (CFG.row === null) ? null : {
+    user_id: USER_ID,
+    plan: (CFG.row && CFG.row.plan) || 'free',
+    usage: (CFG.row && CFG.row.usage) || {},
+    updated_at: (CFG.row && CFG.row.updated_at) || '2026-09-15T08:00:00.000Z'
+  };
+
+  function json(obj, status) {
+    return Promise.resolve(new Response(JSON.stringify(obj), {
+      status: status || 200, headers: { 'Content-Type': 'application/json' }
+    }));
+  }
+  function restName(u) { return u.replace(/^.*\/rest\/v1\//, ''); }
+
+  var realFetch = window.fetch.bind(window);
+  window.fetch = function (url, init) {
+    var u = String(url);
+    var method = String((init && init.method) || 'GET').toUpperCase();
+    /* Scenario e: the wire is dead. A rejected fetch is what a browser (and
+       supabase-js) reports when nothing answers, so the app's offline path -
+       not a hand-written mock of it - is what gets exercised. */
+    if (CFG.offline && u.indexOf('/rest/v1/') !== -1) {
+      log({ method: method, url: restName(u), body: null, offline: true });
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    var body = null;
+    try { body = (init && init.body) ? JSON.parse(init.body) : null; } catch (e) { body = null; }
+    if (u.indexOf('/rest/v1/account_state') !== -1) {
+      log({ method: method, url: restName(u), body: body });
+      if (method === 'GET') return json(ROW ? [ROW] : []);
+      if (method === 'PATCH') {
+        // PostgREST answers an UPDATE that matched nothing with an empty array,
+        // which is exactly what cloud.js uses to decide to INSERT instead.
+        if (!ROW) return json([]);
+        ROW.usage = (body && body.usage) || ROW.usage;
+        return json([{ user_id: USER_ID }]);
+      }
+      if (method === 'POST') {
+        ROW = {
+          user_id: USER_ID, plan: 'free',
+          usage: (body && body.usage) || {},
+          updated_at: '2026-09-15T09:00:00.000Z'
+        };
+        return json([ROW], 201);
+      }
+      return json([]);
+    }
+    /* Any other table: rows come from CFG.tables, and a table listed in
+       CFG.missingTables answers like PostgREST does when the schema has not
+       been run (PGRST205 / "could not find the table ... in the schema cache"),
+       which is what A5's tolerance for a partial schema has to survive. */
+    if (u.indexOf('/rest/v1/') !== -1) {
+      var name = restName(u).split('?')[0];
+      var wantsIds = u.indexOf('select=id') !== -1;
+      var rows = (CFG.tables && CFG.tables[name]) || [];
+      log({ method: method, url: name + (wantsIds ? '?select=id' : ''), body: body });
+      if (CFG.missingTables && CFG.missingTables.indexOf(name) !== -1) {
+        return Promise.resolve(new Response(JSON.stringify({
+          code: 'PGRST205',
+          message: "Could not find the table 'public." + name + "' in the schema cache"
+        }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (method === 'GET') {
+        if (wantsIds) return json(rows.map(function (r) { return { id: r.id }; }));
+        return json(rows);
+      }
+      return json([], 201);
+    }
+    if (u.indexOf('/auth/v1/user') !== -1) return json(USER);
+    if (u.indexOf('/auth/v1/token') !== -1) {
+      return json({
+        access_token: 'test.header.payload', refresh_token: 'test-refresh',
+        token_type: 'bearer', expires_in: 3600, expires_at: NOW + 3600, user: USER
+      });
+    }
+    return realFetch(url, init);
+  };
+
+  /* Record the app -> cloud hand-off. app.js calls NexoraCloud.noteWrite /
+     noteRemove DYNAMICALLY at every call site, so wrapping them here catches
+     every per-user write the app makes, with the call site attached. This is
+     what turns "a PATCH happened" into "this line queued it". */
+  if (window.NexoraCloud) {
+    var origWrite = window.NexoraCloud.noteWrite;
+    var origRemove = window.NexoraCloud.noteRemove;
+    function site() { return String((new Error()).stack || '').split('\n').slice(2, 4).join(' <- '); }
+    window.NexoraCloud.noteWrite = function (k, v) {
+      var key = String(k);
+      if (key.indexOf('nexora_') === 0) log({ note: 'write', key: key, value: String(v === null ? 'null' : v).slice(0, 44), site: site() });
+      return origWrite.apply(this, arguments);
+    };
+    window.NexoraCloud.noteRemove = function (k) {
+      var key = String(k);
+      if (key.indexOf('nexora_') === 0) log({ note: 'remove', key: key, site: site() });
+      return origRemove.apply(this, arguments);
+    };
+  }
+
+  window.__a4state = {
+    email: EMAIL, userId: USER_ID, first: FIRST, wiped: wiped, seeded: seeded,
+    row: function () { return ROW; },
+    log: function () { return LOG; },
+    scenario: SCEN,
+    reset: function () { LOG.length = 0; try { sessionStorage.removeItem('__a4log'); } catch (e) { /* ignore */ } }
+  };
+})();
+</script>

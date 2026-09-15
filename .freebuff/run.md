@@ -4369,3 +4369,203 @@ offline bundle stale despite a correct VERSION. The cost is that a returning
 visitor downloads the shell twice (page + offline copy) once per version. Trimming
 this would mean precaching only boot-critical files and letting `vendor/` fill in
 on first use — a deliberate future call, not an oversight.
+
+## A4 — plan + usage are account state (wired and verified) — 2026-09-15
+
+The owner ran section 6 of `supabase/schema.sql` (self-check: 6 tables all
+`rls_enabled: true` with 4 policies each; `plan_writable: false`,
+`usage_writable: true`), so `public.account_state` now exists and the app is
+wired to it.
+
+### What was wired
+
+| file | change |
+|---|---|
+| `js/cloud.js` | new sync kind `account` (`nexora_plan` primary, `nexora_free_usage` alias), `pushAccountRow()`, a dedicated block in `pull()`, MAX-merge helpers, a `42501`/permission branch in `errorInfo()`, `accountAt` on the status snapshot, and a new diagnostic `NexoraCloud.accountState()` + `NexoraCloud.merge` |
+| `js/app.js` | `getPlan()` now normalises `free`/`premium`/`developer`; `isPremium()` is `isAdmin() \|\| getPlan() !== 'free'`; `setPlan()` is GONE (nothing may grant a tier client-side); `planState()` gained the developer branch; the two Premium Plans buttons record a request instead of granting; `onCloudEvent` repaints the gating UI when `accountAt` changes; the setup toast now reports the error's own message |
+| `sw.js` | `VERSION` v2 → **v3** (two shell files changed — `check-shell.ps1` fingerprint `EBAFD8A667D8` → `1D6F596C26CC`) |
+
+Two deliberate behaviour changes, both consequences of the tier no longer being
+client-writable: **Subscribe** no longer turns on Premium locally (it records
+the choice and says the tier is applied server-side), and **Return to Free** no
+longer turns it off. Everything else about those buttons is unchanged. Promoting
+an account is now one SQL statement (`update account_state set plan='premium'`),
+and the `ADMIN_EMAILS` allowlist still gives developer status with no database
+change at all.
+
+### Why the push is UPDATE-then-INSERT, not an upsert
+
+An upsert's `SET` list is generated from the whole payload, so a row carrying
+`user_id` (and any `plan`) would be sent as an update of columns this role may
+not write — the guard doing its job would look like a sync failure. The push
+sends exactly one column, and falls back to an INSERT (body exactly
+`{user_id, usage}`) only when the UPDATE matched no row. A `23505` on that
+INSERT (another device won the race) retries the UPDATE once.
+
+### Harness: `.freebuff/make-a4-account.ps1` (+ `a4-account-stub.html`)
+
+A real round trip is impossible to test from here — the publishable key is
+useless without a session, and RLS is what authorises the row — so the harness
+seeds a syntactically valid session and answers the REST calls supabase-js
+actually makes, through the app's **real** code path (real `cloud.js`, real
+client, real request bodies). Only the wire is faked; nothing is downloaded and
+no file is written.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .freebuff/make-a4-account.ps1 -Scenario a
+# → _a4-a.html at the project root; open it via the preview server
+```
+
+Each scenario is a separate file because the preview layer ignores a navigation
+that differs only in its query string.
+
+| scenario | account row | local cache | result |
+|---|---|---|---|
+| `a` | premium + `{qr:2,scope-guard:1}` | **empty** (cleared browser) | tier and meter adopted; `#hl-plan` `Unlimited Credits`, chip `Premium — unlimited`; **no write back** |
+| `b` | free + all 13 tools spent | **empty** (cleared browser) | `0 of 13 free` / `All 13 free uses spent` — `clear site data` no longer hands out a fresh allowance |
+| `c` | free + `{qr:2}` | `{qr:1,boq:4}` (ours is higher) | one `PATCH`, body keys exactly `['usage']`, body `{"usage":{"boq":4,"qr":2}}` — max of both sides, neither lowered |
+| `d` | **none** (never synced) | `plan: premium` (stale grant) | stale premium **revoked** to free, then INSERT with body keys exactly `['user_id','usage']` |
+| `e` | — (every REST call rejects) | premium + `{qr:3}` | boots offline (4 nav sections, 12 cards, console empty), gate still reads the cached tier, status `offline` with the explanatory message, and the offline write is **queued** (`nexora_plan` → `{"qr":4}`) rather than lost |
+| `f` | **none** (never synced) | **empty** (brand-new account) | row **created**: PATCH (matched nothing) → POST, keys exactly `['user_id','usage']`; nothing else changed |
+
+Each scenario also shows the app taking its own boot path: 2 account_state
+GETs (boot → pull changes the cache → one guarded reload → boot).
+
+### Two traps this harness set, both fixed in the harness
+
+1. **The "first load" flag was tab-scoped (`__a4booted`).** Scenarios are
+different FILES opened in the same tab, so from the second scenario on, the wipe
+and seed never ran — B inherited A's cache and was silently testing a mixture
+(all four now key the flag on `location.pathname`, so every page gets its own
+first load while a reload of that page keeps what the app itself wrote). The
+symptom was a `PATCH` nobody asked for: it was the **correct** local-higher
+merge, on a cache that was never supposed to be there. Worth remembering before
+believing any "unexplained write" in this harness.
+2. **The pull guard (`nexora_cloud_pull_guard`) persists in sessionStorage**, so
+a later scenario never reloads. Cleared in the stub's first-load branch.
+
+The harness also wraps `NexoraCloud.noteWrite`/`noteRemove` (app.js calls them
+dynamically, so wrapping catches every per-user write with its call site) —
+that is what ruled OUT `noteWrite` as the source of that `PATCH`.
+
+### The row-creation trigger — corrected after the first report
+
+The first implementation created the row **only when the account had something
+to record** (a spent free use), because `reconcile()`'s account branch sat
+after its "nothing local to offer" early return. A signed-in account that had
+never exported anything therefore had **no row at all**, which makes the
+documented way to promote someone — `update public.account_state set plan = …`
+— match nothing and fail silently. (The owner hit exactly this: an admin
+account showed the expected empty table, because admin accounts bypass the gate
+and so never spend a use.)
+
+The account key is now evaluated before that early return, so the row belongs
+to the ACCOUNT rather than to whatever the cache happens to hold:
+
+* signing in creates it, on the boot after the pull's single reload;
+* the first metered action creates it if that comes first;
+* offline, on the first successful sync;
+* and it is created for admin accounts too — they just stay `{free, {}}`, since
+  the gate never charges them a use.
+
+Scenario `f` covers this path. Note it is a **follow-up** to the A4 report, so
+the trigger described there ("any signed-in boot") is only true as of this fix.
+
+### One real fix found by the harness
+
+`reconcile()` pushed the account row on **every page load**. Its rule is
+"local meta is newer than the row ⇒ push", but `setMetaAt` stamps the clock at
+flush time, so a freshly written row always looked older than the meta that
+wrote it. Harmless for the other keys (idempotent snapshots); for the meter it
+meant re-sending an unchanged counter forever. The account key is now excluded
+from the timestamp rule and pushes only when the row does not exist yet (the
+pull already queues the genuine increases).
+
+**Still pre-existing, NOT addressed here:** the same timestamp rule makes
+`appearance_settings` re-POST on every single load. It is an idempotent
+single-row write, it predates A4, and changing it affects all four singleton
+paths — so it is left alone deliberately, not overlooked.
+
+### Verified alongside
+
+* `test/calculations.test.html`: **91/91, title reads `PASS — 91/91`**.
+* `index.html` as a guest: 22 views, 12 tool cards, 4 sections, 81 icons
+  hydrated, `signed-out`, no cloud traffic, **console empty**.
+* `build-preview.ps1` → `preview.html` 1,065,826 bytes; `check-shell.ps1` → OK
+  (all 18 SHELL entries exist; every same-origin reference is covered).
+* Generated `_a4-*.html` pages deleted; the harness itself is kept for A5–A7.
+
+## A5 — saved ERP records + per-tool Library pointers sync — 2026-09-15
+
+Two stores, and they are NOT the same kind of thing — which is why they got two
+different tables (section 7 of `supabase/schema.sql`, handed over with this
+turn):
+
+| local key | table | shape | policy |
+|---|---|---|---|
+| `calcmall_erp_records_v1` | `erp_records` | `{ recordId: { savedAt, state } }` → one row per record, payload in `data` | collection, newest copy wins (per-record merge is A6) |
+| `calcmall_tool_library_v1` | `tool_library_ids` | `{ toolId: historyEntryId }` → one row per user | whole-map last-writer-wins |
+
+The second one is only a POINTER: the documents a mini-tool saves already live in
+`calcmall_history`/`documents`. It exists so a repeat *Save to Library* UPDATEs the
+entry it created rather than adding a second one. A per-key merge would need
+tombstones to survive a tool **Reset** (which deletes a key) without resurrecting
+it, for no real gain — so it is one small row, last write wins.
+
+### The deployment hazard, and the fix for it
+
+A4's wiring was safe to ship before its SQL was run because nothing referenced
+the table. A5 cannot be: the two new keys are in `SYNC` the moment the code
+lands, so a pull against a database without section 7 would throw and take
+**every other table down with it** (including the plan/usage row A4 just got
+working). So the pull is now per-table:
+
+* a table this build expects and the database does not have is recorded in
+  `state.missingTables`, skipped, and the rest of the pull continues;
+* its local copy is left ALONE (never blanked to `[]`), and nothing is ever
+  pushed at it — `noteWrite` will not schedule it and `flushKey` returns early,
+  so the queued write stays queued until the schema exists;
+* `missingNotice()` is derived from CURRENT state, so a later successful write
+  cannot clear the notice (the old hardcoded `setupMissing: false` in the
+  sync-success path did exactly that);
+* the app shows it persistently: `renderCloudStatus` appends
+  `· N tables local-only` to the sidebar label, with the tooltip naming the
+  tables, and a toast fires once per page load.
+
+A real network/auth failure still fails the whole pull as before — only a
+missing-table answer is tolerated.
+
+### The second hazard: stale in-memory copies
+
+Both stores are module-level values read once at boot. A pull landing mid-session
+left them stale, and the NEXT save would then write the stale map back over what
+the pull had brought — silently losing a whole store. `recordsMaybeReload()`
+(alongside `dbMaybeReload`, whose pattern it copies) re-reads both when a storage
+signature changes, without a reload, so work in progress is untouched. Our own
+writes refresh the signature, which is what keeps the notice from firing after
+every local save. The baseline is taken in the boot block BEFORE
+`initCloudSync()`, so a first-boot pull counts as a change rather than being
+baked into the baseline.
+
+### Verified — `.freebuff/make-a4-account.ps1 -Scenario g|h|i|j`
+
+| scenario | cloud | local | result |
+|---|---|---|---|
+| `g` | two `erp_records` rows | empty | both adopted with their full payload (client, project, 2 lines, `savedAt` preserved), Home card renders `ACME-WH-01 Example Client Name · Warehouse Rewire 2 lines`, and **no write back** |
+| `h` | empty `erp_records` | two records | one upsert POST carrying both, with columns (`client`, `project`, `line_count`, `saved_at` as epoch ms, `user_id`) plus the full `data` payload; queue drained |
+| `i` | `{retainer: doc-9}` | empty | pointer map adopted; **GETs only** |
+| `j` | **both tables return PGRST205** | one record | pull still `synced`; `missingTables: [erp_records, tool_library_ids]`; the record is kept and still rendered; **zero requests to either absent table**; the write is queued; items/clients/documents still sync; sidebar reads `Cloud: synced (1 pending) · 2 tables local-only` |
+
+Scenario `i` re-run after the notice change shows a clean `Cloud: synced` with no
+suffix, so the hint appears only when a table is genuinely absent.
+
+### Harness fixes worth remembering
+
+1. The generator wrote scenario tables at the TOP level of `window.__a4` while the
+   stub read `CFG.tables[name]`, so the app pulled empty tables and scenario `g`
+   "failed" for a reason that had nothing to do with the product. Nested under
+   `"tables"` now.
+2. PowerShell needed SINGLE-quoted literals for the scenario JSON. Double-quoted
+   with embedded `\"` is a parse error (`Unexpected token`) — the same class of
+   quoting trap as the ANSI `.ps1` rule above, and it fails at parse time, so the
+   generated file is simply never written.

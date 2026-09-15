@@ -66,6 +66,30 @@
     },
     'calcmall_history_drafts': {
       table: 'documents', kind: 'collection', transform: 'documents', order: 'at', alias: true
+    },
+    /* ── The ACCOUNT row (A4): plan tier + free-use meter ─────────────────
+       One row per user, but NOT a plain singleton — the two halves are
+       reconciled differently (the tier is the account's, the counter is
+       merged with MAX), so it has its own kind and its own push. The meter is
+       the second local key, hence an alias: a tool use must re-push the row. */
+    'nexora_plan': {
+      table: 'account_state', kind: 'account', transform: 'account'
+    },
+    'nexora_free_usage': {
+      table: 'account_state', kind: 'account', transform: 'account', alias: true
+    },
+    /* ── A5 ───────────────────────────────────────────────────────────────
+       The Master ERP Engine's saved records: { recordId: { savedAt, state } },
+       one row per record, the whole payload in `data`. A collection, so the
+       newest copy of the collection wins (per-record merge is A6). */
+    'calcmall_erp_records_v1': {
+      table: 'erp_records', kind: 'collection', transform: 'erpRecords', order: 'savedAt'
+    },
+    /* { toolId: historyEntryId } — the bookmark that turns a repeat "Save to
+       Library" into an UPDATE instead of a second entry. A pointer, not a
+       document: one row per user, whole map last-writer-wins. */
+    'calcmall_tool_library_v1': {
+      table: 'tool_library_ids', kind: 'singleton', transform: 'toolLibrary'
     }
   };
   // local key → the spec that owns it (aliases resolve to their primary key)
@@ -76,6 +100,7 @@
   PRIMARY_KEY_FOR['cm-accent-v1'] = 'cm-theme';
   PRIMARY_KEY_FOR['cm-bg-v1'] = 'cm-theme';
   PRIMARY_KEY_FOR['calcmall_history_drafts'] = 'calcmall_history';
+  PRIMARY_KEY_FOR['nexora_free_usage'] = 'nexora_plan';
 
   /* ── Client construction ───────────────────────────────────────────────
      The SDK is loaded from a CDN. When it is blocked (offline first load,
@@ -121,6 +146,43 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  /* ── The free-use meter, as a value ───────────────────────────────────
+     { toolId: count }, whole numbers only, drops anything that isn't a
+     positive count. Kept total (never throws) because it parses whatever a
+     previous version — or the other device — happened to store. */
+  function usageCount(v) {
+    const n = Math.floor(Number(v));
+    return (Number.isFinite(n) && n > 0) ? n : 0;
+  }
+  function usageMap(value) {
+    const out = {};
+    let obj = value;
+    if (typeof obj === 'string') obj = parseJson(obj, null);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return out;
+    Object.keys(obj).forEach(function (k) {
+      const n = usageCount(obj[k]);
+      if (n > 0) out[k] = n;
+    });
+    return out;
+  }
+  /** Per-tool MAXIMUM — never last-writer-wins.
+   *  A count can therefore only ever go up: two devices cannot lower each
+   *  other's spend, and a cleared browser cache cannot reset an allowance that
+   *  the account has already used. */
+  function maxMergeUsage(a, b) {
+    const left = usageMap(a), right = usageMap(b), out = {};
+    Object.keys(left).forEach(function (k) { out[k] = left[k]; });
+    Object.keys(right).forEach(function (k) { out[k] = Math.max(out[k] || 0, right[k]); });
+    return out;
+  }
+  function sameUsage(a, b) {
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (let i = 0; i < ka.length; i++) if (a[ka[i]] !== b[ka[i]]) return false;
+    return true;
+  }
+  function localUsage() { return usageMap(localValue('nexora_free_usage')); }
+
   /* ── Public status ──────────────────────────────────────────────────── */
   const state = {
     status: client ? 'signed-out' : 'unavailable',
@@ -134,7 +196,19 @@
     // with its empty cache.
     pulledOK: false,
     // { logicalKey: epochMs } of the newest row we saw in the cloud.
-    remoteAt: {}
+    remoteAt: {},
+    /* The ACCOUNT row (A4). `remoteUsage` is the last counter map we saw in
+       the cloud — the far side of every MAX merge, on both the pull and the
+       push — and `accountChangedAt` is how a pull tells the app to repaint
+       the gating UI when it adopted a different tier or a higher count. */
+    remoteUsage: {},
+    accountPlan: '',
+    accountUpdatedAt: '',
+    accountChangedAt: 0,
+    /* Tables this build expects that the database does not have yet (a schema
+       section not run). They are skipped, never pushed to, and never allowed
+       to take the rest of the sync down with them. */
+    missingTables: {}
   };
   let notifyListeners = [];
 
@@ -152,7 +226,11 @@
     return {
       status: state.status, message: state.message, email: state.email,
       lastSyncAt: state.lastSyncAt, pendingKeys: state.pendingKeys,
-      setupMissing: state.setupMissing, available: !!client
+      setupMissing: state.setupMissing, available: !!client,
+      // Bumped whenever a pull changed the account row, so the app can repaint
+      // the plan/usage UI without re-fetching anything itself.
+      accountAt: state.accountChangedAt,
+      missingTables: Object.keys(state.missingTables)
     };
   }
 
@@ -407,11 +485,68 @@
     switch (SYNC[logicalKey].transform) {
       case 'brand': return [brandToRow(value, userId)];
       case 'appearance': return [appearanceToRow(value, userId)];
+      case 'toolLibrary': return [toolLibraryToRow(value, userId)];
       case 'items': return itemsToRows(value, userId);
       case 'clients': return clientsToRows(value, userId);
       case 'documents': return documentsToRows(value, userId);
+      case 'erpRecords': return erpRecordsToRows(value, userId);
       default: return [];
     }
+  }
+
+  /* ── A5 transforms ────────────────────────────────────────────────────
+     The ERP record store is an OBJECT keyed by the user's Record ID, and the
+     table mirrors that: the id is the key, the columns are only an index for
+     reading, and `data` carries the record exactly as the app held it. */
+  function erpRecordsToRows(v, userId) {
+    const map = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    const rows = [];
+    Object.keys(map).forEach(function (id) {
+      const rec = map[id];
+      const key = text(id).trim();
+      if (!key || !rec || typeof rec !== 'object') return;
+      const state = (rec.state && typeof rec.state === 'object') ? rec.state : {};
+      const at = Date.parse(text(rec.savedAt));
+      rows.push({
+        user_id: userId, id: key,
+        client: text(state.client), project: text(state.project),
+        line_count: Array.isArray(state.lines) ? state.lines.length : 0,
+        saved_at: Number.isFinite(at) ? at : null,
+        data: { savedAt: text(rec.savedAt), state: state }
+      });
+    });
+    return rows;
+  }
+  function rowsToErpRecords(rows) {
+    const out = {};
+    (rows || []).forEach(function (r) {
+      const id = text(r.id).trim();
+      if (!id) return;
+      const rec = (r.data && typeof r.data === 'object' && !Array.isArray(r.data))
+        ? Object.assign({}, r.data) : {};
+      if (!rec.state || typeof rec.state !== 'object') rec.state = {};
+      // A row written before (or without) the payload keeps its timestamp.
+      if (!rec.savedAt && r.saved_at) rec.savedAt = new Date(Number(r.saved_at)).toISOString();
+      out[id] = rec;
+    });
+    return out;
+  }
+  /* Only non-empty pointers are stored, so a tool that has been Reset simply
+     has no key — which is what makes the reset survive a round trip. */
+  function toolLibraryToRow(v, userId) {
+    return { user_id: userId, data: tidyToolLibrary(v) };
+  }
+  function rowToToolLibrary(row) {
+    return tidyToolLibrary(row && row.data);
+  }
+  function tidyToolLibrary(v) {
+    const map = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+    const out = {};
+    Object.keys(map).forEach(function (k) {
+      const val = text(map[k]);
+      if (val) out[k] = val;
+    });
+    return out;
   }
 
   /* ── Error classification ───────────────────────────────────────────── */
@@ -431,6 +566,14 @@
     }
     if (code === '401' || code === '403' || low.indexOf('jwt') !== -1 || low.indexOf('not authenticated') !== -1) {
       return { kind: 'auth', message: 'Your session has expired. Please sign in again.', code: code };
+    }
+    /* Row/column privilege refusal — on this project that means the schema is
+       not the one this build expects (account_state restricts the browser to
+       the `usage` column on purpose, see schema section 6). Retrying cannot
+       fix it, so it is reported once as a setup problem rather than as a
+       transient sync error. */
+    if (code === '42501' || low.indexOf('permission denied') !== -1) {
+      return { kind: 'setup', message: 'The cloud refused a write \u2014 re-run supabase/schema.sql so the account_state column grants match this build.', code: code };
     }
     return { kind: 'error', message: msg || 'Cloud sync failed.', code: code };
   }
@@ -479,6 +622,26 @@
     }, immediate ? 0 : PUSH_DEBOUNCE_MS);
   }
 
+  /* True when this key's table is absent from the database. Such a key is
+     still CACHED and QUEUED (nothing is lost) but never pushed, so a schema
+     section the owner has not run yet cannot turn every local edit into a
+     failing request. */
+  function tableMissing(logicalKey) {
+    const spec = SYNC[logicalKey];
+    return !!(spec && state.missingTables[spec.table]);
+  }
+  /* One wording for a partial schema, derived from the CURRENT state rather
+     than passed around, so a later successful write cannot clear the notice
+     while a table is still absent (which is what a hardcoded
+     `setupMissing: false` in the sync-success path used to do). */
+  function missingTables() { return Object.keys(state.missingTables); }
+  function missingNotice() {
+    const m = missingTables();
+    return m.length
+      ? 'Some cloud tables are missing \u2014 run supabase/schema.sql. Still local-only: ' + m.join(', ') + '.'
+      : '';
+  }
+
   /** Called by app.js on every per-user write. */
   function noteWrite(logicalKey, serialized) {
     if (!client) return;
@@ -491,7 +654,8 @@
     queueKey(PRIMARY_KEY_FOR[logicalKey], serialized);
     // Never push before a pull has succeeded in this page load: until then
     // the write simply waits in the queue.
-    if (state.pulledOK && state.status !== 'offline' && state.status !== 'setup') {
+    if (state.pulledOK && !tableMissing(PRIMARY_KEY_FOR[logicalKey]) &&
+        state.status !== 'offline' && state.status !== 'setup') {
       schedule(PRIMARY_KEY_FOR[logicalKey]);
     }
   }
@@ -510,9 +674,48 @@
     noteWrite(primary, null);
   }
 
+  /* ── Pushing the account row ──────────────────────────────────────────
+     Deliberately not a plain upsert, for two reasons that both come out of
+     section 6 of supabase/schema.sql:
+
+       * `plan` is NOT writable by this role. The browser holds column UPDATE
+         privilege on `usage` (and `updated_at`) only, and a trigger pins the
+         tier on every write that arrives with an `authenticated` JWT. So this
+         publishes `usage` and nothing else, and the tier arrives by pull.
+       * UPDATE-then-INSERT is used rather than ON CONFLICT DO UPDATE so the
+         statement provably touches one column: an upsert's SET list is
+         generated from the whole payload, which would drag `user_id` into an
+         update this role is not allowed to perform.
+
+     The published map is the per-tool MAX of our own and the last cloud value
+     we saw, so a device that has been offline cannot talk the account's own
+     record down. */
+  async function pushAccountRow(userId) {
+    const merged = maxMergeUsage(localUsage(), state.remoteUsage);
+    const up = await client.from('account_state')
+      .update({ usage: merged }).eq('user_id', userId).select('user_id');
+    if (up.error) throw up.error;
+    if (up.data && up.data.length) return merged;
+    const ins = await client.from('account_state').insert({ user_id: userId, usage: merged });
+    if (ins.error) {
+      // Another device created the row inside that window — retry as an update.
+      if (String(ins.error.code || '') === '23505') {
+        const retry = await client.from('account_state')
+          .update({ usage: merged }).eq('user_id', userId);
+        if (retry.error) throw retry.error;
+        return merged;
+      }
+      throw ins.error;
+    }
+    return merged;
+  }
+
   async function flushKey(logicalKey) {
     const spec = SYNC[logicalKey];
     if (!spec || !client) return { ok: false };
+    // No table → no request. The entry stays queued, so the moment the schema
+    // is run the next flush publishes it (nothing is dropped on the floor).
+    if (tableMissing(logicalKey)) return { ok: false, skipped: 'table-missing' };
     const userId = sessionUserId();
     const email = sessionEmail();
     if (!userId || !email) { emit({ status: 'signed-out' }); return { ok: false }; }
@@ -520,7 +723,14 @@
     let value = parseJson(serialized, spec.kind === 'collection' ? [] : {});
     emit({ status: 'syncing', message: '' });
     try {
-      if (spec.kind === 'singleton') {
+      if (spec.kind === 'account') {
+        state.remoteUsage = await pushAccountRow(userId);
+        /* The cache becomes the merge result, so what the gate reads and what
+           the account holds are the same map — there is no third state to
+           drift. A cleared meter is also re-derived here: MAX against the
+           cloud's copy restores it rather than resetting it. */
+        writeLocal('nexora_free_usage', JSON.stringify(state.remoteUsage));
+      } else if (spec.kind === 'singleton') {
         const row = toRows(logicalKey, value, userId)[0];
         const res = await client.from(spec.table).upsert(row, { onConflict: 'user_id' });
         if (res.error) throw res.error;
@@ -543,7 +753,11 @@
       }
       dropQueued(logicalKey);
       setMetaAt(email, logicalKey, Date.now());
-      emit({ status: 'synced', lastSyncAt: Date.now(), setupMissing: false });
+      emit({
+        status: 'synced', lastSyncAt: Date.now(),
+        setupMissing: missingTables().length > 0,
+        message: missingNotice()
+      });
       return { ok: true };
     } catch (err) {
       const info = fail(err);
@@ -594,19 +808,35 @@
     emit({ status: 'syncing', message: '' });
     const meta = metaFor(email);
     const changed = [];
+    const missing = [];
     try {
       const tables = {};
-      for (let i = 0; i < Object.keys(SYNC).length; i++) {
-        const key = Object.keys(SYNC)[i];
-        if (SYNC[key].alias) continue;
-        const spec = SYNC[key];
-        if (tables[spec.table]) continue;
-        tables[spec.table] = await pullTable(spec);
+      const specs = Object.keys(SYNC).filter(function (k) { return !SYNC[k].alias; });
+      for (let i = 0; i < specs.length; i++) {
+        const spec = SYNC[specs[i]];
+        if (Object.prototype.hasOwnProperty.call(tables, spec.table)) continue;
+        try {
+          tables[spec.table] = await pullTable(spec);
+          delete state.missingTables[spec.table];
+        } catch (err) {
+          const info = errorInfo(err);
+          /* A REAL failure still fails the pull — the caller treats it as
+             offline/setup and leaves the cache alone. But a table this build
+             knows about and the database does not have yet (a schema section
+             not run) must NOT take the rest of the sync down with it: the
+             other tables still pull, this one's local copy is left alone, and
+             nothing is ever pushed at it (see tableMissing). */
+          if (info.kind !== 'setup') throw err;
+          tables[spec.table] = null;
+          state.missingTables[spec.table] = true;
+          missing.push(spec.table);
+        }
       }
 
       // — singletons —
-      ['calcmall_brand_v1', 'cm-theme'].forEach(function (key) {
+      ['calcmall_brand_v1', 'cm-theme', 'calcmall_tool_library_v1'].forEach(function (key) {
         const spec = SYNC[key];
+        if (tables[spec.table] === null) return;   // table absent → leave the cache alone
         const rows = tables[spec.table] || [];
         const row = rows[0];
         const localRaw = localValue(key);
@@ -624,6 +854,8 @@
             writeLocal('cm-theme', text(row.theme) || 'dark');
             writeLocal('cm-accent-v1', text(row.accent));
             writeLocal('cm-bg-v1', text(row.background));
+          } else if (key === 'calcmall_tool_library_v1') {
+            writeLocal(key, JSON.stringify(rowToToolLibrary(row)));
           } else {
             writeLocal(key, JSON.stringify(rowToBrand(row)));
           }
@@ -633,8 +865,9 @@
       });
 
       // — collections —
-      ['nexora_item_db', 'nexora_client_db', 'calcmall_history'].forEach(function (key) {
+      ['nexora_item_db', 'nexora_client_db', 'calcmall_history', 'calcmall_erp_records_v1'].forEach(function (key) {
         const spec = SYNC[key];
+        if (tables[spec.table] === null) return;   // table absent → leave the cache alone
         const rows = tables[spec.table] || [];
         const localRaw = localValue(key);
         let remoteAt = 0;
@@ -649,6 +882,7 @@
         if (localRaw === null || (remoteAt > 0 && remoteAt >= localAt)) {
           if (key === 'nexora_item_db') writeLocal(key, JSON.stringify(rowsToItems(rows)));
           else if (key === 'nexora_client_db') writeLocal(key, JSON.stringify(rowsToClients(rows)));
+          else if (key === 'calcmall_erp_records_v1') writeLocal(key, JSON.stringify(rowsToErpRecords(rows)));
           else {
             writeLocal('calcmall_history', JSON.stringify(rowsToHistory(rows)));
             writeLocal('calcmall_history_drafts', JSON.stringify(rowsToDrafts(rows)));
@@ -657,9 +891,62 @@
           changed.push(key);
         }
       });
+      /* — the account row: tier + free-use meter (A4) —
+         Deliberately NOT the last-writer-wins pick the other singletons use.
+         The TIER is always taken from the account, unconditionally: that is
+         the security property — the browser cannot grant itself premium, and
+         clearing site data can no longer hand out a fresh free allowance
+         either. The COUNTER is merged with MAX, so neither side can lower the
+         other's: a second device cannot donate an allowance back, and a
+         cleared cache cannot erase what the account has already spent. */
+      (function () {
+        const key = 'nexora_plan';
+        /* An absent account table is NOT the same as an absent row: the first
+           means this build and the database disagree, and then the cached
+           tier must be left exactly as it is rather than revoked. */
+        if (tables[SYNC[key].table] === null) return;
+        const rows = tables[SYNC[key].table] || [];
+        const row = rows[0];
+        const at = row ? (Date.parse(row.updated_at || '') || 0) : 0;
+        state.remoteAt[key] = at;
+        state.remoteUsage = row ? usageMap(row.usage) : {};
+        state.accountPlan = row ? (text(row.plan) || 'free') : '';
+        state.accountUpdatedAt = row ? text(row.updated_at) : '';
+        /* No row means the account has never synced, so its tier genuinely IS
+           'free' — a local 'premium' at that point can only be a leftover
+           browser-side grant, which is precisely what this replaces. */
+        const effectivePlan = state.accountPlan || 'free';
+        const cachedPlan = text(localValue(key)) || 'free';
+        const merged = maxMergeUsage(localUsage(), state.remoteUsage);
+        let touched = false;
+        if (cachedPlan !== effectivePlan) { writeLocal(key, effectivePlan); touched = true; }
+        if (!sameUsage(merged, localUsage())) {
+          writeLocal('nexora_free_usage', JSON.stringify(merged));
+          touched = true;
+        }
+        if (touched) {
+          setMetaAt(email, key, at || Date.now());
+          state.accountChangedAt = Date.now();
+          changed.push(key);
+        }
+        if (!sameUsage(merged, state.remoteUsage)) {
+          /* We hold the higher count, so publish the merge — queued rather
+             than sent here, because pull() must finish adopting the cloud
+             copy before anything is pushed back at it. */
+          queueKey(key, JSON.stringify(merged));
+        }
+      })();
+
       state.pulledOK = true;
-      emit({ status: 'synced', lastSyncAt: Date.now(), setupMissing: false });
-      return { ok: true, changed: changed, error: null };
+      // A partial schema is reported alongside a SUCCESSFUL sync — the tables
+      // that do exist still synced, so this is an instruction (run the
+      // missing section), not a failure.
+      emit({
+        status: 'synced', lastSyncAt: Date.now(),
+        setupMissing: missing.length > 0,
+        message: missingNotice()
+      });
+      return { ok: true, changed: changed, error: null, missing: missing };
     } catch (err) {
       const info = fail(err);
       return { ok: false, changed: [], error: info };
@@ -685,9 +972,28 @@
     let queued = 0;
     keys.forEach(function (key) {
       const localRaw = localValue(key);
-      if (localRaw === null) return;                 // nothing local to offer
       const localAt = meta[key] || 0;
       const remoteAt = state.remoteAt[key] || 0;
+      /* The account row is the one key whose payload is not simply "ours":
+         it is a MAX merge, and the pull has already queued it whenever we
+         genuinely hold a higher count. So the only thing left to publish is
+         the row ITSELF, when the account has never had one. Timestamping it
+         like the other keys would re-send an unchanged meter on every single
+         page load (the meta clock is stamped at flush time, so it always
+         looks newer than the row it just wrote).
+
+         It is created even when this browser holds NO value for it: the row
+         belongs to the ACCOUNT, not to the cache, and an account the owner
+         wants to promote needs somewhere for that tier to live. Waiting for
+         the first metered action would mean a fresh account has no row, so
+         `update account_state set plan = …` would silently match nothing.
+         So: signing in creates it (on the boot after the pull's one reload),
+         and the first metered action creates it if that comes sooner. */
+      if (SYNC[key].kind === 'account') {
+        if (remoteAt === 0) { queueKey(key, localRaw || 'free'); queued++; }
+        return;
+      }
+      if (localRaw === null) return;                 // nothing local to offer
       // Local is newer than the cloud row, or the cloud has none at all.
       if (localAt > remoteAt || (localAt === 0 && remoteAt === 0)) {
         queueKey(key, localRaw);
@@ -1036,6 +1342,20 @@
     pull: pull,
     flush: flush,
     reconcile: reconcile,
+    /* Plan + meter as one readable value (diagnostics and tests): the cached
+       tier, the effective counter map, and when the cloud row was written. */
+    accountState: function () {
+      return {
+        plan: text(localValue('nexora_plan')) || 'free',
+        cloudPlan: state.accountPlan,
+        usage: localUsage(),
+        cloudUsage: state.remoteUsage,
+        updatedAt: state.accountUpdatedAt
+      };
+    },
+    /* The pure merge rules, exposed so they can be unit-tested without a
+       network or a database (see test/calculations.test.html). */
+    merge: { usageMap: usageMap, maxMergeUsage: maxMergeUsage, sameUsage: sameUsage },
     verifySession: verifySession,
     noteWrite: noteWrite,
     noteRemove: noteRemove,

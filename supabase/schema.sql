@@ -21,6 +21,12 @@
 --    mostly NOT client-writable: the browser may read the whole row and write
 --    only `usage`. The plan tier is set by the owner or by a server-side call
 --    (Stripe webhook), never by the browser — see the notes in that section.
+--  * `erp_records` and `tool_library_ids` (section 7, added in A5) carry the two
+--    stores that were still device-only: the Master ERP Engine's saved
+--    project/client records, and the per-tool pointer that decides whether a
+--    "Save to Library" updates an entry or adds one. Both are ordinary tables
+--    with the same RLS rule; see the notes there for why the second is a
+--    whole-map last-writer-wins row rather than a per-key merge.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ── updated_at maintenance ────────────────────────────────────────────────
@@ -327,15 +333,105 @@ grant select, insert, delete on public.account_state to authenticated;
 grant update (usage, updated_at) on public.account_state to authenticated;
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- 7. SAVED ERP RECORDS + PER-TOOL LIBRARY POINTERS (A5)                        --
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Two local stores that were still device-only:
+--
+--  * `erp_records` — the Master ERP Engine's "Primary Key / Record ID" store
+--    (`calcmall_erp_records_v1`): { recordId: { savedAt, state } }, where
+--    `state` is the whole reusable document. A COLLECTION, keyed by the id the
+--    user typed, with the full payload in `data` so nothing is lost on a round
+--    trip. Like `items` and `clients`, the newest copy of a collection wins
+--    until A6 adds per-record merge.
+--
+--  * `tool_library_ids` — `calcmall_tool_library_v1`: { toolId: historyEntryId }.
+--    NOT a document store: it is the bookmark that makes a tool's "Save to
+--    Library" UPDATE the entry it already created for the current project
+--    instead of adding a second one. The documents themselves are in
+--    `documents` (already synced). One row per user, and the whole map is last
+--    -writer-wins — deliberately, because it is a pointer, not data: the worst
+--    case is that the next save starts a new entry rather than overwriting the
+--    previous one, and a per-key merge would need tombstones to survive a
+--    "Reset" (which deletes a key) without resurrecting it.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create table if not exists public.erp_records (
+  user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  id         text not null,                -- the Record ID exactly as typed
+  client     text not null default '',
+  project    text not null default '',
+  line_count integer not null default 0,
+  saved_at   bigint,                       -- epoch ms, from the record's own savedAt
+  data       jsonb,                        -- { savedAt, state } exactly as held
+  updated_at timestamptz not null default now(),
+  primary key (user_id, id)
+);
+
+create table if not exists public.tool_library_ids (
+  user_id    uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  data       jsonb not null default '{}'::jsonb,   -- { toolId: historyEntryId }
+  updated_at timestamptz not null default now()
+);
+
+-- ── updated_at maintenance ────────────────────────────────────────────────
+do $$
+declare t text;
+begin
+  foreach t in array array['erp_records','tool_library_ids'] loop
+    execute format('drop trigger if exists trg_touch_updated_at on public.%I', t);
+    execute format(
+      'create trigger trg_touch_updated_at before update on public.%I
+         for each row execute function public.touch_updated_at()', t);
+  end loop;
+end $$;
+
+create index if not exists erp_records_user_saved_idx on public.erp_records (user_id, saved_at desc);
+
+-- ── RLS + policies: same rule as every other table ────────────────────────
+alter table public.erp_records      enable row level security;
+alter table public.tool_library_ids enable row level security;
+
+drop policy if exists erp_records_select on public.erp_records;
+drop policy if exists erp_records_insert on public.erp_records;
+drop policy if exists erp_records_update on public.erp_records;
+drop policy if exists erp_records_delete on public.erp_records;
+create policy erp_records_select on public.erp_records
+  for select to authenticated using (auth.uid() = user_id);
+create policy erp_records_insert on public.erp_records
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy erp_records_update on public.erp_records
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy erp_records_delete on public.erp_records
+  for delete to authenticated using (auth.uid() = user_id);
+
+drop policy if exists tool_library_ids_select on public.tool_library_ids;
+drop policy if exists tool_library_ids_insert on public.tool_library_ids;
+drop policy if exists tool_library_ids_update on public.tool_library_ids;
+drop policy if exists tool_library_ids_delete on public.tool_library_ids;
+create policy tool_library_ids_select on public.tool_library_ids
+  for select to authenticated using (auth.uid() = user_id);
+create policy tool_library_ids_insert on public.tool_library_ids
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy tool_library_ids_update on public.tool_library_ids
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy tool_library_ids_delete on public.tool_library_ids
+  for delete to authenticated using (auth.uid() = user_id);
+
+-- ── Table privileges ─────────────────────────────────────────────────────
+revoke all on public.erp_records, public.tool_library_ids from anon;
+grant select, insert, update, delete on public.erp_records, public.tool_library_ids to authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Self-check — run the query below after the script to confirm RLS is on.
--- EVERY row must read `true`, one row per table.
+-- EVERY row must read `true`, one row per table (EIGHT rows).
 -- ═══════════════════════════════════════════════════════════════════════════
 -- select tablename, rowsecurity as rls_enabled,
 --        (select count(*) from pg_policies p
 --          where p.schemaname = 'public' and p.tablename = t.tablename) as policies
 --   from pg_tables t
 --  where schemaname = 'public'
---    and tablename in ('brand_settings','items','clients','documents','appearance_settings','account_state')
+--    and tablename in ('brand_settings','items','clients','documents','appearance_settings',
+--                       'account_state','erp_records','tool_library_ids')
 --  order by tablename;
 --
 -- Then confirm the column guard is real — this must FAIL for a browser session

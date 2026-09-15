@@ -306,6 +306,100 @@ cache, and deletes the previous one, so a deploy replaces the offline bundle
 atomically. Append `?nosw=1` to the URL to skip registration (useful for a clean
 baseline in a fresh browser profile; it does not unregister an existing worker).
 
+### Plan tier & usage are account state (A4)
+
+The plan tier and the free-use meter used to live ONLY in `localStorage`,
+which made them a per-*device* fact: another browser — or one "clear site
+data" — handed out a fresh free allowance, and a Premium badge on one machine
+was invisible to the next. Worse, the tier was client-writable, so the gate was
+advisory. Both now live in **one row per account** in Supabase:
+`public.account_state` (`plan`, `usage`, `updated_at`), added by section 6 of
+`supabase/schema.sql`.
+
+`localStorage` did not go away — it became the **offline cache**: `getPlan()`
+still reads `nexora_plan`, and the meter is still `nexora_free_usage`, so the
+app boots and gates instantly with no network. What changed is who OWNS the
+value: a pull writes it, and the browser cannot grant a tier at all.
+
+* **The tier is read-only from the browser.** The public key has column UPDATE
+  privilege on `usage` only, and a trigger pins `plan` on every write that
+  arrives with an `authenticated` JWT. So the app cannot set a tier even by
+  accident. That is why the Premium Plans buttons now **record the request** and
+  say so: applying a tier is a server-side act (Stripe's success callback, or
+  the owner in SQL). To promote an account by hand:
+
+  ```sql
+  update public.account_state set plan = 'premium' where user_id = '<uuid>';
+  ```
+
+  The row itself is created **the first time a signed-in account boots** (and by
+  its first metered action, if that happens sooner), so an existing account
+  always has somewhere for a tier to live. Offline, it is created on the first
+  successful sync instead — so a brand-new account that has never had a
+  connection has no row yet, and the UPDATE above would match nothing. The
+  `ADMIN_EMAILS` allowlist in `js/app.js` is unaffected and still shows
+  "Developer — Unlimited Credits" with no database change at all.
+* **The counter is merged with MAX, never last-writer-wins**, on both the pull
+  and the push. A count can only ever go up: two devices cannot lower each
+  other's spend, and clearing site data cannot reset an allowance the account
+  has already used. A locally higher count is published (as the merge, so a
+  stale device can't talk the row down).
+* **`plan`, `user_id` and friends never appear in a write.** The row is pushed
+  as UPDATE-then-INSERT rather than an upsert: an upsert's `SET` list is built
+  from the whole payload, which would drag `user_id` (and `plan`) into an update
+  the role may not perform. The INSERT body is exactly `{user_id, usage}`.
+* **Offline is a supported state, not a degraded one.** With the network dead
+  the app boots from cache, the gate uses the cached tier and meter, and every
+  write is queued (`nexora_cloud_queue_v1`) and sent on the next successful
+  sync. Nothing is lost and nothing is silently merged without the pull having
+  run first.
+
+One honest limitation: the MAX merge compares against the **last cloud row this
+device saw**, so two devices using the same tool while BOTH are offline can
+under-count by one. The direction that matters — nobody can gain allowance or
+tier by clearing or editing their browser — is unaffected. Closing it needs a
+`greatest()` merge server-side (a small `security definer` RPC), not more client
+logic.
+
+### Saved records and Library pointers sync too (A5)
+
+Two more local stores became account state, in their own tables (section 7 of
+`supabase/schema.sql`):
+
+| local key | table | shape |
+|---|---|---|
+| `calcmall_erp_records_v1` | `erp_records` | one row per record, keyed by the Record ID the user typed; the whole reusable document lives in `data` |
+| `calcmall_tool_library_v1` | `tool_library_ids` | one row per user: `{ toolId: historyEntryId }` |
+
+**Run section 7 before this build goes live.** Until you do, those two stores stay
+local-only — see the safety note below — and the sidebar says so in plain words:
+`Cloud: synced · 2 tables local-only`, with the tooltip naming the tables and
+pointing at `schema.sql`. That hint disappears on its own once the section is run.
+
+* **A missing table can no longer break the rest of the sync.** Each table is
+  fetched on its own, and a "table not found" answer is treated as *this build*
+  *expects a table the database does not have yet* rather than as a failure: the
+  other tables still pull, the local copy of the missing store is left exactly
+  as it is (never blanked), nothing is ever pushed at a table that isn't there
+  (so no request spam), and every write is **kept in the queue** — the moment
+  the schema is run, the next sync publishes it. A genuine network/auth failure
+  still fails the pull as before.
+* **A cloud pull also refreshes the in-memory copies.** Both stores are read
+  once at boot, so without this a pull landing mid-session would leave stale
+  copies that the *next* save would write straight back over the cloud data
+  (a whole store lost, silently). A storage signature now detects the external
+  change and re-reads both, the way the master database already did. Our own
+  writes refresh the signature, so "Saved records changed" only appears for a
+  real change from the account (or another tab).
+* **Merge policy, stated honestly:** `erp_records` is a *collection*, so the
+  newest copy of the collection wins — per-record merge is A6, and until it
+  lands a record edited on two devices at once resolves newest-wins for the set
+  rather than record by record. `tool_library_ids` is a pointer map, not data:
+  the whole map is last-writer-wins. The worst case there is that the next
+  *Save to Library* starts a new entry instead of updating the previous one; a
+  per-key merge would need tombstones to survive a tool **Reset** (which deletes
+  a key) without resurrecting it, which is a worse trade for a bookmark.
+
 ## Test
 
 Open `test/calculations.test.html` in a browser (double-click). It runs

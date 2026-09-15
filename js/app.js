@@ -159,20 +159,24 @@
   function rawDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
   // Signed in = a session really exists (verified by Supabase), not a flag.
   function isLoggedIn() { const c = cloud(); return !!(c && c.isSignedIn()); }
-  /* ── Plan: free (default) or premium ────────────────────────────
-     Per account, via the namespaced shim. No payment provider is wired up
-     in this build, so the Premium Plans buttons set this flag themselves;
-     swapping in a real subscription means replacing setPlan() and leaving
-     the gate below untouched. */
+  /* ── Plan: the ACCOUNT's tier — free, premium or developer ───────
+     A4 moved this into Supabase (`public.account_state`), so what lives at
+     PLAN_KEY is a CACHE of the account's tier: written by the cloud pull,
+     readable offline, and the same on every device. The browser cannot GRANT
+     a tier — the publishable key may only write that row's `usage` column
+     (see supabase/schema.sql section 6) — which is what closes the old hole
+     where clearing site data handed out a fresh premium entitlement. A tier
+     is applied to the account itself: by the owner in SQL, or by a payment
+     webhook once Stripe is wired. */
+  const PLAN_VALUES = { free: 1, premium: 1, developer: 1 };
   function getPlan() {
-    try { return localStorage.getItem(PLAN_KEY) === 'premium' ? 'premium' : 'free'; } catch (e) { return 'free'; }
-  }
-  function setPlan(plan) {
-    try { localStorage.setItem(PLAN_KEY, plan === 'premium' ? 'premium' : 'free'); } catch (e) { /* ignore */ }
-    updateCreditUI();
+    let raw = '';
+    try { raw = localStorage.getItem(PLAN_KEY) || ''; } catch (e) { raw = ''; }
+    raw = String(raw).trim().toLowerCase();
+    return PLAN_VALUES[raw] ? raw : 'free';
   }
   /* Premium — and the developer account — are unlimited: no meter, no limit. */
-  function isPremium() { return isAdmin() || getPlan() === 'premium'; }
+  function isPremium() { return isAdmin() || getPlan() !== 'free'; }
 
   /* ── Free-use meter, PER TOOL ───────────────────────────────────
      { toolId: uses }. Using one tool never spends another tool's single
@@ -368,9 +372,11 @@
      credits, storage, sync, Log out, Login / Sign up) now lives on the page
      it opens. */
   function planState() {
+    // The tier the ACCOUNT holds (A4), cached locally so it survives offline.
+    const tier = getPlan();
     if (!isLoggedIn()) return { key: 'guest', pill: 'Guest', credits: 'Sign in required' };
-    if (isAdmin()) return { key: 'admin', pill: 'Developer \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
-    if (getPlan() === 'premium') return { key: 'premium', pill: 'Premium \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
+    if (isAdmin() || tier === 'developer') return { key: 'admin', pill: 'Developer \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
+    if (tier === 'premium') return { key: 'premium', pill: 'Premium \u2014 Unlimited Credits', credits: 'Unlimited Credits' };
     const total = meteredToolIds().length;
     /* Phrased as USED, not remaining. "12 of 13 tools still free" was read —
        perfectly reasonably — as "12 used", and it was the one line on a
@@ -5741,6 +5747,37 @@
     return true;
   }
 
+  /* ── Saved ERP records + per-tool Library pointers (A5) ─────────────
+     Both are module-level copies read once at boot, so a cloud pull landing
+     later would leave them stale — and the NEXT save would then write the
+     stale map straight back over whatever the pull had just brought. A
+     signature catches that the same way the master database already does, and
+     the re-read is silent (no reload), so nothing in progress is lost.
+     Our own writes refresh the signature (saveErpRecords / saveToolLibraryIds),
+     which is what stops a "synced" notice appearing after every local save. */
+  function recordsStorageSig() {
+    const rec = String(localStorage.getItem(ERP_RECORDS_KEY) || '');
+    const lib = String(localStorage.getItem(TOOL_LIBRARY_KEY) || '');
+    return rec.length + '|' + lib.length + '|' + rec.slice(-48) + '|' + lib.slice(-48);
+  }
+  let recordsSig = null;
+  function recordsReloadFromStorage() {
+    erpRecords = loadErpRecords();
+    toolLibraryIds = loadToolLibraryIds();
+    recordsSig = recordsStorageSig();
+    /* The record store feeds two lists only — the open ERP form is loaded by
+       explicit Record ID, so a re-read never touches work in progress. */
+    renderHomeRecordsPreview();
+    renderDbRecords();
+  }
+  function recordsMaybeReload() {
+    const sig = recordsStorageSig();
+    if (recordsSig === null) { recordsSig = sig; return false; }
+    if (sig === recordsSig) return false;
+    recordsReloadFromStorage();
+    return true;
+  }
+
   function dbFindItem(sku) {
     const key = String(sku || '').trim().toLowerCase();
     if (!key) return null;
@@ -7766,6 +7803,7 @@
 
   function saveErpRecords() {
     try { localStorage.setItem(ERP_RECORDS_KEY, JSON.stringify(erpRecords)); } catch (e) { /* ignore */ }
+    recordsSig = recordsStorageSig();   // our own write is not a cloud change
     /* This is the single write choke point for the record store, so the Home
        card and the full list refresh here — saving or deleting a record is
        visible immediately, with no second call site to keep in step. */
@@ -10658,15 +10696,19 @@
      or project field of its own (Pricing, Breakeven, FX, GPA). Resetting a
      tool clears its id, so the next save starts a NEW document. */
   const TOOL_LIBRARY_KEY = 'calcmall_tool_library_v1';
-  let toolLibraryIds = (function () {
+  /* Read through a named loader (not an inline IIFE) so the cloud re-read can
+     use exactly the same validation as boot. */
+  function loadToolLibraryIds() {
     try {
       const raw = localStorage.getItem(TOOL_LIBRARY_KEY);
       const parsed = raw ? JSON.parse(raw) : {};
       return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     } catch (e) { return {}; }
-  })();
+  }
+  let toolLibraryIds = loadToolLibraryIds();
   function saveToolLibraryIds() {
     try { localStorage.setItem(TOOL_LIBRARY_KEY, JSON.stringify(toolLibraryIds)); } catch (e) { /* ignore */ }
+    recordsSig = recordsStorageSig();   // our own write is not a cloud change
   }
   /* A new project/session → the next save is a new row, not an overwrite. */
   function clearToolLibraryId(tool) {
@@ -11194,29 +11236,37 @@
     $('sidebar-plans').addEventListener('click', function () {
       showView('plans');
     });
-    /* Premium Plans. No payment provider is wired up in this build, so
-       subscribing sets the entitlement locally — that flag is exactly what
-       the gate reads. A real checkout should call setPlan('premium') from
-       its success callback and leave everything else alone. */
+    /* Premium Plans.
+       A4 made the tier an ACCOUNT property, so these buttons no longer grant
+       it: the row's `plan` column is not writable with the publishable key (a
+       column-level grant plus a trigger — schema section 6), which is exactly
+       why a browser-side grant is no longer meaningful. A click that "turned
+       on" premium here would be a flag the very next cloud pull would undo,
+       and it was that flag which let a cleared browser mint premium again.
+       So the click now records the REQUEST, plainly, and says so. Applying
+       the tier is a server-side act: Stripe's success callback, or the owner
+       in SQL (`update public.account_state set plan = 'premium' where
+       user_id = …`). Everything else this button did — the saved interest
+       record and the confirmation — is unchanged. */
     for (const cta of document.querySelectorAll('.plan-cta')) {
       cta.addEventListener('click', function () {
         const plan = this.getAttribute('data-plan') || 'Premium';
         const price = this.getAttribute('data-price') || '';
         try { localStorage.setItem('nexora_plan_interest', plan + ' \u2014 ' + price); } catch (e) { /* ignore */ }
-        setPlan('premium');
-        showToast(plan + ' activated (' + price + ') \u2014 unlimited tool use. Checkout is not connected yet.');
+        showToast(plan + ' selected (' + price + '). Checkout is not connected yet \u2014 your tier is applied to this account once payment is, and it then follows you to every device.');
       });
     }
     const planFreeCta = $('plan-free-cta');
     if (planFreeCta) planFreeCta.addEventListener('click', async function () {
-      if (getPlan() !== 'premium') { showToast('This account is already on the free plan.'); return; }
+      if (!isPremium()) { showToast('This account is already on the free plan.'); return; }
+      if (isAdmin()) { showToast('Developer accounts are unlimited by design and cannot be downgraded here.'); return; }
       if (!(await confirmAction({
         title: 'Return to the free plan?',
         message: 'Unlimited use ends and every tool goes back to its single free export, copy or save.',
         confirmLabel: 'Return to Free'
       }))) return;
-      setPlan('free');
-      showToast('Free plan restored \u2014 one free export, copy or save per tool.');
+      try { localStorage.setItem('nexora_plan_interest', 'Free plan'); } catch (e) { /* ignore */ }
+      showToast('Return to Free recorded \u2014 the tier is applied to your account server-side, so it applies on every device.');
     });
     // Data Backup & Restore actions
     const backupDownload = $('backup-download');
@@ -12840,6 +12890,14 @@
     const s = c ? c.status() : { status: 'unavailable', message: '', pendingKeys: 0, lastSyncAt: 0 };
     let label = CLOUD_LABELS[s.status] || 'Cloud: \u2014';
     if (s.pendingKeys > 0 && s.status !== 'syncing') label += ' (' + s.pendingKeys + ' pending)';
+    /* A table this build knows about that the database does not have yet means
+       that store is silently local-only. That has to be VISIBLE, not a toast
+       that scrolls away — A5's two tables are exactly this case until
+       supabase/schema.sql section 7 is run. */
+    const missingTables = (s.missingTables || []).length;
+    if (missingTables && s.status !== 'offline') {
+      label += ' \u00b7 ' + missingTables + (missingTables === 1 ? ' table' : ' tables') + ' local-only';
+    }
     const when = s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
     const tip = s.message || (when ? 'Last synced ' + when : label);
     const nodes = document.querySelectorAll('.js-cloud-status');
@@ -12887,12 +12945,24 @@
      that could not be verified, a lost connection). Each distinct message is
      shown once, so a repaint cannot spam the toast. */
   let lastCloudNotice = '';
+  // When the account row (tier + meter) last changed on the cloud side, so a
+  // pull can repaint the gating UI without waiting for a reload.
+  let lastAccountAt = 0;
   function onCloudEvent(e) {
     renderCloudStatus();
+    /* A pull adopted a different tier or a higher free-use count: repaint the
+       plan/meter UI now, so the badge, the Home health row and the gate can
+       never disagree about which tier is in force (A4). */
+    const acctAt = (e && e.detail && e.detail.accountAt) || 0;
+    if (acctAt && acctAt !== lastAccountAt) { lastAccountAt = acctAt; updateCreditUI(); }
     /* A pull may have replaced the master database on this device (an item or
        client edited on another machine). Re-read it and re-resolve the open
        document rather than leaving the page showing the older records. */
     dbMaybeReload();
+    /* Same for the saved ERP records and the per-tool Library pointers (A5):
+       they arrive from the account now, and a stale in-memory copy would be
+       written back over them by the next save. */
+    if (recordsMaybeReload()) showToast('Saved records changed \u2014 the record list is up to date.');
     const c = cloud();
     const detail = (e && e.detail) || (c ? c.status() : null) || {};
     const msg = detail.message || '';
@@ -12921,8 +12991,12 @@
        acted on — this page never reloads itself for an unrelated key. */
     window.addEventListener('storage', function (e) {
       if (!e || !e.key) return;
-      if (e.key.indexOf('nexora_item_db') === -1 && e.key.indexOf('nexora_client_db') === -1) return;
-      if (dbMaybeReload()) {
+      const k = e.key;
+      const isDb = k.indexOf('nexora_item_db') !== -1 || k.indexOf('nexora_client_db') !== -1;
+      const isRecords = k.indexOf(ERP_RECORDS_KEY) !== -1 || k.indexOf(TOOL_LIBRARY_KEY) !== -1;
+      if (!isDb && !isRecords) return;
+      if (isRecords) recordsMaybeReload();
+      if (isDb && dbMaybeReload()) {
         showToast('The master database changed in another tab — the open document was checked against it.');
       }
     });
@@ -12931,7 +13005,9 @@
       renderCloudStatus();
       renderAuthUi();
       if (res && res.error && res.error.kind === 'setup') {
-        showToast('Cloud tables are missing \u2014 run supabase/schema.sql.', 'error');
+        // Report the failure's OWN message: a missing table and a refused
+        // column grant are both setup problems, but they need different fixes.
+        showToast(res.error.message || 'Cloud tables are missing \u2014 run supabase/schema.sql.', 'error');
       } else if (res && res.error && res.error.kind === 'offline') {
         showToast('Offline \u2014 using this device\u2019s copy. Changes sync when you reconnect.');
       }
@@ -12954,6 +13030,10 @@
        the user explicitly flagged are ever candidates. */
     libraryExpiredOnBoot = sweepExpiredLibrary();
     renderStorageStatus();
+    /* Baseline for the A5 signature BEFORE the first pull, so a pull that
+       adopts records is detected as a change rather than baked into the
+       baseline (which would leave the in-memory copies stale forever). */
+    recordsSig = recordsStorageSig();
     initCloudSync();
   } catch (e) { try { console.error('Nexora Engine boot:', e); } catch (e2) { /* ignore */ } }
   updateUnitLabels();

@@ -30,7 +30,7 @@
  */
 'use strict';
 
-const VERSION = 'v2';
+const VERSION = 'v4';
 const CACHE = 'nexora-shell-' + VERSION;
 
 /* The app shell: everything needed to boot offline. Relative URLs, so the
