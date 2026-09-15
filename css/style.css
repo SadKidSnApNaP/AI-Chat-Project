@@ -3263,10 +3263,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 .quo-signoff p { margin: 0; }
 .quo-signline { width: 200px; border-bottom: 1px solid #0d1b6e; height: 30px; margin: 8px 0 4px auto; }
 
-/* ── Formal document layout (Metrix Engineering format) ─────────── */
+/* ── Formal document layout (sample engineering template) ─────────── */
 /* Rendered inside .pdf-offscreen containers (white, Arial) and in the
    standalone print window (same rules embedded by PRINT_DOC_CSS). */
-/* ── METRIX document layout (Metrix Engineering official format) ── */
+/* ── MX document layout (sample engineering official format) ── */
 .mx-doc { font-size: 12px; }
 /* Long text safety: the template's grid is fixed, but its text wraps and
    the row grows — nothing may overflow the page or overlap the row below.

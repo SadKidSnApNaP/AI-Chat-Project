@@ -16,13 +16,22 @@ $out  = Join-Path $here 'account-test.html'
 $html = [System.IO.File]::ReadAllText($src)
 $stub = [System.IO.File]::ReadAllText($stubPath)
 
-# The app.js block is the LAST attribute-less <script> in the bundle (the CDN
-# tags all carry src=, and cloud.js/calculations.js come before it).
-$open = $html.LastIndexOf('<script>')
-if ($open -lt 0) { throw "no inline <script> tag found in preview.html" }
-
-$probe = $html.Substring($open, [Math]::Min(400, $html.Length - $open))
-if ($probe.IndexOf('app.js') -lt 0) { throw "the last inline <script> is not the app.js block" }
+# The app.js block is an attribute-less <script> whose body opens with the
+# app.js banner comment, and it is NOT the last one any more: index.html has
+# carried a service-worker registration <script> after it since A3, and app.js
+# itself builds '<script src="...">' strings for the CDN fallback. So walk the
+# bare tags back from the end and identify the block by an ASCII-only marker
+# from app.js's own header comment (this file must stay pure ASCII: Windows
+# PowerShell reads .ps1 as ANSI, so a non-ASCII literal becomes mojibake).
+$MARKER = 'State (localStorage), rendering, events, message generator'
+$open = -1
+$i = $html.LastIndexOf('<script>')
+while ($i -ge 0) {
+  $probe = $html.Substring($i, [Math]::Min(400, $html.Length - $i))
+  if ($probe.IndexOf($MARKER) -ge 0) { $open = $i; break }
+  $i = $html.LastIndexOf('<script>', $i - 1)
+}
+if ($open -lt 0) { throw "no inline <script> block for app.js found in preview.html" }
 
 $html = $html.Insert($open, $stub + "`r`n")
 

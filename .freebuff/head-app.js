@@ -2122,7 +2122,7 @@
     '.var-doc .quo-sign-left { display: flex; flex-direction: column; gap: 4px; text-align: center; }',
     '.var-doc .quo-sign-left span { font-size: 11px; color: #374151; }',
     '.var-doc .q-sigline { width: 200px; border-bottom: 1px solid #111827; height: 26px; }',
-    /* Formal document layout (Metrix Engineering format) */
+    /* Formal document layout (sample engineering template) */
     '.fm-doc { font-size: 12px; }',
     '.fm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 3px solid #111827; padding-bottom: 10px; }',
     '.fm-left { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }',
@@ -2170,8 +2170,8 @@
     'thead { display: table-header-group; }',
     'tfoot { display: table-footer-group; }',
     '.fm-words, .fm-footer, .fm-footbox, .fm-terms, .quo-sign, .quo-signoff, .quo-totals { page-break-inside: avoid; break-inside: avoid; }',
-    /* ── METRIX (mx-*) print layout: mirrored from style.css —
-       ACCESS EKALA SERVICE INV648 format ── */
+    /* ── MX (mx-*) print layout: mirrored from style.css —
+       sample tax invoice format (INV-000) ── */
     '.mx-doc { font-size: 12px; }',
     '.mx-head { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 14px; border-bottom: 2px solid #0d1b6e; padding-bottom: 8px; margin-bottom: 12px; }',
     '.mx-logo { max-height: 65px; width: auto; object-fit: contain; flex: none; }',
@@ -4005,7 +4005,7 @@
   function emptyBrand() {
     return {
       name: '', legalName: '', tag: '', address: '', contact: '', logo: '', terms: '',
-      // Formal-document letterhead + bank block (Metrix layout)
+      // Formal-document letterhead + bank block (MX layout)
       phone: '', email: '', website: '', spec: '', tin: '',
       payTerms: '', beneficiary: '', bankBranch: '', swift: '', branchCode: '', accountNo: '', accountCur: ''
     };
@@ -5014,7 +5014,7 @@
     quotation:  [],
     proforma:   [
       { key: 'payment', label: 'Payment terms', ph: 'e.g. 50% advance, balance on delivery', brandKey: 'payTerms' },
-      { key: 'bank', label: 'Bank & branch', ph: 'e.g. Commercial Bank — Ekala Branch', brandKey: 'bankBranch' },
+      { key: 'bank', label: 'Bank & branch', ph: 'e.g. Example Bank — Main Street Branch', brandKey: 'bankBranch' },
       { key: 'account', label: 'Account number', ph: 'e.g. 1001234567890', brandKey: 'accountNo' },
       { key: 'swift', label: 'SWIFT code', ph: 'e.g. CCEYLKLX', brandKey: 'swift' },
       { key: 'branch', label: 'Branch code', ph: 'e.g. 001', brandKey: 'branchCode' }
@@ -5024,7 +5024,7 @@
       { key: 'consignee', label: 'Consignee details', ph: 'e.g. Acme Holdings, Colombo' }
     ],
     delivery: [
-      { key: 'deliverTo', label: 'Deliver to (site / address)', ph: 'e.g. Warehouse 2, Ekala' },
+      { key: 'deliverTo', label: 'Deliver to (site / address)', ph: 'e.g. Warehouse 2, Example Industrial Zone' },
       { key: 'vehicle', label: 'Vehicle / driver (optional)', ph: 'e.g. WP CAB-1234' }
     ]
   };
@@ -5661,7 +5661,7 @@
       ['Place of Supply', 'Western Province'],
       ['PO No', 'PO-2026-0451'],
       ['Delivery Terms', 'Delivered to site (DDP)'],
-      ['Ship To', 'Site gate 2, Ekala Industrial Zone'],
+      ['Ship To', 'Site gate 2, Example Industrial Zone'],
       ['HS Code', '8536.69'],
       ['Ref No', 'INV-2026-001'],
       ['Discount', '5'],
@@ -5761,7 +5761,7 @@
     reader.readAsArrayBuffer(file);
   }
 
-  /* ── Formal document layout (Metrix Engineering format) ─────────── */
+  /* ── Formal document layout (sample engineering template) ─────────── */
   // One shared builder for the ERP engine, the Smart Invoice builder and
   // the standalone Quotation: letterhead (logo + registered address block
   // + specialization tagline) with a document banner (type / doc no / date
@@ -5905,7 +5905,7 @@
       items.map(function (s) { return '<li>' + esc(s.trim()) + '</li>'; }).join('') + '</ul></div>';
   }
 
-  // ── METRIX document layout (strict format) ─────────────────────
+  // ── MX document layout (strict format) ─────────────────────
   // Centered company branding header, Supplier/Purchaser metadata block,
   // fixed 6-column item table (No / Description / Unit / Qty / Rate /
   // Amount), conditional Discount & VAT rows (rendered ONLY when > 0),
@@ -5917,14 +5917,14 @@
     return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  // METRIX money: plain thousands groups + 2 decimals, NO currency
+  // MX money: plain thousands groups + 2 decimals, NO currency
   // prefix inside table cells (e.g. 2,726,000.00) — the currency only
-  // appears in the column headers, per the ACCESS EKALA layout.
+  // appears in the column headers, per the reference layout.
   function mxMoney(v) {
     return mxNum2(v);
   }
 
-  // ACCESS EKALA letterhead — logo/banner + company BLUE name, then
+  // The letterhead band — logo/banner + company BLUE name, then
   // Reg. Address / Contact lines over a double rule, slogan below it.
   // A wide brand.logo renders as a high-res banner image at the top.
   // Document date string (DD/MM/YYYY). Falls back to today when the
@@ -5941,7 +5941,7 @@
   // replaced by the inline-styled generatePrintHTML() document head —
   // see below, just above buildErpDoc.)
 
-  // METRIX item table: 6 bordered columns — NO · DESCRIPTION ·
+  // MX item table: 6 bordered columns — NO · DESCRIPTION ·
   // UNIT · QTY · RATE (CUR) · AMOUNT (CUR). Grey #f2f2f2 bold header,
   // right-aligned money WITHOUT any currency prefix inside cells
   // (thousands groups + 2 decimals, e.g. 2,726,000.00). Right-hand
@@ -5989,7 +5989,7 @@
     '</table>';
   }
 
-  // ACCESS EKALA footer: bold full-width words line, centered courtesy
+  // The footer band: bold full-width words line, centered courtesy
   // sentence, right-aligned signature block (On Behalf of …, / signature
   // & stamp space / Authorized Signatory).
   function mxFooter(finalAmount, currencyCode, termsText, companyName) {
@@ -6086,9 +6086,9 @@
     return String(u == null ? '' : u).replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '');
   }
 
-  /* ── MASTER TEMPLATE — ACCESS EKALA SERVICE INV648 ────────────────────
+  /* ── MASTER TEMPLATE — sample tax invoice (INV-000) ───────────────────
      Every number in MXPT was MEASURED out of the client's master PDF
-     (access ekala service inv648): US Letter 612×792pt, 46.08pt side
+     (sample tax invoice, INV-000): US Letter 612×792pt, 46.08pt side
      margins, 9.8pt Roboto body, 23.5pt Roboto-Bold title, 0.96pt rules,
      28.44pt table header + 32.64pt item rows + 17.76pt total rows.
      This is a FIXED template — only the DATA changes. If the layout must

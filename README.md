@@ -102,8 +102,8 @@ table + grand total as a clean printable document (hidden-iframe print engine).
 4. **Live summary** — Sub total → Discount → Net (after discount) → VAT →
    **Final total**; invalid/blank qty/rate rows show "—" and are excluded.
 5. **PDF export** — **Download Client Quotation PDF** (via the built-in
-   hidden-iframe print engine) renders a formal A4 letter: METRIX
-   ENGINEERING SERVICES letterhead, recipient & ref/date block, a clean
+   hidden-iframe print engine) renders a formal A4 letter: your company
+   letterhead, recipient & ref/date block, a clean
    itemized table, the totals, standard Terms & Conditions (Payment /
    Warranty / Mobilization / Validity), and an Engineer signature block.
    Data persists under `cm-boq-v1`; **Reset quotation** clears it.
@@ -230,7 +230,7 @@ The default view (🏢 in the sidebar) is a **unified document builder**:
   and a **Bank & Beneficiary** block (payment terms, beneficiary, bank &
   branch, SWIFT, branch code, account number + currency) — stored in
   `calcmall_brand_v1` and used on every generated document.
-- **Generate Document PDF (formal layout)**: Metrix-style A4 sheet —
+- **Generate Document PDF (formal layout)**: formal A4 sheet —
   letterhead (logo + registered address + phone/email/web + specialization
   tagline) with a document banner right (type, doc no, date, supplier TIN);
   two-column metadata box (consignee/billed-to | order details: PO no,

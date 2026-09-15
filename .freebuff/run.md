@@ -587,7 +587,7 @@ Checks after regenerating (via preview tools):
   Discount/VAT & Summary. Fill client fields, add items (25 m 1500, 4 Nr
   2500, 1 Lot 15000), set 5% discount / 18% VAT → Sub Rs62,500.00, Discount
   −Rs3,125.00, Net Rs59,375.00, VAT +Rs10,687.50, Final Rs70,062.50; the
-  offscreen `#quotation-doc` holds the formal letter (METRIX letterhead,
+  offscreen `#quotation-doc` holds the formal letter (formal letterhead,
   recipient, itemized table, totals, T&C, signature); "Download Client
   Quotation PDF" runs html2pdf (needs the CDN; on a real browser it saves
   a PDF); data persists across reload (`cm-boq-v1`); Reset quotation clears
@@ -595,8 +595,8 @@ Checks after regenerating (via preview tools):
 - Nav names: the tool bar + banner headings read "Quotation" (shortened
   from "Quotation Tool") and "Invoice" opens the Smart Invoice & Document
   Builder (#05, `#invoice-view`).
-- PDF document template — Access Ekala sheet (2026-09-12): `generatePrintHTML(data)`
-  in `app.js` is now the **complete client-supplied Access Ekala template**,
+- PDF document template — reference invoice sheet (2026-09-12): `generatePrintHTML(data)`
+  in `app.js` is now the **complete reference invoice template**,
   verbatim. It renders the WHOLE document itself — header banner (logo cell
   25% + right-aligned company block), tagline over the `#0d1b6e` divider,
   bordered title bar, the 2-column bordered Supplier | Purchaser metadata
@@ -625,7 +625,7 @@ Checks after regenerating (via preview tools):
   `mxDocTable` / `mxFooter` / `mxMoney` (and the `.mx-*` CSS) are now DEAD
   code with zero call sites — left in place deliberately; delete them only
   after checking nothing else grows a dependency on them.
-- METRIX letterhead tune-up (2026-09-12): the tagline (`.mx-spec`) is a bare
+- Letterhead tune-up (2026-09-12): the tagline (`.mx-spec`) is a bare
   block — no wrapper box — styled italic/bold 11px centered `#0d1b6e`
   (`margin: 4px 0 8px 0`, full width) directly under the `Contact:` line, with
   a full-width `.mx-rule` (`border-bottom: 2px solid #0d1b6e`, `margin-bottom:
@@ -694,7 +694,7 @@ Checks after regenerating (via preview tools):
   from disk, or build `test-inline.html` via `build-test.ps1` to check it
   in the preview).
 - Quantity & Rate PDF: "📄 Export to PDF" sits next to ＋ Add row / Clear
-  all; it now compiles a formal Metrix-layout sheet (brand letterhead,
+  all; it now compiles a formal letter-layout sheet (brand letterhead,
   Item #/Description/Unit/Qty/Rate/Total Amount table, FINAL TOTAL,
   sign-off) into a hidden-iframe print engine.
 - ERP records & import (2026-09-10): "Primary Key / Record ID" bar in
@@ -1010,8 +1010,8 @@ unmoved by this change (frame top 54.98 vs master 54.99).
 brand (`name`, `legalName`, `address`, `contact`, `spec`, `logo`) and the ERP
 draft were overwritten, and 8 `erp/pdf` history entries were purged while
 cleaning up (the guest `calcmall_history` index is now empty). The brand was
-restored to `name: 'METRIX ENGINEERING'`, `legalName: 'METRIX ENGINEERING
-SERVICES (PVT) LTD'`, `contact: '+94 112 286695'`, everything else blanked —
+restored to `name: 'SAMPLE ENGINEERING'`, `legalName: 'SAMPLE ENGINEERING
+SERVICES (PVT) LTD'`, `contact: '+94 11 000 0000'`, everything else blanked —
 **a real uploaded logo cannot be recovered and must be re-uploaded in
 Company & Brand Settings.**
 
@@ -1084,8 +1084,8 @@ measured with brand data short enough to fit one line: header band 54.05
 [17.76], every metadata row exactly 19.2.
 
 **Why the metadata boxes can be ~18pt taller than the master.** In a 245.81pt
-column the brand's real legal name and address (`METRIX ENGINEERING SERVICES
-(PVT) LTD` / `5/1A, Samagi Mw, Depanama, Pannipitiya, Sri Lanka`) each wrap to
+column the brand's legal name and address (`SAMPLE ENGINEERING SERVICES
+(PVT) LTD` / `123 Sample Street, Example City, Sri Lanka`) each wrap to
 two lines, and those rows grow 19.2 → 29.32pt; the boxes are then ~18pt taller
 and everything below shifts by the same amount. That is the deliberate
 grow-don't-overlap behaviour, not a geometry bug: it appears only when the data
@@ -1099,9 +1099,9 @@ instead, which already wraps multi-line addresses and grows the row downwards
 
 **Brand kit / local state.** The synthetic `LOGO 3:1` SVG that an earlier
 aspect-ratio test wrote into `brand.logo` was cleared back to `''`, and
-`legalName` / `address` restored to `METRIX ENGINEERING SERVICES (PVT) LTD` /
-`5/1A, Samagi Mw, Depanama, Pannipitiya, Sri Lanka`. The layout run itself used
-`legalName: METRIX ENGINEERING`, `address: Depanama, Pannipitiya, Sri Lanka`,
+`legalName` / `address` restored to `SAMPLE ENGINEERING SERVICES (PVT) LTD` /
+`123 Sample Street, Example City, Sri Lanka`. The layout run itself used
+`legalName: SAMPLE ENGINEERING`, `address: Example City, Sri Lanka`,
 `client: NORTHWIND TRADING`; the ERP draft was reset to its empty state
 afterwards (`resetErp()` leaves `lines: []` and shows the "No items yet" cell —
 note this is NOT the "1 blank row" asked for in an earlier turn).
@@ -1124,14 +1124,18 @@ byte-for-byte (both streams inflated to exactly their declared sizes) with:
 
 ```
 powershell -File .freebuff/extract-letterhead.ps1 \
-  -Path "C:\Users\User\Downloads\ACCESS EKALA SERVICE INV648 (1).pdf" \
-  -Out "<repo>\.freebuff\master-letterhead.png"
+  -Path "<path to the reference invoice PDF>" \
+  -Out "<repo>\.freebuff\reference-letterhead.png"
 ```
 
-`.freebuff/master-letterhead.png` (96,763 bytes) is a MEASUREMENT REFERENCE
-ONLY. **Never ship it as a document asset**: the master's logo is a SAMPLE and
-must not appear on a generated invoice (explicit user instruction). It must
-never be put back into `assets/` or wired into `bannerUrl`.
+The extracted raster was a MEASUREMENT REFERENCE ONLY, and it has since been
+**deleted** (`.freebuff/reference-letterhead.png`, formerly
+`master-letterhead.png`, 96,763 bytes) because it is the real company's own
+artwork: **never ship it as a document asset**, never put it back into
+`assets/`, and never wire it into `bannerUrl`. Never un-ignore it in git
+either — the original is still in the repository's earlier commits.
+
+The measurements below were taken from it and remain valid.
 
 **Geometry measured off that raster** (page pt, page origin = top-left):
 logo ink box px 190-642 x 58-254 -> **66.01 x 28.23pt at x 30.08 / y 12.26**.
@@ -1210,7 +1214,7 @@ ON TOP of the blank row and the whole document moved down 19.2pt. It is now one
 and a two-line address stays inside its existing area.
 
 **The one remaining deviation, and why.** The brand's own legal name
-(`METRIX ENGINEERING SERVICES (PVT) LTD`) and a long purchaser name wrap to two
+(`SAMPLE ENGINEERING SERVICES (PVT) LTD`) and a long purchaser name wrap to two
 lines in a ~157pt value column, where the master's shorter one-line values fit.
 Each wrapped Name row grows 19.2 -> 29.32pt, so the metadata boxes measure
 126.8 instead of 118.71 (+8.1pt) and everything below shifts by the same
@@ -2464,7 +2468,7 @@ confirm-guarded **Remove duplicates** button to Library (`#history-dedupe`),
 shown only while duplicates exist: two rows are the same save when they share
 type + tool + toolName + title + client + ref + total AND fall inside the same
 minute, which keeps a deliberate re-issue of identical figures out of the net.
-Verified: it removed exactly the redundant copy of the two `ACCESS EKALA (PVT)
+Verified: it removed exactly the redundant copy of the two `Example Client (PVT)
 LTD / Rs128,915` rows, kept the newer one, pruned its orphaned draft, re-rendered
 the list and hid itself; three injected rows with one genuine same-minute pair
 and one different-minute re-issue produced exactly 1 duplicate, not 2.
@@ -2981,7 +2985,7 @@ the document type (LINE ITEMS / QUOTATION / TAX INVOICE / VARIATION ORDER) and
 now renders.
 
 **2. The formal letters had no page margin at all.** `compilePrintHtml()` wraps
-the body in `.doc-page` with `padding: 0` — correct for the METRIX/ERP template,
+the body in `.doc-page` with `padding: 0` — correct for the MX/ERP template,
 whose `MXPT` coordinates already carry the master's own 46pt margins and which is
 absolutely positioned. The flow-based `.fm-doc` letters therefore ran
 edge-to-edge: `.fm-head` spanned 0→816px of the 816px (612pt) page, so the

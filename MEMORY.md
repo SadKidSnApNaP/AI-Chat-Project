@@ -87,8 +87,8 @@ Quotation details (client/designation/company/address/date/ref) + itemized
 BOQ (Item · Unit · Qty · Rate in LKR; Amount = Qty × Rate) + optional
 **Discount %** and **VAT %**. Live summary = Sub total → Discount → Net →
 VAT → **Final total**; invalid/blank rows excluded. **PDF export** via the
-html2pdf.js CDN renders a formal A4 quotation letter (METRIX ENGINEERING
-SERVICES letterhead, recipient + ref/date, itemized table, totals, T&C
+html2pdf.js CDN renders a formal A4 quotation letter (company
+letterhead, recipient + ref/date, itemized table, totals, T&C
 block for Payment/Warranty/Mobilization/Validity, Engineer signature).
 Persists under `cm-boq-v1`; Reset quotation + "Reset all data" both clear
 it. PDF needs internet on first load for the CDN (falls back to a print
@@ -428,7 +428,7 @@ browser still outstanding.
   VAT & Summary), plus a footer link and an offscreen `#quotation-doc` for
   the PDF. New BOQ helpers in calculations.js; BOQ module in app.js
   (`cm-boq-v1` meta/lines/discount/vat, live totals, html2pdf.js CDN
-  export of a formal A4 letter with METRIX letterhead, recipient, itemized
+  export of a formal A4 letter with a formal letterhead, recipient, itemized
   table, totals, T&C and signature). Pricing → Tool #04, Invoice → Tool
   #05. Verified live: example items (25 m 1500, 4 Nr 2500, 1 Lot 15000) →
   sub Rs62,500.00, 5% discount −Rs3,125.00, net Rs59,375.00, 18% VAT
@@ -484,9 +484,9 @@ browser still outstanding.
 - School, safety, and legality come before business. Never suggest bypassing
   age/payment restrictions or spending money.
 
-### 2026-09-10 · Formal Metrix document layout (PDF engine v2)
+### 2026-09-10 · Formal document layout (PDF engine v2)
 
-All invoice-family exports now render the **formal Metrix Engineering
+All invoice-family exports now render the **formal document
 layout** (user-specified):
 - **Letterhead**: logo + company name/registered address/phone/email/
   website/specialization tagline left; document banner right (type, Doc No,
