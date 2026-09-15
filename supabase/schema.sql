@@ -25,8 +25,9 @@
 --    stores that were still device-only: the Master ERP Engine's saved
 --    project/client records, and the per-tool pointer that decides whether a
 --    "Save to Library" updates an entry or adds one. Both are ordinary tables
---    with the same RLS rule; see the notes there for why the second is a
---    whole-map last-writer-wins row rather than a per-key merge.
+--    with the same RLS rule; `erp_records` gained a `deleted_at` tombstone
+--    column in section 8 (A6) and is merged PER RECORD, while the pointer keeps
+--    its one-row shape and is merged per key.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ── updated_at maintenance ────────────────────────────────────────────────
@@ -421,6 +422,30 @@ create policy tool_library_ids_delete on public.tool_library_ids
 revoke all on public.erp_records, public.tool_library_ids from anon;
 grant select, insert, update, delete on public.erp_records, public.tool_library_ids to authenticated;
 
+-- ═══ 8. Deleted ERP records → tombstones (added in A6) ═════════════════════
+-- A6 merges `erp_records` ONE ROW AT A TIME, which changes what a push may
+-- assume. The old push was "publish everything this device has and delete
+-- every row it doesn't" — safe only because a whole-collection rule decided
+-- who won. Under a per-record merge that sweep would delete records another
+-- device had just created, so deletions have to travel as DATA rather than as
+-- an absence: a deleted record keeps its row and gets a `deleted_at` stamp,
+-- and every device can then tell "deleted at T" apart from "never seen".
+--
+-- Consequences worth knowing at the table level:
+--   * a live query is  `where deleted_at is null`  — a deleted record is still
+--     a row until it is purged.
+--   * the app purges tombstones older than 30 days on its next push, so the
+--     table does not grow without bound. A device offline longer than that can
+--     still resurrect a record it holds; that is the documented cost.
+--   * no RLS or grant change is needed: the update policy already covers the
+--     row, and the privileges above are table-wide.
+alter table public.erp_records add column if not exists deleted_at timestamptz;
+
+-- Tombstones are read (and purged) by age, so they get their own small index.
+create index if not exists erp_records_tombstones_idx
+  on public.erp_records (user_id, deleted_at)
+  where deleted_at is not null;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Self-check — run the query below after the script to confirm RLS is on.
 -- EVERY row must read `true`, one row per table (EIGHT rows).
@@ -433,6 +458,11 @@ grant select, insert, update, delete on public.erp_records, public.tool_library_
 --    and tablename in ('brand_settings','items','clients','documents','appearance_settings',
 --                       'account_state','erp_records','tool_library_ids')
 --  order by tablename;
+--
+-- Then confirm the A6 tombstone column exists (expect ONE row reading `true`):
+-- select exists (select 1 from information_schema.columns
+--                 where table_schema = 'public' and table_name = 'erp_records'
+--                   and column_name = 'deleted_at') as a6_tombstone_column;
 --
 -- Then confirm the column guard is real — this must FAIL for a browser session
 -- (as the owner in the SQL editor it will succeed, which is how you grant

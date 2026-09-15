@@ -7790,6 +7790,25 @@
   // 'calcmall_erp_records_v1'. Loading restores every field, the line
   // table and the live summary instantly.
   const ERP_RECORDS_KEY = 'calcmall_erp_records_v1';
+  /* A6: a deletion has to REACH the other device, and under a per-record merge
+     "the row is missing" no longer means "deleted" — it can equally mean "not
+     pulled yet". So the store keeps its own record of deletions, { id: epochMs },
+     which cloud.js publishes as a tombstone row (`erp_records.deleted_at`).
+     Read and written through storage rather than cached in a variable: the
+     merge owns this key too, and an in-memory copy would happily erase the
+     deletions a pull had just adopted. */
+  const ERP_DELETED_KEY = 'calcmall_erp_deleted_v1';
+
+  function loadErpDeletions() {
+    try {
+      const raw = localStorage.getItem(ERP_DELETED_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) { return {}; }
+  }
+  function saveErpDeletions(map) {
+    try { localStorage.setItem(ERP_DELETED_KEY, JSON.stringify(map)); } catch (e) { /* ignore */ }
+  }
 
   function loadErpRecords() {
     try {
@@ -7802,6 +7821,22 @@
   let erpRecords = loadErpRecords();
 
   function saveErpRecords() {
+    /* The deletions are derived here, at the store's single write choke point:
+       whatever it held a moment ago and no longer holds was deleted HERE, and
+       whatever it still holds is not deleted — so re-saving a record under an
+       id that was deleted brings it back, which is right because the record
+       now carries a newer savedAt than the tombstone. */
+    const prev = loadErpRecords();
+    const deleted = loadErpDeletions();
+    const now = Date.now();
+    let tombChanged = false;
+    Object.keys(erpRecords).forEach(function (id) {
+      if (deleted[id]) { delete deleted[id]; tombChanged = true; }
+    });
+    Object.keys(prev).forEach(function (id) {
+      if (!erpRecords[id] && !deleted[id]) { deleted[id] = now; tombChanged = true; }
+    });
+    if (tombChanged) saveErpDeletions(deleted);
     try { localStorage.setItem(ERP_RECORDS_KEY, JSON.stringify(erpRecords)); } catch (e) { /* ignore */ }
     recordsSig = recordsStorageSig();   // our own write is not a cloud change
     /* This is the single write choke point for the record store, so the Home
@@ -10696,8 +10731,13 @@
      or project field of its own (Pricing, Breakeven, FX, GPA). Resetting a
      tool clears its id, so the next save starts a NEW document. */
   const TOOL_LIBRARY_KEY = 'calcmall_tool_library_v1';
-  /* Read through a named loader (not an inline IIFE) so the cloud re-read can
-     use exactly the same validation as boot. */
+  /* A6: when THIS device last wrote — or removed — each tool's pointer. The
+     cloud merge needs it to decide key by key: a tool id that is missing from
+     the map but present here was removed at that moment, and must not be
+     resurrected by another device's older map. */
+  const TOOL_LIBRARY_AT_KEY = 'calcmall_tool_library_at_v1';
+  /* Read through named loaders (not inline IIFEs) so the cloud re-read can use
+     exactly the same validation as boot. */
   function loadToolLibraryIds() {
     try {
       const raw = localStorage.getItem(TOOL_LIBRARY_KEY);
@@ -10705,9 +10745,30 @@
       return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     } catch (e) { return {}; }
   }
+  function loadToolLibraryClocks() {
+    try {
+      const raw = localStorage.getItem(TOOL_LIBRARY_AT_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) { return {}; }
+  }
   let toolLibraryIds = loadToolLibraryIds();
   function saveToolLibraryIds() {
+    /* The clocks are diffed against what the store held before this write, so
+       the choke point needs no cooperation from its callers: a changed or new
+       pointer is stamped now, and a pointer that disappeared is stamped as a
+       removal (kept in the map with no id to pair with it). */
+    const prev = loadToolLibraryIds();
+    const clocks = loadToolLibraryClocks();
+    const now = Date.now();
+    Object.keys(toolLibraryIds).forEach(function (t) {
+      if (!Object.prototype.hasOwnProperty.call(prev, t) || prev[t] !== toolLibraryIds[t]) clocks[t] = now;
+    });
+    Object.keys(prev).forEach(function (t) {
+      if (!Object.prototype.hasOwnProperty.call(toolLibraryIds, t)) clocks[t] = now;
+    });
     try { localStorage.setItem(TOOL_LIBRARY_KEY, JSON.stringify(toolLibraryIds)); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(TOOL_LIBRARY_AT_KEY, JSON.stringify(clocks)); } catch (e) { /* ignore */ }
     recordsSig = recordsStorageSig();   // our own write is not a cloud change
   }
   /* A new project/session → the next save is a new row, not an overwrite. */
@@ -11031,6 +11092,11 @@
       localStorage.removeItem(DB_KEY);
       localStorage.removeItem(BRAND_KEY);
       localStorage.removeItem(ERP_RECORDS_KEY);
+      /* The A6 bookkeeping keys go with the data they describe. The cloud copy
+         then repopulates them the same way it repopulates every other store on
+         this path (a reset clears this DEVICE). */
+      localStorage.removeItem(ERP_DELETED_KEY);
+      localStorage.removeItem(TOOL_LIBRARY_AT_KEY);
       // The free-use meter is an entitlement, and this is its only reset path
       // beyond a browser wipe. The paid plan is deliberately NOT cleared.
       localStorage.removeItem(FREE_USAGE_KEY);

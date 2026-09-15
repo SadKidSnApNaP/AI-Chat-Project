@@ -139,21 +139,78 @@
     /* Any other table: rows come from CFG.tables, and a table listed in
        CFG.missingTables answers like PostgREST does when the schema has not
        been run (PGRST205 / "could not find the table ... in the schema cache"),
-       which is what A5's tolerance for a partial schema has to survive. */
+       which is what A5's tolerance for a partial schema has to survive.
+
+       A6 made writes MUTATE this state (they used to be logged and discarded):
+       the merge decides what to publish, so "did it converge?" is only a real
+       question if the second load sees the first load's write. A singleton row
+       (no `id` column) replaces the single row; an array of rows is merged by
+       `id`, and DELETE removes the ids it names — which is how the A5 sweep
+       becomes observable at all. */
     if (u.indexOf('/rest/v1/') !== -1) {
+      var decoded = decodeURIComponent(u);
       var name = restName(u).split('?')[0];
       var wantsIds = u.indexOf('select=id') !== -1;
-      var rows = (CFG.tables && CFG.tables[name]) || [];
-      log({ method: method, url: name + (wantsIds ? '?select=id' : ''), body: body });
+      var wantsTombCol = u.indexOf('select=deleted_at') !== -1;
+      if (!CFG.tables) CFG.tables = {};
+      var rows = CFG.tables[name] || [];
+      /* A DELETE is either the A5 SWEEP (`id=in.(...)`, the thing that must not
+         run under A6) or A6's tombstone PURGE (`deleted_at=lt.<cutoff>`), and
+         the difference has to be visible in the log or both look alike. */
+      log({
+        method: method,
+        url: name + (wantsIds ? '?select=id' : (wantsTombCol ? '?select=deleted_at' : '')),
+        body: body,
+        purge: method === 'DELETE' ? /deleted_at=lt\./.test(decoded) : undefined
+      });
       if (CFG.missingTables && CFG.missingTables.indexOf(name) !== -1) {
         return Promise.resolve(new Response(JSON.stringify({
           code: 'PGRST205',
           message: "Could not find the table 'public." + name + "' in the schema cache"
         }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
       }
+      /* A6's schema probe: the tombstone column either answers or does not
+         exist (42703 / undefined_column), which is exactly how a real
+         PostgREST replies when schema section 8 has not been run. */
+      if (wantsTombCol) {
+        if (CFG.noTombstone) {
+          return Promise.resolve(new Response(JSON.stringify({
+            code: '42703',
+            message: 'column ' + name + '.deleted_at does not exist'
+          }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+        }
+        return json(rows.map(function (r) {
+          return { deleted_at: (r.deleted_at === undefined ? null : r.deleted_at) };
+        }));
+      }
       if (method === 'GET') {
         if (wantsIds) return json(rows.map(function (r) { return { id: r.id }; }));
         return json(rows);
+      }
+      if (method === 'DELETE') {
+        var m = /\bid=in\.\(([^)]*)\)/.exec(decoded);
+        var doomed = m ? m[1].split(',').map(function (s) { return s.replace(/^"|"$/g, '').trim(); }) : [];
+        var kept = rows.filter(function (r) { return doomed.indexOf(String(r.id)) === -1; });
+        CFG.tables[name] = kept;
+        log({ note: 'rows-removed', table: name, ids: doomed });
+        /* A 204 must have NO body: `new Response(body, {status: 204})` throws,
+           which the app would (correctly) read as a dead wire and re-queue — so
+           a body here made the A5 sweep look like a network failure. */
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (method === 'POST' || method === 'PATCH') {
+        var arr = Array.isArray(body) ? body : [body];
+        if (!CFG.tables[name]) CFG.tables[name] = [];
+        var list = CFG.tables[name];
+        arr.forEach(function (r) {
+          if (!r) return;
+          if (r.id === undefined) { list.length = 0; list.push(r); return; }
+          var found = null;
+          for (var i = 0; i < list.length; i++) { if (String(list[i].id) === String(r.id)) { found = list[i]; break; } }
+          if (found) { Object.keys(r).forEach(function (k) { found[k] = r[k]; }); }
+          else { list.push(r); }
+        });
+        return json(arr, 201);
       }
       return json([], 201);
     }
@@ -190,6 +247,10 @@
   window.__a4state = {
     email: EMAIL, userId: USER_ID, first: FIRST, wiped: wiped, seeded: seeded,
     row: function () { return ROW; },
+    /* The fake backend's live state, so a test can play the OTHER device:
+       add a row after the app's pull and watch whether a later push sweeps it
+       away (A5 did; A6 must not). */
+    tables: function () { return CFG.tables || (CFG.tables = {}); },
     log: function () { return LOG; },
     scenario: SCEN,
     reset: function () { LOG.length = 0; try { sessionStorage.removeItem('__a4log'); } catch (e) { /* ignore */ } }

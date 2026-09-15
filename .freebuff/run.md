@@ -4569,3 +4569,130 @@ suffix, so the hint appears only when a table is genuinely absent.
    with embedded `\"` is a parse error (`Unexpected token`) — the same class of
    quoting trap as the ANSI `.ps1` rule above, and it fails at parse time, so the
    generated file is simply never written.
+
+---
+
+## A6 — per-record merge, tombstones, per-key pointers — 2026-09-15
+
+This SUPERSEDES the two policies recorded in the A5 section above: `erp_records`
+is no longer decided as a whole collection, and `tool_library_ids` is no longer
+whole-map last-writer-wins.
+
+### What was actually wrong
+
+A5 compared two collections as WHOLES: whichever side owned the newest row won
+outright. Editing record *X* on one device and record *Y* on another — both
+offline, both real, the ordinary two-device case — lost one of the two edits, and
+the loss was silent. The pointer map had the same shape of hole: losing a pointer
+makes the next *Save to Library* add a SECOND entry instead of updating the first.
+
+### The design
+
+* **Per record, clocked by the record's own `savedAt`** — the instant the user
+  pressed Save. It is identical on both sides (it round-trips inside `data`) and,
+  crucially, it does not move when a device merely re-pushes what it already had,
+  which the row's `updated_at` does. `updated_at` remains the fallback for a row
+  written before the payload existed. The collection is the UNION of both sides.
+* **Deterministic ties**, in `erpWinner(a, b)`: later save wins → at the same
+  instant a delete beats a save (you cannot delete what you have not seen) →
+  same instant and same kind falls back to the payload bytes. Both devices run it
+  on the same pair, so they converge instead of each keeping its own copy. A tie
+  that remote wins is deliberately NOT re-pushed (no write loop), while a
+  same-millisecond DELETE IS pushed (otherwise the other device's copy lives on).
+* **Deletions travel as data**: `erp_records.deleted_at` (schema section 8) makes
+  a deleted record a row with a stamp, so "deleted at T" is distinguishable from
+  "created elsewhere and not pulled yet". The app keeps `{ recordId: epochMs }`
+  in `calcmall_erp_deleted_v1`, stamped by diffing the store at its single write
+  choke point — `saveErpRecords()` — so a record re-saved under a deleted id is
+  simply a newer live event and wins.
+* **The push no longer SWEEPS when tombstones are available.** "Delete every row
+  this device does not have" is a whole-collection rule: under a union it deletes
+  records another device created after our last pull (our own push can happen
+  later in the same session, with `pulledOK` already true, so no fresh pull
+  protects them). The sweep is skipped, and comes back unchanged when the column
+  is absent.
+* **Per-key pointers**: `calcmall_tool_library_at_v1` holds this device's write
+  time for each tool; a key absent from the map but present there is a REMOVAL at
+  that time. The remote side has one clock (the row's `updated_at`), which answers
+  the only question that matters: was this key removed over there after we wrote
+  it? A tool **Reset** therefore survives another device's older map.
+* **Tombstone purge after 30 days**, in the same request batch as the push (a
+  purge failure never fails the push). A device offline longer than that can
+  resurrect a record it holds — the documented cost.
+
+### The fallback that makes the deploy safe
+
+Section 8 is a new column, so the code must be harmless before it is run. The
+pull asks once per page load (`select deleted_at limit 1`), and only `true`
+switches the merge on: a network blip leaves the question open (asked again next
+load) rather than concluding the schema is missing. Without the column, A5's
+set-wide rule and its sweep run EXACTLY as before, and no request ever carries a
+`deleted_at` key. `NexoraCloud.mergeState()` reports the tri-state
+(`tombstones: true | false | null`) plus the pending pushes.
+
+### Verified — `make-a4-account.ps1 -Scenario k|l|m|n|o`
+
+| scenario | setup | result |
+|---|---|---|
+| `k` | cloud holds record 1 NEWER; local holds 1 (older) and a record 2 the cloud has never seen | local ends with **both**; one POST carrying both rows (`deleted_at: null`); record 2 kept AND published. A5 lost record 2 here |
+| `l` | cloud holds a TOMBSTONE for record 1; local still holds it | record 1 removed locally, `calcmall_erp_deleted_v1` gains `1` at the cloud's deletion instant, record 2 untouched; the push carries a tombstone ROW for 1 (`data: null`, `deleted_at` set) and the live row for 2; the only DELETE is the PURGE |
+| `m` | a deletion made HERE, cloud still holding both records | published as a tombstone row; records end `{2}`; cloud row 1 becomes `dead`; **no sweep** |
+| `n` | the tombstone column ABSENT (section 8 not run) | probe reports the column missing, A5's rule runs, and no request body contains `deleted_at` |
+| `o` | cloud map `{retainer, qr}`; local `{qr: doc-1}` + a REMOVAL clock for `retainer` newer than the row | local ends `{qr: doc-4}` (the cloud's id adopted), `retainer` stays REMOVED, ONE push carrying `{qr: doc-4}`, and a second load writes nothing (convergence) |
+
+**The sweep contrast, played as the other device.** After boot, a row `ZZ` is
+pushed straight into the fake backend (a record this device has never seen), then
+a local save queues a push:
+
+* A6 mode (`m`): the push runs (`ok:true, pushed:1`) and **`ZZ` survives** —
+  `rows-removed` is empty (only the purge fires).
+* Fallback (`n`): the identical situation **sweeps `ZZ` away** —
+  `rows-removed: ["ZZ"]`. That is the bug A6 removes, still present exactly where
+  the schema has not been run.
+
+**The app's own choke points, driven through the real UI** (not by writing
+storage directly): the record **Delete** button + its confirm modal stamped
+`calcmall_erp_deleted_v1: {A6-TEST: 1789472912546}`; re-saving the same id withdrew
+it to `{}`; a real *Save to Library* on the Retainer produced
+`{retainer: mu2m01fh5nvvk7}` in the pointer map and `{retainer: 1789472965950}` in
+the clocks; the tool's **Reset** removed the pointer and re-stamped the clock
+newer (a removal) — which is exactly the input scenario `o` consumes.
+
+**The pure rules, called directly** (`NexoraCloud.merge.*`): union with a
+local-only record pushed, delete-beats-save at an equal clock (and published),
+identical copies producing NO push, the content tie-break agreeing in both
+orders, our newer pointer surviving, and a removal not resurrected.
+
+Regressions: `test/calculations.test.html` **91/91** (`PASS — 91/91`), and
+`index.html` as a guest boots clean — 12 tool cards, 4 nav sections, 81 hydrated
+icons, **empty console**, `mergeState.tombstones: null` (never asked, signed out).
+
+`sw.js` `VERSION` → **v5** (two shell files changed; `check-shell.ps1` passes,
+17 files / 4,264,747 bytes).
+
+### Harness additions (and their traps)
+
+* `-Tag <suffix>` on the generator is now the ONLY way to get a fresh SEED: the
+  stub wipes and seeds on the first load of a given PATHNAME, so re-visiting a
+  scenario page keeps whatever the previous run left in localStorage. A re-run
+  without a tag tests a mixture of two scenarios. This bit me once: a re-visited
+  `-m` page started from `-n`'s leftover store.
+* The stub's generic tables now MUTATE on write (merge by `id`, replace for a
+  singleton, DELETE removes the ids it names) instead of logging and discarding.
+  Without that, "did it converge?" is not a real question — the second load would
+  see the first load's write undone.
+* A `DELETE` is logged with `purge: true/false`, because the A5 SWEEP and A6's
+  tombstone PURGE are both DELETEs to the same table and are otherwise
+  indistinguishable in the log.
+* **TRAP — the stub answered DELETEs with `new Response(body, {status: 204})`,
+  which throws in the browser** (`Response with null body status cannot have
+  body`). The app correctly read that as a dead wire, re-queued, and reported
+  `ok:false` — so the A5 sweep looked like a network failure. Fixed to a bodyless
+  204. If a push ever returns `ok:false` with `pushed:0` and an empty queue
+  afterwards, suspect the harness before the product.
+* **TRAP — never rewrite a project file with PowerShell**
+  (`Get-Content -Raw | Set-Content`). PS 5.1 reads the file as ANSI and writes
+  UTF-8, so every non-ASCII character is double-encoded and a BOM is prepended;
+  `sw.js` came back as `Â·`/`â€”` on 18 lines. Only the version bump was needed,
+  and it was re-applied with the editor tools. Use `[System.IO.File]` with an
+  explicit encoding, or better, the editor tools.

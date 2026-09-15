@@ -391,19 +391,71 @@ pointing at `schema.sql`. That hint disappears on its own once the section is ru
   change and re-reads both, the way the master database already did. Our own
   writes refresh the signature, so "Saved records changed" only appears for a
   real change from the account (or another tab).
-* **Merge policy, stated honestly:** `erp_records` is a *collection*, so the
-  newest copy of the collection wins — per-record merge is A6, and until it
-  lands a record edited on two devices at once resolves newest-wins for the set
-  rather than record by record. `tool_library_ids` is a pointer map, not data:
-  the whole map is last-writer-wins. The worst case there is that the next
-  *Save to Library* starts a new entry instead of updating the previous one; a
-  per-key merge would need tombstones to survive a tool **Reset** (which deletes
-  a key) without resurrecting it, which is a worse trade for a bookmark.
+* **Merge policy at the time:** `erp_records` was a *collection* resolved as a
+  whole (newest copy of the set wins) and `tool_library_ids` was a whole-map
+  last-writer-wins row. Both are superseded by A6 below, which merges each
+  record and each pointer key on its own.
+
+### Saved records merge PER RECORD, and deletions travel as tombstones (A6)
+
+A5 synced the saved records but decided the collection as a whole: whichever side
+owned the newest row won outright, so editing record *X* on one device and record
+*Y* on another — both offline, both deliberate — lost one of the two edits. A6
+decides each Record ID on its own clock, and the collection becomes the **union**
+of the two sides.
+
+**Run section 8 of `supabase/schema.sql` before this build goes live.** It adds
+one nullable column, `erp_records.deleted_at`, and nothing else.
+
+| | before section 8 | after section 8 |
+|---|---|---|
+| merge | set-wide newest-wins | **per record** — each id on its own clock |
+| a deletion | an *absent row* (swept out of the table) | a **tombstone row** (`deleted_at` stamped) |
+| a record created on another device | a candidate for the sweep | never touched by a push |
+
+* **The clock is the record's own `savedAt`** — the instant the user pressed
+  Save. It is the same value on both sides (it round-trips inside `data`), and it
+  does not move when a device merely re-pushes what it already had, which the
+  row's `updated_at` does. `updated_at` is only the fallback for a row written
+  before the payload existed.
+* **Ties resolve deterministically:** a later save wins; at the *same* instant a
+  delete beats a save (you cannot delete what you have not seen); two saves in the
+  same millisecond fall back to the payload bytes. Every device runs the same
+  rule, so both converge on one copy instead of each keeping its own — and a tie
+  that remote wins is never re-pushed, so no write loop can form.
+* **A push no longer sweeps.** "Delete every row this device does not have" is a
+  whole-collection rule: under a union it would delete records another device had
+  just created — a record added elsewhere after this device's last pull was fair
+  game. Deletions now travel as data, so the sweep is gone; it comes back
+  automatically, unchanged, when the column is missing.
+* **Until section 8 is run, nothing changes.** The pull asks the schema once per
+  page load (`select deleted_at limit 1`), and only a positive answer switches
+  the merge on: a network blip leaves the question open rather than concluding
+  the schema is missing, A5's rule keeps running, and no request ever carries a
+  `deleted_at` key while the column is absent. So the deploy can never be worse
+  than what it replaced.
+* **Tombstones are purged after 30 days** on the next push, in the same request
+  batch, so the table cannot grow without bound. A device offline for longer than
+  that can still resurrect a record it holds — the documented cost of the purge.
+* **The Library pointers merge per key.** A lost pointer is what makes the next
+  *Save to Library* add a second entry instead of updating the first one, so a
+  tool saved on one device can no longer lose to a *different* tool saved on
+  another: the map is a union, each key carrying its own write time, and a tool
+  **Reset** records a *removal* at that moment, so another device's older map
+  cannot bring it back.
+* **The merge is pure functions**, exported as `NexoraCloud.merge.erpRecords` and
+  `NexoraCloud.merge.toolLibrary` — the rules above can be called and checked
+  without a network or a database.
+* **The two local keys A6 adds are bookkeeping**, not data: `calcmall_erp_deleted_v1`
+  (`{ recordId: epochMs }`) and `calcmall_tool_library_at_v1` (`{ toolId: epochMs }`,
+  also holding removals). Both are stamped at the app's existing single write
+  choke points — `saveErpRecords()` and `saveToolLibraryIds()` — and both are
+  cleared by "Reset all data" together with the stores they describe.
 
 ## Test
 
 Open `test/calculations.test.html` in a browser (double-click). It runs
-**86 assertions** against `calculations.js` and shows PASS/FAIL per row,
+**91 assertions** against `calculations.js` and shows PASS/FAIL per row,
 including the spec fixture (20 h / $1,500 → 32 h → $46.88/hr, −37.5%),
 all 12 tools' math helpers, and the fee/duty/GPA edge cases.
 

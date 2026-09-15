@@ -7529,16 +7529,30 @@ body.light-theme .tool-launch {
     },
     /* ── A5 ───────────────────────────────────────────────────────────────
        The Master ERP Engine's saved records: { recordId: { savedAt, state } },
-       one row per record, the whole payload in `data`. A collection, so the
-       newest copy of the collection wins (per-record merge is A6). */
+       one row per record, the whole payload in `data`.
+
+       A6 merges this collection PER RECORD, and deletions travel as tombstones
+       (`erp_records.deleted_at`, schema section 8) rather than as an absence —
+       the local key beside it holds { recordId: epochMs } for the records this
+       device has deleted. Without that column the merge falls back to A5's
+       set-wide newest-wins, which is why `tombstones` is optional. */
     'calcmall_erp_records_v1': {
-      table: 'erp_records', kind: 'collection', transform: 'erpRecords', order: 'savedAt'
+      table: 'erp_records', kind: 'collection', transform: 'erpRecords', order: 'savedAt',
+      tombstones: 'calcmall_erp_deleted_v1'
     },
     /* { toolId: historyEntryId } — the bookmark that turns a repeat "Save to
        Library" into an UPDATE instead of a second entry. A pointer, not a
-       document: one row per user, whole map last-writer-wins. */
+       document: one row per user.
+
+       A6 merges it PER KEY. The row shape is unchanged (the map is still one
+       row), and the per-key clock lives in a local key beside it — the moment
+       THIS device last wrote or removed that key. The remote side has one
+       clock for the whole map (the row's `updated_at`), which is enough to
+       answer the only question that matters: was this key removed over there
+       after we wrote it? */
     'calcmall_tool_library_v1': {
-      table: 'tool_library_ids', kind: 'singleton', transform: 'toolLibrary'
+      table: 'tool_library_ids', kind: 'singleton', transform: 'toolLibrary',
+      clocks: 'calcmall_tool_library_at_v1'
     }
   };
   // local key → the spec that owns it (aliases resolve to their primary key)
@@ -7657,7 +7671,10 @@ body.light-theme .tool-launch {
     /* Tables this build expects that the database does not have yet (a schema
        section not run). They are skipped, never pushed to, and never allowed
        to take the rest of the sync down with them. */
-    missingTables: {}
+    missingTables: {},
+    /* Keys the PULL decided it must publish (A6's per-record / per-key merges
+       work out exactly what needs sending; reconcile() then queues them). */
+    pushNeeded: {}
   };
   let notifyListeners = [];
 
@@ -7930,7 +7947,7 @@ body.light-theme .tool-launch {
     return out;
   }
 
-  function toRows(logicalKey, value, userId) {
+  function toRows(logicalKey, value, userId, opts) {
     switch (SYNC[logicalKey].transform) {
       case 'brand': return [brandToRow(value, userId)];
       case 'appearance': return [appearanceToRow(value, userId)];
@@ -7938,7 +7955,7 @@ body.light-theme .tool-launch {
       case 'items': return itemsToRows(value, userId);
       case 'clients': return clientsToRows(value, userId);
       case 'documents': return documentsToRows(value, userId);
-      case 'erpRecords': return erpRecordsToRows(value, userId);
+      case 'erpRecords': return erpRecordsToRows(value, userId, opts);
       default: return [];
     }
   }
@@ -7946,40 +7963,76 @@ body.light-theme .tool-launch {
   /* ── A5 transforms ────────────────────────────────────────────────────
      The ERP record store is an OBJECT keyed by the user's Record ID, and the
      table mirrors that: the id is the key, the columns are only an index for
-     reading, and `data` carries the record exactly as the app held it. */
-  function erpRecordsToRows(v, userId) {
+     reading, and `data` carries the record exactly as the app held it.
+
+     A6 adds one thing here: when the tombstone column exists, a deleted record
+     keeps its row with `deleted_at` stamped, and a RE-SAVED record clears that
+     stamp — otherwise the row would go on saying "deleted" while carrying live
+     data, and the next merge would read it as dead. */
+  function erpSpec() { return SYNC['calcmall_erp_records_v1']; }
+  function erpTombstones() { return parseJson(localValue(erpSpec().tombstones), {}) || {}; }
+
+  function erpRecordsToRows(v, userId, opts) {
+    const withTomb = !!(opts && opts.tombstones);
     const map = (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
     const rows = [];
     Object.keys(map).forEach(function (id) {
       const rec = map[id];
       const key = text(id).trim();
       if (!key || !rec || typeof rec !== 'object') return;
-      const state = (rec.state && typeof rec.state === 'object') ? rec.state : {};
+      const st = (rec.state && typeof rec.state === 'object') ? rec.state : {};
       const at = Date.parse(text(rec.savedAt));
-      rows.push({
+      const row = {
         user_id: userId, id: key,
-        client: text(state.client), project: text(state.project),
-        line_count: Array.isArray(state.lines) ? state.lines.length : 0,
+        client: text(st.client), project: text(st.project),
+        line_count: Array.isArray(st.lines) ? st.lines.length : 0,
         saved_at: Number.isFinite(at) ? at : null,
-        data: { savedAt: text(rec.savedAt), state: state }
+        data: { savedAt: text(rec.savedAt), state: st }
+      };
+      if (withTomb) row.deleted_at = null;
+      rows.push(row);
+    });
+    if (!withTomb) return rows;
+    const tom = erpTombstones();
+    const cutoff = Date.now() - TOMBSTONE_RETENTION_MS;
+    Object.keys(tom).forEach(function (id) {
+      const key = text(id).trim();
+      const at = Number(tom[id]) || 0;
+      /* A live record always owns its own row — one upsert cannot touch the
+         same row twice — and a deletion past the retention window belongs to
+         the server's purge, not to this device restating it forever. */
+      if (!key || !at || map[key] || at < cutoff) return;
+      rows.push({
+        user_id: userId, id: key, client: '', project: '', line_count: 0,
+        saved_at: null, data: null, deleted_at: new Date(at).toISOString()
       });
     });
     return rows;
   }
-  function rowsToErpRecords(rows) {
-    const out = {};
+
+  function rowToErpRecord(r) {
+    const rec = (r.data && typeof r.data === 'object' && !Array.isArray(r.data))
+      ? Object.assign({}, r.data) : {};
+    if (!rec.state || typeof rec.state !== 'object') rec.state = {};
+    // A row written before (or without) the payload keeps its timestamp.
+    if (!rec.savedAt && r.saved_at) rec.savedAt = new Date(Number(r.saved_at)).toISOString();
+    return rec;
+  }
+  /* The cloud's copy, as the two maps the merge speaks in. A row carrying a
+     `deleted_at` stamp is a deletion, not a record — and when the column does
+     not exist yet every row's `deleted_at` is undefined, so this degrades to
+     "every row is a record", which is exactly the A5 reading. */
+  function rowsToErpState(rows) {
+    const records = {}, tombstones = {};
     (rows || []).forEach(function (r) {
       const id = text(r.id).trim();
       if (!id) return;
-      const rec = (r.data && typeof r.data === 'object' && !Array.isArray(r.data))
-        ? Object.assign({}, r.data) : {};
-      if (!rec.state || typeof rec.state !== 'object') rec.state = {};
-      // A row written before (or without) the payload keeps its timestamp.
-      if (!rec.savedAt && r.saved_at) rec.savedAt = new Date(Number(r.saved_at)).toISOString();
-      out[id] = rec;
+      if (r.deleted_at) { tombstones[id] = Date.parse(text(r.deleted_at)) || 0; return; }
+      records[id] = rowToErpRecord(r);
     });
-    return out;
+    return { records: records, tombstones: tombstones };
   }
+  function rowsToErpRecords(rows) { return rowsToErpState(rows).records; }
   /* Only non-empty pointers are stored, so a tool that has been Reset simply
      has no key — which is what makes the reset survive a round trip. */
   function toolLibraryToRow(v, userId) {
@@ -7998,13 +8051,179 @@ body.light-theme .tool-launch {
     return out;
   }
 
+  /* ── A6: merging ONE RECORD AT A TIME ─────────────────────────────────
+     A5 compared two collections as wholes: whichever side owned the newest
+     row won outright, so editing record X on one device and record Y on
+     another (both offline) lost one of the two edits. A6 compares each record
+     id on its own and takes the UNION of both sides.
+
+     The clock is the record's OWN `savedAt` — the moment the user pressed
+     Save. It is the same value on both sides (it round-trips inside `data`),
+     and it does NOT move when a device merely re-pushes what it already had,
+     which is exactly what the row's `updated_at` does. (`updated_at` stays the
+     fallback for a row written before the payload existed.)
+
+     These functions are pure — no network, no storage — so what the sync runs
+     is what a test can call directly. */
+  const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+  /* Key-order-independent serialization. "Did anything change?" is answered by
+     comparing strings, and a map's key order is not meaningful: the app writes
+     its maps in insertion order, the merge builds them in its own. */
+  function stableJson(v) {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(stableJson).join(',') + ']';
+    return '{' + Object.keys(v).sort().map(function (k) {
+      return JSON.stringify(k) + ':' + stableJson(v[k]);
+    }).join(',') + '}';
+  }
+
+  function erpEvent(at, dead, body) {
+    return { at: Number(at) || 0, dead: !!dead, body: text(body) };
+  }
+  /* A local record's event: when the user saved it, and what the payload was.
+     `body` only ever breaks a tie, so it carries the persisted part. */
+  function erpLocalEvent(rec) {
+    return erpEvent(Date.parse(text(rec && rec.savedAt)), false,
+      JSON.stringify((rec && rec.state) || {}));
+  }
+  /* Deterministic winner of two events. Every device runs this on the same
+     pair and gets the same answer, which is the property the union needs: a
+     tie must not leave each side keeping its own copy.
+       * a later save wins;
+       * at the SAME instant a delete beats a save — you cannot delete
+         something you have not seen yet, so the delete is the later intent;
+       * same instant and same kind (two devices saving in the same
+         millisecond) falls back to the payload bytes, so both devices still
+         pick the same one. */
+  function erpWinner(a, b) {
+    if (!a) return b || null;
+    if (!b) return a;
+    if (a.at !== b.at) return a.at > b.at ? a : b;
+    if (a.dead !== b.dead) return a.dead ? a : b;
+    return a.body >= b.body ? a : b;
+  }
+  /* A cloud row's event. A tombstone is a deletion; otherwise the clock is the
+     record's own savedAt, with the columns as fallbacks. */
+  function erpRowEvent(row) {
+    if (row && row.deleted_at) return erpEvent(Date.parse(text(row.deleted_at)), true, '');
+    const d = (row && row.data && typeof row.data === 'object' && !Array.isArray(row.data)) ? row.data : {};
+    const at = Date.parse(text(d.savedAt)) || numOrNull(row && row.saved_at) ||
+      Date.parse(text(row && row.updated_at));
+    return erpEvent(at, false, JSON.stringify((d && d.state) || {}));
+  }
+
+  /**
+   * Merge one account's saved records with the cloud's copy, record by record.
+   *
+   *   local  = { records: { id: { savedAt, state } }, tombstones: { id: ms } }
+   *   remote = the same shape, built from the rows by rowsToErpState()
+   *
+   * Returns the merged pair, plus what still has to be published:
+   *   pushLive — ids whose LOCAL copy is strictly newer (a tie is never
+   *              re-pushed: remote wins ties, both devices then agree without
+   *              a write, and no write loop can form)
+   *   pushDead — deletions the cloud has not seen yet (a tie IS pushed here, or
+   *              a same-millisecond delete and save would leave the other
+   *              device's copy alive for good)
+   */
+  function mergeErpRecords(local, remote) {
+    const lrec = (local && local.records) || {};
+    const ltom = (local && local.tombstones) || {};
+    const rrec = (remote && remote.records) || {};
+    const rtom = (remote && remote.tombstones) || {};
+    const records = {}, tombstones = {}, pushLive = [], pushDead = [];
+    const cutoff = Date.now() - TOMBSTONE_RETENTION_MS;
+    const ids = {};
+    [lrec, ltom, rrec, rtom].forEach(function (m) {
+      Object.keys(m).forEach(function (id) { ids[id] = 1; });
+    });
+    Object.keys(ids).forEach(function (id) {
+      const mine = lrec[id] ? erpLocalEvent(lrec[id])
+        : (ltom[id] ? erpEvent(ltom[id], true, '') : null);
+      const theirs = rrec[id] ? erpLocalEvent(rrec[id])
+        : (rtom[id] ? erpEvent(rtom[id], true, '') : null);
+      const win = erpWinner(mine, theirs);
+      if (!win) return;
+      if (win.dead) {
+        if (win.at && win.at < cutoff) return;   // past retention: the purge owns it
+        tombstones[id] = win.at;
+        if (win === mine && (!theirs || !theirs.dead || theirs.at < mine.at)) pushDead.push(id);
+        return;
+      }
+      records[id] = (win === mine) ? lrec[id] : rrec[id];
+      if (win === mine && (!theirs || theirs.at < mine.at)) pushLive.push(id);
+    });
+    return { records: records, tombstones: tombstones, pushLive: pushLive, pushDead: pushDead };
+  }
+
+  /**
+   * Merge the per-tool Library pointers with the cloud's map, key by key.
+   *
+   * A5 replaced the whole map with whichever side had written last, so saving
+   * DIFFERENT tools on two devices inside one clock window lost one pointer —
+   * and losing a pointer is what makes the next "Save to Library" for that tool
+   * add a SECOND entry instead of updating the existing one.
+   *
+   * `clocks` is this device's per-key write time (a key that is absent from
+   * `localIds` but present in `clocks` is a REMOVAL at that time). The remote
+   * side only has one clock for the whole map — the row's `updated_at` — which
+   * is enough to answer the only question that needs answering: was this key
+   * removed over there after we wrote it?
+   */
+  function mergeToolLibrary(localIds, clocks, remoteIds, remoteAt) {
+    const l = (localIds && typeof localIds === 'object') ? localIds : {};
+    const r = (remoteIds && typeof remoteIds === 'object') ? remoteIds : {};
+    const c0 = (clocks && typeof clocks === 'object') ? clocks : {};
+    const rt = Number(remoteAt) || 0;
+    const ids = {}, out = {};
+    let push = false;
+    const keys = {};
+    [l, r, c0].forEach(function (m) {
+      Object.keys(m).forEach(function (k) { keys[k] = 1; });
+    });
+    Object.keys(keys).forEach(function (k) {
+      const lt = Number(c0[k]) || 0;
+      const mine = Object.prototype.hasOwnProperty.call(l, k);
+      const theirs = Object.prototype.hasOwnProperty.call(r, k);
+      if (mine && theirs) {
+        if (text(l[k]) === text(r[k])) { ids[k] = text(l[k]); out[k] = Math.max(lt, rt); return; }
+        if (lt > rt) { ids[k] = text(l[k]); out[k] = lt; push = true; return; }   // ours is newer
+        ids[k] = text(r[k]); out[k] = rt;                                        // theirs is
+        return;
+      }
+      if (mine) {
+        /* Ours, and the cloud's map does not carry it. If that map was written
+           after our write, the key was removed over there — honour that. */
+        if (rt > lt) { out[k] = rt; return; }
+        ids[k] = text(l[k]); out[k] = lt; push = true;
+        return;
+      }
+      if (theirs) {
+        /* Not here, but the cloud has it: either we removed it after the cloud
+           published its map (our removal stands) or we simply never had it. */
+        if (lt > rt) { out[k] = lt; push = true; return; }
+        ids[k] = text(r[k]); out[k] = rt;
+        return;
+      }
+      out[k] = lt;   // a removal clock with nothing on either side: keep it
+    });
+    return { ids: ids, clocks: out, push: push };
+  }
+
   /* ── Error classification ───────────────────────────────────────────── */
   function errorInfo(err) {
     const msg = text(err && (err.message || err.error_description || err.error || err));
     const code = text(err && (err.code || err.status || ''));
     const low = msg.toLowerCase();
-    if (code === 'PGRST205' || code === '42P01' || low.indexOf('schema cache') !== -1 ||
-        (low.indexOf('could not find the table') !== -1)) {
+    /* A missing TABLE, and a missing COLUMN, are the same problem from here:
+       the database is not the schema this build expects. `42703` is
+       undefined_column and `PGRST204` is PostgREST's "column not in the schema
+       cache" — both mean a schema section has not been run. */
+    if (code === 'PGRST205' || code === '42P01' || code === '42703' || code === 'PGRST204' ||
+        low.indexOf('schema cache') !== -1 ||
+        (low.indexOf('could not find the table') !== -1) ||
+        (low.indexOf('column') !== -1 && low.indexOf('does not exist') !== -1)) {
       return { kind: 'setup', message: 'Cloud tables are missing — run supabase/schema.sql in the Supabase SQL editor.', code: code };
     }
     if (err instanceof TypeError || low.indexOf('failed to fetch') !== -1 ||
@@ -8159,6 +8378,45 @@ body.light-theme .tool-launch {
     return merged;
   }
 
+  /* ── A6: is the tombstone column there? ───────────────────────────────
+     Per-record merge needs `erp_records.deleted_at` (schema section 8) to tell
+     "deleted at T" apart from "created elsewhere and not pulled yet". Asked at
+     most once per page load, and only the ANSWER `true` switches the merge on:
+     a network blip leaves the question open (next load asks again) rather than
+     concluding the schema is missing. Until then A5's set-wide rule runs,
+     unchanged — a deploy can never be worse than what it replaced. */
+  let tombstoneSupported = null;
+  let tombstoneProbe = null;
+  function tombstonesSupported() {
+    if (tombstoneSupported !== null) return Promise.resolve(tombstoneSupported);
+    if (tombstoneProbe) return tombstoneProbe;
+    if (!client) return Promise.resolve(false);
+    if (tableMissing('calcmall_erp_records_v1')) return Promise.resolve(false);
+    tombstoneProbe = client.from('erp_records').select('deleted_at').limit(1)
+      .then(function (res) {
+        tombstoneProbe = null;
+        if (!res || !res.error) { tombstoneSupported = true; return true; }
+        const info = errorInfo(res.error);
+        if (info.kind === 'setup' || info.kind === 'auth') tombstoneSupported = false;
+        return false;
+      })
+      .catch(function () { tombstoneProbe = null; return false; });
+    return tombstoneProbe;
+  }
+
+  /* Tombstones are only interesting while they are recent: every device that
+     was going to see one has seen it long before the retention window closes,
+     and after that the row is just weight. Purged here rather than by a
+     scheduled job because a deletion is exactly when the list is worth
+     pruning — and a purge failure must NOT fail the push it rode in on. */
+  async function purgeTombstones(userId) {
+    try {
+      const cutoff = new Date(Date.now() - TOMBSTONE_RETENTION_MS).toISOString();
+      await client.from('erp_records').delete()
+        .eq('user_id', userId).not('deleted_at', 'is', null).lt('deleted_at', cutoff);
+    } catch (e) { /* housekeeping only */ }
+  }
+
   async function flushKey(logicalKey) {
     const spec = SYNC[logicalKey];
     if (!spec || !client) return { ok: false };
@@ -8184,12 +8442,19 @@ body.light-theme .tool-launch {
         const res = await client.from(spec.table).upsert(row, { onConflict: 'user_id' });
         if (res.error) throw res.error;
       } else {
-        const rows = toRows(logicalKey, value, userId);
+        const useTomb = (logicalKey === 'calcmall_erp_records_v1') && await tombstonesSupported();
+        const rows = toRows(logicalKey, value, userId, { tombstones: useTomb });
         const have = await client.from(spec.table).select('id').eq('user_id', userId);
         if (have.error) throw have.error;
         const localIds = {};
         rows.forEach(function (r) { localIds[r.id] = 1; });
-        const gone = (have.data || []).map(function (r) { return r.id; })
+        /* The sweep — delete every cloud row this device does not have — is a
+           whole-collection rule and stops being safe under A6: a row can be
+           absent here simply because another device created it after this
+           device's last pull. So it runs ONLY when tombstones are unavailable
+           (A5 behaviour); once `deleted_at` exists, deletions travel as
+           tombstones instead and nothing is ever swept. */
+        const gone = useTomb ? [] : (have.data || []).map(function (r) { return r.id; })
           .filter(function (id) { return !localIds[id]; });
         if (gone.length) {
           const del = await client.from(spec.table).delete().eq('user_id', userId).in('id', gone);
@@ -8199,6 +8464,7 @@ body.light-theme .tool-launch {
           const up = await client.from(spec.table).upsert(rows, { onConflict: 'user_id,id' });
           if (up.error) throw up.error;
         }
+        if (useTomb && Object.keys(erpTombstones()).length) await purgeTombstones(userId);
       }
       dropQueued(logicalKey);
       setMetaAt(email, logicalKey, Date.now());
@@ -8237,6 +8503,59 @@ body.light-theme .tool-launch {
   }
 
   /* ── Pull ───────────────────────────────────────────────────────────── */
+  /**
+   * Adopt the cloud's saved records, merged PER RECORD (A6). Returns whether
+   * the local store changed. Async only because deciding whether the merge can
+   * run at all means asking the schema about the tombstone column — and that
+   * question is only worth asking when something depends on the answer: rows on
+   * the wire, or a deletion waiting here.
+   */
+  async function pullErpRecords(rows, email) {
+    const key = 'calcmall_erp_records_v1';
+    const spec = SYNC[key];
+    let remoteAt = 0;
+    rows.forEach(function (r) {
+      const t = Date.parse(r.updated_at || '') || 0;
+      if (t > remoteAt) remoteAt = t;
+    });
+    state.remoteAt[key] = remoteAt;
+    const localRaw = localValue(key);
+    const tombRaw = localValue(spec.tombstones);
+    if (rows.length || Object.keys(parseJson(tombRaw, {}) || {}).length) {
+      await tombstonesSupported();
+    }
+    /* No tombstone column → a row this device does not have is
+       indistinguishable from one deleted elsewhere, so A5's rule stands
+       EXACTLY as it was for as long as that is true. */
+    if (tombstoneSupported !== true) {
+      const localAt = metaFor(email)[key] || 0;
+      if (localRaw === null || (remoteAt > 0 && remoteAt >= localAt)) {
+        writeLocal(key, JSON.stringify(rowsToErpRecords(rows)));
+        if (remoteAt) setMetaAt(email, key, remoteAt);
+        return true;
+      }
+      return false;
+    }
+    const local = {
+      records: parseJson(localRaw, {}) || {},
+      tombstones: parseJson(tombRaw, {}) || {}
+    };
+    const merged = mergeErpRecords(local, rowsToErpState(rows));
+    let changed = false;
+    if (stableJson(merged.records) !== stableJson(local.records)) {
+      writeLocal(key, JSON.stringify(merged.records));
+      changed = true;
+    }
+    if (stableJson(merged.tombstones) !== stableJson(local.tombstones)) {
+      writeLocal(spec.tombstones, JSON.stringify(merged.tombstones));
+    }
+    /* Only OUR newer copies go up — the merge names exactly which. Queued
+       rather than sent here, because pull() has to finish adopting the cloud
+       copy before anything is pushed back at it. */
+    if (merged.pushLive.length || merged.pushDead.length) state.pushNeeded[key] = true;
+    return changed;
+  }
+
   async function pullTable(spec) {
     // Always scoped to the signed-in user, even though RLS already enforces
     // it — an explicit filter makes the intent readable and the result is
@@ -8283,7 +8602,7 @@ body.light-theme .tool-launch {
       }
 
       // — singletons —
-      ['calcmall_brand_v1', 'cm-theme', 'calcmall_tool_library_v1'].forEach(function (key) {
+      ['calcmall_brand_v1', 'cm-theme'].forEach(function (key) {
         const spec = SYNC[key];
         if (tables[spec.table] === null) return;   // table absent → leave the cache alone
         const rows = tables[spec.table] || [];
@@ -8314,7 +8633,7 @@ body.light-theme .tool-launch {
       });
 
       // — collections —
-      ['nexora_item_db', 'nexora_client_db', 'calcmall_history', 'calcmall_erp_records_v1'].forEach(function (key) {
+      ['nexora_item_db', 'nexora_client_db', 'calcmall_history'].forEach(function (key) {
         const spec = SYNC[key];
         if (tables[spec.table] === null) return;   // table absent → leave the cache alone
         const rows = tables[spec.table] || [];
@@ -8331,7 +8650,6 @@ body.light-theme .tool-launch {
         if (localRaw === null || (remoteAt > 0 && remoteAt >= localAt)) {
           if (key === 'nexora_item_db') writeLocal(key, JSON.stringify(rowsToItems(rows)));
           else if (key === 'nexora_client_db') writeLocal(key, JSON.stringify(rowsToClients(rows)));
-          else if (key === 'calcmall_erp_records_v1') writeLocal(key, JSON.stringify(rowsToErpRecords(rows)));
           else {
             writeLocal('calcmall_history', JSON.stringify(rowsToHistory(rows)));
             writeLocal('calcmall_history_drafts', JSON.stringify(rowsToDrafts(rows)));
@@ -8340,6 +8658,44 @@ body.light-theme .tool-launch {
           changed.push(key);
         }
       });
+      /* — saved ERP records: merged PER RECORD (A6) —
+         Deliberately not the set-wide pick the other collections use: each
+         record is decided on its own clock, so a record edited on this device
+         and a DIFFERENT record edited on another both survive (the collection
+         is the union of the two sides, not the newer side). */
+      const erpTable = SYNC['calcmall_erp_records_v1'].table;
+      if (tables[erpTable] !== null) {
+        if (await pullErpRecords(tables[erpTable] || [], email)) changed.push('calcmall_erp_records_v1');
+      }
+
+      /* — the per-tool Library pointers: merged PER KEY (A6) —
+         The row is still one map; only the MERGE is per key, so two devices
+         saving different tools inside one clock window keep both pointers
+         (and neither tool adds a second Library entry afterwards). */
+      (function () {
+        const key = 'calcmall_tool_library_v1';
+        const spec = SYNC[key];
+        if (tables[spec.table] === null) return;   // table absent → leave the cache alone
+        const rows = tables[spec.table] || [];
+        const row = rows[0];
+        const remoteAt = row ? (Date.parse(text(row.updated_at)) || 0) : 0;
+        state.remoteAt[key] = remoteAt;
+        const localIds = parseJson(localValue(key), {}) || {};
+        const clocks = parseJson(localValue(spec.clocks), {}) || {};
+        const merged = mergeToolLibrary(localIds, clocks,
+          row ? rowToToolLibrary(row) : {}, remoteAt);
+        if (stableJson(merged.ids) !== stableJson(localIds)) {
+          writeLocal(key, JSON.stringify(merged.ids));
+          changed.push(key);
+        }
+        /* The clocks are bookkeeping, not data: rewriting them is not a change
+           the app can see, so it never triggers a re-render. */
+        if (stableJson(merged.clocks) !== stableJson(clocks)) {
+          writeLocal(spec.clocks, JSON.stringify(merged.clocks));
+        }
+        if (merged.push) state.pushNeeded[key] = true;
+      })();
+
       /* — the account row: tier + free-use meter (A4) —
          Deliberately NOT the last-writer-wins pick the other singletons use.
          The TIER is always taken from the account, unconditionally: that is
@@ -8438,6 +8794,16 @@ body.light-theme .tool-launch {
          `update account_state set plan = …` would silently match nothing.
          So: signing in creates it (on the boot after the pull's one reload),
          and the first metered action creates it if that comes sooner. */
+      /* A6's merges decide for themselves what needs publishing, because only
+         they know which records and which pointer keys are ours. Their verdict
+         outranks the set-wide clock rule below (which stays for the collections
+         that still use it). */
+      if (state.pushNeeded[key]) {
+        delete state.pushNeeded[key];
+        queueKey(key, localRaw || '');
+        queued++;
+        return;
+      }
       if (SYNC[key].kind === 'account') {
         if (remoteAt === 0) { queueKey(key, localRaw || 'free'); queued++; }
         return;
@@ -8802,9 +9168,26 @@ body.light-theme .tool-launch {
         updatedAt: state.accountUpdatedAt
       };
     },
+    /* A6 state: whether the tombstone column answered, and what the last pull
+       decided still has to be published. `tombstones: null` means the question
+       has not been settled (not asked yet, or the answer was unreachable). */
+    mergeState: function () {
+      return {
+        tombstones: tombstoneSupported,
+        retentionMs: TOMBSTONE_RETENTION_MS,
+        tombstonesLocal: Object.keys(erpTombstones()).length,
+        pushNeeded: Object.keys(state.pushNeeded),
+        stableJson: stableJson
+      };
+    },
     /* The pure merge rules, exposed so they can be unit-tested without a
        network or a database (see test/calculations.test.html). */
-    merge: { usageMap: usageMap, maxMergeUsage: maxMergeUsage, sameUsage: sameUsage },
+    merge: {
+      usageMap: usageMap, maxMergeUsage: maxMergeUsage, sameUsage: sameUsage,
+      erpRecords: mergeErpRecords, toolLibrary: mergeToolLibrary,
+      erpWinner: erpWinner, erpRowEvent: erpRowEvent,
+      rowsToErpState: rowsToErpState, erpRecordsToRows: erpRecordsToRows
+    },
     verifySession: verifySession,
     noteWrite: noteWrite,
     noteRemove: noteRemove,
@@ -17382,6 +17765,25 @@ body.light-theme .tool-launch {
   // 'calcmall_erp_records_v1'. Loading restores every field, the line
   // table and the live summary instantly.
   const ERP_RECORDS_KEY = 'calcmall_erp_records_v1';
+  /* A6: a deletion has to REACH the other device, and under a per-record merge
+     "the row is missing" no longer means "deleted" — it can equally mean "not
+     pulled yet". So the store keeps its own record of deletions, { id: epochMs },
+     which cloud.js publishes as a tombstone row (`erp_records.deleted_at`).
+     Read and written through storage rather than cached in a variable: the
+     merge owns this key too, and an in-memory copy would happily erase the
+     deletions a pull had just adopted. */
+  const ERP_DELETED_KEY = 'calcmall_erp_deleted_v1';
+
+  function loadErpDeletions() {
+    try {
+      const raw = localStorage.getItem(ERP_DELETED_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) { return {}; }
+  }
+  function saveErpDeletions(map) {
+    try { localStorage.setItem(ERP_DELETED_KEY, JSON.stringify(map)); } catch (e) { /* ignore */ }
+  }
 
   function loadErpRecords() {
     try {
@@ -17394,6 +17796,22 @@ body.light-theme .tool-launch {
   let erpRecords = loadErpRecords();
 
   function saveErpRecords() {
+    /* The deletions are derived here, at the store's single write choke point:
+       whatever it held a moment ago and no longer holds was deleted HERE, and
+       whatever it still holds is not deleted — so re-saving a record under an
+       id that was deleted brings it back, which is right because the record
+       now carries a newer savedAt than the tombstone. */
+    const prev = loadErpRecords();
+    const deleted = loadErpDeletions();
+    const now = Date.now();
+    let tombChanged = false;
+    Object.keys(erpRecords).forEach(function (id) {
+      if (deleted[id]) { delete deleted[id]; tombChanged = true; }
+    });
+    Object.keys(prev).forEach(function (id) {
+      if (!erpRecords[id] && !deleted[id]) { deleted[id] = now; tombChanged = true; }
+    });
+    if (tombChanged) saveErpDeletions(deleted);
     try { localStorage.setItem(ERP_RECORDS_KEY, JSON.stringify(erpRecords)); } catch (e) { /* ignore */ }
     recordsSig = recordsStorageSig();   // our own write is not a cloud change
     /* This is the single write choke point for the record store, so the Home
@@ -20288,8 +20706,13 @@ body.light-theme .tool-launch {
      or project field of its own (Pricing, Breakeven, FX, GPA). Resetting a
      tool clears its id, so the next save starts a NEW document. */
   const TOOL_LIBRARY_KEY = 'calcmall_tool_library_v1';
-  /* Read through a named loader (not an inline IIFE) so the cloud re-read can
-     use exactly the same validation as boot. */
+  /* A6: when THIS device last wrote — or removed — each tool's pointer. The
+     cloud merge needs it to decide key by key: a tool id that is missing from
+     the map but present here was removed at that moment, and must not be
+     resurrected by another device's older map. */
+  const TOOL_LIBRARY_AT_KEY = 'calcmall_tool_library_at_v1';
+  /* Read through named loaders (not inline IIFEs) so the cloud re-read can use
+     exactly the same validation as boot. */
   function loadToolLibraryIds() {
     try {
       const raw = localStorage.getItem(TOOL_LIBRARY_KEY);
@@ -20297,9 +20720,30 @@ body.light-theme .tool-launch {
       return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     } catch (e) { return {}; }
   }
+  function loadToolLibraryClocks() {
+    try {
+      const raw = localStorage.getItem(TOOL_LIBRARY_AT_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) { return {}; }
+  }
   let toolLibraryIds = loadToolLibraryIds();
   function saveToolLibraryIds() {
+    /* The clocks are diffed against what the store held before this write, so
+       the choke point needs no cooperation from its callers: a changed or new
+       pointer is stamped now, and a pointer that disappeared is stamped as a
+       removal (kept in the map with no id to pair with it). */
+    const prev = loadToolLibraryIds();
+    const clocks = loadToolLibraryClocks();
+    const now = Date.now();
+    Object.keys(toolLibraryIds).forEach(function (t) {
+      if (!Object.prototype.hasOwnProperty.call(prev, t) || prev[t] !== toolLibraryIds[t]) clocks[t] = now;
+    });
+    Object.keys(prev).forEach(function (t) {
+      if (!Object.prototype.hasOwnProperty.call(toolLibraryIds, t)) clocks[t] = now;
+    });
     try { localStorage.setItem(TOOL_LIBRARY_KEY, JSON.stringify(toolLibraryIds)); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(TOOL_LIBRARY_AT_KEY, JSON.stringify(clocks)); } catch (e) { /* ignore */ }
     recordsSig = recordsStorageSig();   // our own write is not a cloud change
   }
   /* A new project/session → the next save is a new row, not an overwrite. */
@@ -20623,6 +21067,11 @@ body.light-theme .tool-launch {
       localStorage.removeItem(DB_KEY);
       localStorage.removeItem(BRAND_KEY);
       localStorage.removeItem(ERP_RECORDS_KEY);
+      /* The A6 bookkeeping keys go with the data they describe. The cloud copy
+         then repopulates them the same way it repopulates every other store on
+         this path (a reset clears this DEVICE). */
+      localStorage.removeItem(ERP_DELETED_KEY);
+      localStorage.removeItem(TOOL_LIBRARY_AT_KEY);
       // The free-use meter is an entitlement, and this is its only reset path
       // beyond a browser wipe. The paid plan is deliberately NOT cleared.
       localStorage.removeItem(FREE_USAGE_KEY);
